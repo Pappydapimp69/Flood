@@ -149,9 +149,11 @@ function beginRace(seed, raceIds, me) {
   showHint();
   document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
+  updateLakes(); // dry basins show as dry from the first frame
   hud.banner.hidden = true;
   hud.feed.textContent = '';
   const y = surfaceAt(world, focus.x, focus.z) * VERT;
+  camDir.set(focus.dx, focus.dz).normalize();
   camera.position.set(focus.x - focus.dx * 1500, y + 1400, focus.z - focus.dz * 1500);
   camTarget.set(focus.x, y, focus.z);
 }
@@ -200,6 +202,17 @@ function goOnline(name) {
 function status(text) {
   hud.status.textContent = text;
   hud.status.hidden = !text;
+}
+
+// The direction a river has actually been going: from a point ~400 m back
+// along its path to the head. Falls back to its heading at the start.
+function courseOf(r, hx, hz) {
+  const p = r.path;
+  for (let i = p.length - 1; i >= 0; i--) {
+    const dx = hx - p[i].x, dz = hz - p[i].z, d = Math.hypot(dx, dz);
+    if (d >= 400) return new THREE.Vector2(dx / d, dz / d);
+  }
+  return new THREE.Vector2(r.dx, r.dz);
 }
 
 const camTarget = new THREE.Vector3();
@@ -349,7 +362,8 @@ const lakeShown = new Map();
 function updateLakes() {
   const { lakes, lakeLeft } = world;
   for (let i = 0; i < lakes.length; i++) {
-    const full = lakeLeft[i] / lakeGain(lakes[i]);
+    // A dry basin shows how far it has been filled; any other lake what's left.
+    const full = (world.lakeDry[i] ? world.basinFill[i] : lakeLeft[i]) / lakeGain(lakes[i]);
     const was = lakeShown.get(i) ?? 1;
     if (Math.abs(was - full) < 0.04 && !(full === 0 && was !== 0)) continue;
     lakeShown.set(i, full);
@@ -363,7 +377,12 @@ function advance(inputs) {
   applyCarve(terrainMesh, world.carve, world.dirty.splice(0));
   if (world.tick % 10 === 0) updateLakes();
   for (const e of world.events.splice(0)) {
-    if (e.type === 'tap') {
+    if (e.type === 'pool') {
+      if (river && e.river === river.idx) showPop('Dry basin — filling it before you can spill on');
+    } else if (e.type === 'spill') {
+      if (river && e.river === river.idx) showPop(`Breached! ${fmtL(e.left)} left behind as a reservoir`);
+      feed(`${nameOf(world.rivers[e.river])} filled a basin`);
+    } else if (e.type === 'tap') {
       if (river && e.river === river.idx) { showPop(`Lake tapped · ${fmtL(e.left)} flowing in`); audio.lake(); }
     } else if (e.type === 'tapcut') {
       const from = world.rivers[e.from], to = world.rivers[e.to];
@@ -483,16 +502,28 @@ renderer.setAnimationLoop(() => {
   if (mapView) {
     controls.update();
   } else {
-    // Chase camera: behind and above the head, eased so turns feel smooth.
-    const k = 1 - Math.exp(-frameDt * 2.5);
-    camDir.lerp(new THREE.Vector2(focus.dx, focus.dz), k).normalize();
-    const want = new THREE.Vector3(fx - camDir.x * 1300, Math.max(fy, 0) + 1100, fz - camDir.y * 1300);
+    // Chase camera. It must never fight the player: it follows the river's
+    // course over the last few hundred metres (not the head's tick-to-tick heading,
+    // which gravity tugs constantly), ignores small changes, turns slowly, and
+    // only its height reacts quickly (up fast, down slowly, so it doesn't bob).
+    const course = courseOf(focus, fx, fz);
+    const ang = Math.atan2(camDir.x * course.y - camDir.y * course.x, camDir.x * course.x + camDir.y * course.y);
+    const DEAD = 0.21; // ~12 degrees
+    if (Math.abs(ang) > DEAD) {
+      const turn = (Math.abs(ang) - DEAD) * Math.sign(ang) * (1 - Math.exp(-frameDt * 1.2));
+      camDir.rotateAround(new THREE.Vector2(0, 0), turn).normalize();
+    }
+    const back = 1300, want = new THREE.Vector3(fx - camDir.x * back, Math.max(fy, 0) + 1100, fz - camDir.y * back);
     // Stay above the ground along the whole sightline, not just at the camera.
     for (let f = 0.25; f <= 1; f += 0.25) {
-      const g = surfaceAt(world, fx - camDir.x * 1300 * f, fz - camDir.y * 1300 * f) * VERT;
+      const g = surfaceAt(world, fx - camDir.x * back * f, fz - camDir.y * back * f) * VERT;
       want.y = Math.max(want.y, g + 250 + 400 * f);
     }
-    camera.position.lerp(want, k);
+    const kXZ = 1 - Math.exp(-frameDt * 5);
+    camera.position.x += (want.x - camera.position.x) * kXZ;
+    camera.position.z += (want.z - camera.position.z) * kXZ;
+    const kY = 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
+    camera.position.y += (want.y - camera.position.y) * kY;
     camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
     camTarget.lerp(new THREE.Vector3(fx + camDir.x * 600, fy, fz + camDir.y * 600), 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
@@ -509,7 +540,9 @@ renderer.setAnimationLoop(() => {
   hud.time.textContent = fmtTime(secs);
   hud.litres.textContent = fmtL(me.volume);
   const taps = world.lakeTaken.reduce((n, t) => n + (t === me.idx ? 1 : 0), 0);
-  hud.depth.textContent = `cutting ${me.depth.toFixed(1)} m deep` + (me.inflow > 0 ? ` · +${fmtL(me.inflow * TICK_HZ)}/s from ${taps} lake${taps === 1 ? '' : 's'}` : '');
+  hud.depth.textContent = me.filling
+    ? `filling a basin · ${Math.round(100 * world.basinFill[me.filling.lake] / lakeGain(world.lakes[me.filling.lake]))}%`
+    : `cutting ${me.depth.toFixed(1)} m deep` + (me.inflow > 0 ? ` · +${fmtL(me.inflow * TICK_HZ)}/s from ${taps} lake${taps === 1 ? '' : 's'}` : '');
   tugFeedback(now);
   if (river && !isRacing(river) && !endShown) {
     endShown = true;

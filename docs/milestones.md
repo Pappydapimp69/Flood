@@ -210,3 +210,27 @@ biggest at 60 s won 0/10 (no snowball).
 
 **Carry forward to M9**
 - Empty basins: a few lakes start dry and must be filled before you can spill on.
+
+## M9 — Dry basins (done)
+
+**Built**
+- Up to 5 mid-size lakes per map start dry (seeded, never on a spawn). A head that runs into one
+  pools: it stops and pours water in — at most 30% of its water, never below 1.25× the
+  elimination floor, at a rate that grows with size — until the basin is full, its share is paid,
+  or 12 s pass (guaranteed exit). It then spills from the basin's outlet and carries on.
+- What it poured becomes a reservoir (80% kept) that any other river can tap like a lake.
+- Bots avoid dry basins unless they're big enough to fill them quickly.
+- Client: basins show dry and fill visibly; HUD "filling a basin · N%"; pops for pooling and
+  breaching; feed line when someone fills one.
+- Tests: basins are deterministic and off spawns; pooling stops the head, costs water, spills at
+  the outlet within the cap; floor margin holds; the reservoir is tappable by another river; a
+  play test for the HUD and the spill.
+
+**Measured** (10 seeds × 12 bots, basins on vs off): ~1 basin filled per race, winner time 95 →
+90 s, finishers and eliminations unchanged, longest pool 11.6 s.
+
+**Camera fix (owner report: "the camera fights the player")**
+- The chase camera now follows the river's course over the last ~400 m instead of the head's
+  tick-to-tick heading, ignores changes under ~12°, turns slowly, follows position tightly, and
+  rises fast / sinks slowly. Under constant left-right steering its yaw travel fell from 687° to
+  52° in 20 s, and direction reversals from 24 to 8.

@@ -13,6 +13,8 @@ Steer with ← → (or A D). On a phone, hold the left or right side of the scre
 - Speed cuts deeper too. Where rivers touch, the deeper one drains the shallower each moment.
   Cross shallower rivers (green ▼) to drain them; keep off deeper ones (red ▲). Drained below
   40% of your starting water, you're out.
+- A few lakes are dry basins: run into one and you must fill it (water and time) before you
+  spill on, leaving a reservoir others can tap. Steer around them unless you're big.
 - Bright, flowing water is live and dangerous; grey channels are dry beds.
 
 ## Run it

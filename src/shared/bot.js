@@ -47,6 +47,8 @@ export function botSteer(world, bot) {
       if (surfaceAt(world, x, z, r.idx) > r.low + TUNE.climb + 8) score -= 2 * w; // uphill wall
       const lake = world.lakeOf[k];
       if (lake >= 0 && world.lakeTaken[lake] < 0 && world.lakeLeft[lake] > 0) score += (0.6 + bot.skill) * w;
+      // A dry basin costs water and time; small ones are worth it only to a big river.
+      if (lake >= 0 && world.lakeDry[lake]) score -= (1.6 - 0.5 * Math.min(2, r.size - 1)) * w;
       const o = world.owner[k];
       if (o >= 0 && o !== r.idx && world.carve[k] > TUNE.contactDepth && isLive(world, k)) {
         const owner = world.rivers[o];

@@ -175,6 +175,29 @@ await check('tug-of-war: a deeper rival on you shows the drain warning and takes
   await page.close();
 });
 
+await check('dry basin: the HUD shows filling, then the head spills on', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
+  await page.goto(base + '&nohint');
+  await until(page, (s) => s.ready && s.tick > 5, 'race');
+  await page.evaluate(() => {
+    const w = __flood.world, me = __flood.river, n = w.terrain.size, k = w.lakeOf.indexOf(w.basins[0]);
+    me.x = ((k % n) / (n - 1) - 0.5) * w.terrain.worldSize; me.z = (Math.floor(k / n) / (n - 1) - 0.5) * w.terrain.worldSize;
+  });
+  let saw = '';
+  for (let i = 0; i < 200 && !saw.startsWith('filling'); i++) {
+    saw = await page.evaluate(() => document.getElementById('depth').textContent);
+    await page.waitForTimeout(50);
+  }
+  if (!saw.startsWith('filling a basin')) throw new Error(`HUD never showed filling: ${saw}`);
+  if (shotDir) await page.screenshot({ path: `${shotDir}/play-basin.png` });
+  await until(page, () => true, 'tick');
+  for (let i = 0; i < 400; i++) {
+    if (await page.evaluate(() => !__flood.river.filling)) { await page.close(); return; }
+    await page.waitForTimeout(50);
+  }
+  throw new Error('never spilled');
+});
+
 // A fake standard-mapping gamepad the test can drive; installed before the page loads.
 const FAKE_PAD = () => {
   const pad = { id: 'test pad', index: 0, connected: true, mapping: 'standard', axes: [0, 0, 0, 0],

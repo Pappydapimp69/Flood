@@ -37,6 +37,17 @@ export const TUNE = {
   drainEnd: 0.006, // ...rising to this as the outlet erodes...
   erodeTicks: 400, // ...over 20 s
   drainFloor: 1000, // litres; below this the rest arrives at once (no endless tail)
+  // Dry basins: a few lakes start empty. A head that runs into one must fill it
+  // before it can spill on, paying water and time; what it leaves is a
+  // reservoir anyone else can tap.
+  basins: 5, // dry basins per map (fewer if the map has few mid-size lakes)
+  basinMinCells: 15,
+  basinMaxCells: 260,
+  basinCost: 0.3, // filling costs at most this share of your current water...
+  basinFloorMargin: 1.25, // ...and never takes you below 1.25x the elimination floor
+  fillRate: 0.004, // share of starting water poured in per tick, times your size
+  fillMaxTicks: 240, // guaranteed exit: after 12 s you spill whatever is in
+  reservoirKeep: 0.8, // share of the poured water left for others to tap
   // Bigger rivers are faster but turn slower, so the leader can't simply snowball.
   speedPerSize: 0.25, // max speed multiplier gained per unit of size above 1
   // Contact is a depth tug-of-war: where a head touches a rival's head or live
@@ -80,19 +91,56 @@ export function createWorld(terrain) {
     flow[i * 2 + 1] = fz * inv;
   }
   const { label: lakeOf, lakes } = findLakes(terrain);
-  return {
+  const world = {
     terrain, flow, dist: distanceToSea(terrain, downhill),
     lakeOf, lakes,
     lakeTaken: new Int32Array(lakes.length).fill(-1), // river draining each lake, -1 if none
     lakeTapTick: new Int32Array(lakes.length).fill(-1), // tick its current tap began
     lakeLeft: Float64Array.from(lakes, (l) => lakeGain(l)), // litres still in it
+    lakeDry: new Uint8Array(lakes.length), // 1 while a dry basin is unfilled
+    basinFill: new Float64Array(lakes.length), // litres poured into a dry basin so far
+    lakeOutlet: lakeOutlets(terrain, lakeOf, lakes), // cell just past each lake's spill point
     events: [], // for presentation: lake captures and merges, see step()
     digs: [], // channel digs queued during a tick, applied together at its end
     carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), dugAt: new Int32Array(n * n), tick: 0, rivers: [], dirty: [],
   };
+  world.basins = makeBasins(world);
+  return world;
 }
 
 // Surface seen by river `self` (-1 = everyone's channels, for rendering).
+// The cell each lake spills into: the first cell outside it on the fill's
+// downhill tree, from the lowest-lying lake cell that drains out.
+function lakeOutlets(t, lakeOf, lakes) {
+  const out = new Int32Array(lakes.length).fill(-1), best = new Float64Array(lakes.length).fill(Infinity);
+  for (let k = 0; k < lakeOf.length; k++) {
+    const l = lakeOf[k];
+    if (l < 0) continue;
+    const d = downhill(t, k);
+    if (d >= 0 && lakeOf[d] !== l && t.filled[k] < best[l]) { best[l] = t.filled[k]; out[l] = d; }
+  }
+  return out;
+}
+
+// Pick the dry basins: mid-size lakes, chosen by a seeded stream so every
+// client and the server agree. Kept off spawn cells.
+export function makeBasins(world) {
+  const r = stream(world.terrain.seed, 'basins');
+  const spawn = new Set(spawnBand(world).cells);
+  const cands = world.lakes.filter((l) => l.cells >= TUNE.basinMinCells && l.cells <= TUNE.basinMaxCells && world.lakeOutlet[l.id] >= 0);
+  const picked = [];
+  while (picked.length < TUNE.basins && cands.length) {
+    const l = cands.splice(Math.floor(r() * cands.length), 1)[0];
+    let nearSpawn = false;
+    for (let k = 0; k < world.lakeOf.length && !nearSpawn; k++) if (world.lakeOf[k] === l.id && spawn.has(k)) nearSpawn = true;
+    if (nearSpawn) continue;
+    picked.push(l.id);
+    world.lakeDry[l.id] = 1;
+    world.lakeLeft[l.id] = 0;
+  }
+  return picked;
+}
+
 export function surfaceAt(world, wx, wz, self = -1) {
   const t = world.terrain, n = t.size;
   const gx = (wx / t.worldSize + 0.5) * (n - 1);
@@ -174,6 +222,7 @@ export function addRiver(world, id, at = spawnPoint(world, id)) {
     depth: TUNE.depth,
     lakes: 0,
     inflow: 0, // litres per tick arriving from tapped lakes
+    filling: null, // { lake, need, ticks } while pooling in a dry basin
     low: Infinity, // lowest surface reached; water can't climb far above it
     best: Infinity, // best distance-to-sea so far, for stall detection
     stall: 0,
@@ -228,6 +277,7 @@ export function step(world, inputs) {
 }
 
 function moveRiver(world, r, inputs) {
+  if (r.filling) return fillBasin(world, r);
   {
     const steer = Math.max(-1, Math.min(1, inputs?.get(r.id) | 0));
     if (steer) {
@@ -484,6 +534,50 @@ function moveTo(world, r, nx, nz) {
   grow(r, moved * TUNE.trickle);
 }
 
+// Pool in a dry basin: the head stops, and what it pours in is its cost.
+function startFilling(world, r, lake) {
+  const room = lakeGain(world.lakes[lake]) - world.basinFill[lake];
+  const floorRoom = r.volume - TUNE.floor * TUNE.startVolume * TUNE.basinFloorMargin;
+  const need = Math.max(0, Math.min(room, r.volume * TUNE.basinCost, floorRoom));
+  r.filling = { lake, need, ticks: 0 };
+  r.speed = 0;
+  world.events.push({ type: 'pool', lake, river: r.idx, need, tick: world.tick });
+}
+
+function fillBasin(world, r) {
+  const f = r.filling, lake = f.lake;
+  f.ticks++;
+  if (world.lakeDry[lake]) {
+    const pour = Math.min(f.need, TUNE.fillRate * TUNE.startVolume * r.size, lakeGain(world.lakes[lake]) - world.basinFill[lake]);
+    f.need -= pour;
+    grow(r, -pour);
+    world.basinFill[lake] += pour;
+  }
+  const full = world.basinFill[lake] >= lakeGain(world.lakes[lake]) - 1;
+  if (full || f.need <= 0 || f.ticks >= TUNE.fillMaxTicks || !world.lakeDry[lake]) spill(world, r, lake);
+  r.depth = depthOf(r);
+}
+
+// Breach: the basin becomes a reservoir and the head carries on from its outlet.
+function spill(world, r, lake) {
+  const t = world.terrain, n = t.size;
+  if (world.lakeDry[lake]) {
+    world.lakeDry[lake] = 0;
+    world.lakeLeft[lake] = world.basinFill[lake] * TUNE.reservoirKeep;
+    world.events.push({ type: 'spill', lake, river: r.idx, left: world.lakeLeft[lake], tick: world.tick });
+  }
+  const o = world.lakeOutlet[lake];
+  const x = ((o % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(o / n) / (n - 1) - 0.5) * t.worldSize;
+  const mx = x - r.x, mz = z - r.z, len = Math.sqrt(mx * mx + mz * mz) || 1;
+  r.dx = mx / len; r.dz = mz / len;
+  r.x = x; r.z = z;
+  r.low = surfaceAt(world, x, z, r.idx);
+  r.best = world.dist[o];
+  r.speed = TUNE.minSpeed;
+  r.filling = null;
+  pushPathPoint(world, r);
+}
+
 function grow(r, litres) {
   r.volume += litres;
   r.size = sizeOf(r.volume);
@@ -503,6 +597,8 @@ function guidedStep(world, r, ci) {
 }
 
 function afterMove(world, r) {
+  const lake = world.lakeOf[cellIndex(world.terrain, r.x, r.z)];
+  if (lake >= 0 && world.lakeDry[lake]) startFilling(world, r, lake);
   const last = r.path[r.path.length - 1];
   const lx = r.x - last.x, lz = r.z - last.z;
   if (lx * lx + lz * lz >= (world.terrain.cell * 0.75) ** 2) pushPathPoint(world, r);
