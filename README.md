@@ -4,7 +4,7 @@ A browser battle royale where every player is a river. Race downhill across an i
 lakes to grow, cut rivals off, and be the first to reach the sea.
 
 ## Play
-Steer with ← → (or A D). On a phone, hold the left or right side of the screen. `M` toggles the map.
+Steer with ← → (or A D). On a phone, hold the left or right side of the screen. With a controller: stick or D-pad steers, A selects / races again, Y opens the map, X toggles sound. `M` toggles the map on a keyboard.
 
 - Flow downhill to the sea; first one there wins (the race ends 90 s later).
 - Swallow lakes to grow. Bigger rivers are faster and win contacts, but turn slower.

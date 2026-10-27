@@ -11,6 +11,7 @@ const base = `http://127.0.0.1:${server.address().port}/?seed=1`;
 const browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'] });
 
 const state = (page) => page.evaluate(() => {
+  if (!__flood.world) return { ready: false, error: __flood.error, tick: -1 }; // still on the menu
   const r = __flood.river;
   return { ready: __flood.ready, error: __flood.error, tick: __flood.world.tick, x: r.x, z: r.z, dx: r.dx, dz: r.dz,
     travelled: r.travelled, points: r.path.length, carved: __flood.world.carve.some((c) => c > 0) };
@@ -148,6 +149,55 @@ await check('race: rank shows, and an absorbed player spectates the winner', asy
     await page.waitForTimeout(50);
   }
   throw new Error('player was never absorbed');
+});
+
+// A fake standard-mapping gamepad the test can drive; installed before the page loads.
+const FAKE_PAD = () => {
+  const pad = { id: 'test pad', index: 0, connected: true, mapping: 'standard', axes: [0, 0, 0, 0],
+    buttons: Array.from({ length: 17 }, () => ({ pressed: false, value: 0 })) };
+  window.__pad = pad;
+  navigator.getGamepads = () => [pad, null, null, null];
+};
+
+await check('gamepad: A picks a menu button, stick and D-pad steer, A races again', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 960, height: 600 } });
+  await ctx.addInitScript(FAKE_PAD);
+  const page = await ctx.newPage();
+  await page.goto(base.replace('?seed=1', '?nohint'));
+  await page.waitForFunction(() => window.__flood?.renderer);
+  const button = (i, on) => page.evaluate(([i, on]) => { __pad.buttons[i].pressed = on; __pad.buttons[i].value = on ? 1 : 0; }, [i, on]);
+  // Held longer than a slow headless frame, so the per-frame poll sees it.
+  const tap = async (i) => { await button(i, true); await page.waitForTimeout(700); await button(i, false); await page.waitForTimeout(500); };
+  // First down focuses "Play online", the second "Solo vs bots"; then A.
+  await tap(13);
+  await tap(13);
+  const focused = await page.evaluate(() => document.activeElement?.id);
+  if (focused !== 'play-solo') throw new Error(`menu focus on ${focused}`);
+  await tap(0);
+  await until(page, (s) => s.ready && s.tick > 5, 'solo race from the gamepad');
+  const help = await page.evaluate(() => document.getElementById('help').textContent);
+  if (!help.startsWith('Controller')) throw new Error(`help text: ${help}`);
+  for (const [how, set] of [['stick', (v) => page.evaluate((v) => { __pad.axes[0] = v; }, v)], ['dpad', (v) => button(v < 0 ? 14 : 15, v !== 0)]]) {
+    await page.evaluate(() => { __flood.steers.length = 0; });
+    await set(-1);
+    // Hold until the sim has run some ticks with it; frames are slow headless.
+    let steers = [];
+    for (let i = 0; i < 100 && !steers.includes(-1); i++) {
+      await page.waitForTimeout(100);
+      steers = await page.evaluate(() => __flood.steers.slice());
+    }
+    await set(0);
+    if (!steers.includes(-1)) throw new Error(`${how} left gave ${steers.join('')}`);
+  }
+  // Finish the run by force (after the spawn grace), then A on the results card starts a new one.
+  const t0 = (await state(page)).tick;
+  await until(page, (st) => st.tick > Math.max(t0, 140), 'past spawn grace');
+  await page.evaluate(() => { const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out); me.volume = 1; bot.x = me.x + 5; bot.z = me.z; });
+  for (let i = 0; i < 100 && !(await page.evaluate(() => !!document.getElementById('again'))); i++) await page.waitForTimeout(100);
+  const before = (await state(page)).tick;
+  await tap(0);
+  await until(page, (s) => s.tick < before, 'A on the results card restarts');
+  await ctx.close();
 });
 
 await browser.close();

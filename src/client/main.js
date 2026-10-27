@@ -99,6 +99,10 @@ fitCamera();
 addEventListener('resize', fitCamera);
 
 const input = createInput(renderer.domElement);
+// Once a controller shows up, say how to use it.
+input.onPad = () => {
+  document.getElementById('help').textContent = 'Controller: stick or D-pad steers · A: select / race again · Y: map · X: sound';
+};
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
 const showMute = () => { muteBtn.textContent = audio.muted ? '🔇' : '🔊'; };
@@ -137,6 +141,7 @@ function beginRace(seed, raceIds, me) {
   endTable = null;
   raceOver = false;
   finalShown = false;
+  pendingActions.length = 0; // presses from the menu don't carry into the race
   showHint();
   document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
@@ -234,8 +239,30 @@ function feed(text) {
   setTimeout(() => li.remove(), 5000);
 }
 
-function handleActions() {
+// Gamepad actions that work outside a race too: menu focus and confirm,
+// "Race again" on the results card, mute.
+function menuActions() {
+  const keep = [];
   for (const a of input.takeActions()) {
+    const menuOpen = !hud.menu.hidden;
+    const again = document.getElementById('again');
+    if (a === 'mute') { audio.toggle(); showMute(); }
+    else if (menuOpen && (a === 'up' || a === 'down')) {
+      const btns = [...hud.menu.querySelectorAll('button')];
+      const i = btns.indexOf(document.activeElement);
+      btns[i < 0 ? 0 : (i + (a === 'down' ? 1 : btns.length - 1)) % btns.length].focus();
+    } else if (a === 'confirm' && menuOpen) {
+      const focused = hud.menu.contains(document.activeElement) && document.activeElement.tagName === 'BUTTON';
+      (focused ? document.activeElement : document.getElementById('play-online')).click();
+    } else if (a === 'confirm' && again && !hud.banner.hidden) again.click();
+    else if (a !== 'confirm' && a !== 'up' && a !== 'down') keep.push(a);
+  }
+  pendingActions.push(...keep);
+}
+const pendingActions = [];
+
+function handleActions() {
+  for (const a of pendingActions.splice(0)) {
     if (a === 'map') {
       mapView = !mapView;
       controls.enabled = mapView;
@@ -353,6 +380,8 @@ renderer.setAnimationLoop(() => {
   const now = performance.now();
   const frameDt = Math.max(0, Math.min(0.25, (now - last) / 1000));
   last = now;
+  input.poll();
+  menuActions();
   if (!world) { renderer.render(scene, camera); return; }
   // Fixed-step sim, decoupled from frame rate; render interpolates between ticks.
   acc += frameDt;
