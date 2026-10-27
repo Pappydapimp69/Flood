@@ -42,7 +42,8 @@ test('contact: the smaller river is absorbed and the bigger gains its water', ()
   const w = createWorld(islands.get(1));
   const a = addRiver(w, 'big'), b = addRiver(w, 'small', { x: a.x + 30, z: a.z + 30 });
   a.volume = TUNE.startVolume * 3;
-  for (let k = 0; k < TUNE.graceTicks - 1; k++) step(w, new Map());
+  const grace = TUNE.graceTicks + TUNE.gracePerRiver * w.rivers.length;
+  for (let k = 0; k < grace - 1; k++) step(w, new Map());
   assert.ok(!a.out && !b.out, 'merged during the spawn grace');
   step(w, new Map()); // last grace tick
   // Put them head to head now that grace is over.

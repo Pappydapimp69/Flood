@@ -115,3 +115,30 @@ entries below for context. Each ends with a log entry here.
 - Inputs are just `Map<id, steer>` per tick, and the sim is deterministic — ready for a server
   that runs the same `step()` and broadcasts state.
 - Bots run in the shared module, so the server can host them.
+
+## M5 — Multiplayer (done)
+
+**Built**
+- `src/server/server.mjs`: one Node process serves the game (public paths only) and a WebSocket
+  room at `/ws`. `npm run server`, then open the page and press **Play online**.
+- `src/server/room.js`: lobby (8 s after the first player, or full at 80) → race → results →
+  lobby. Bots fill the race to 12 rivers. Seats are resumable by token (sessionStorage); a
+  dropped player's river keeps flowing unsteered; unknown tokens spectate.
+- Server-stamped input lockstep (ADR 0002): frames of one char per river; clients replay the
+  log on join/reconnect; fingerprints every 100 ticks catch desync and trigger a resync.
+- Hardening: steer validated to −1/0/1, 1 KB message cap, 60 msg/s rate limit, names
+  sanitised, slow clients over 4 MB buffered are dropped (they can rejoin), static server
+  allowlist (no .git / node_modules / server code), 20 Hz clock with a catch-up cap.
+- Client: start menu (name, Play online, Solo vs bots), lobby/connection status, spectator mode,
+  "next race soon" after results. Island rebuilt per race seed.
+- Spawn grace scales with lobby size (+0.1 s per river): 80-player rooms spawn closer together.
+- Tests: `tests/unit/server.test.mjs` (two clients' replays match the server, invalid input
+  ignored, names sanitised, token resume + log replay, stranger spectates, fingerprint resync);
+  `tests/online.mjs` (two headless browsers in one race, steering reaches the server, no desync,
+  reloaded tab gets its seat back).
+- Load: 80 players ≈ 0.04 ms/tick average, 6 ms worst, ~2 KB/s per client.
+
+**Carry forward to M6**
+- Own-input latency is one round trip; add local "ghost" prediction of your head if it feels slow.
+- Ribbon/water look, phone performance (262k-vertex terrain), win screens, menus polish.
+- Many early merges in 80-player rooms on a 48 km island — consider bigger maps for big lobbies.

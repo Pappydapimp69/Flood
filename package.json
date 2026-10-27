@@ -6,8 +6,13 @@
   "type": "module",
   "scripts": {
     "start": "node tools/serve.mjs",
+    "server": "node src/server/server.mjs",
     "test": "node --test tests/unit/*.test.mjs",
     "smoke": "node tests/smoke.mjs",
-    "play": "node tests/play.mjs"
+    "play": "node tests/play.mjs",
+    "online": "node tests/online.mjs"
+  },
+  "dependencies": {
+    "ws": "8.22.0"
   }
 }

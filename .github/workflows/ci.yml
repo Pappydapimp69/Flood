@@ -8,7 +8,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - run: npm ci
       - run: npm test
       - run: npm install --no-save playwright@1.48.2 && npx playwright install --with-deps chromium
       - run: npm run smoke
       - run: npm run play
+      - run: npm run online

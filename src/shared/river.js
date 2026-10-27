@@ -37,7 +37,8 @@ export const TUNE = {
   absorb: 0.5,
   contactDepth: 1, // metres of channel that counts as a rival's water
   liveTicks: 300, // only channel dug in the last 15 s is live water; older is a dry bed
-  graceTicks: 100, // no contact for anyone in their first 5 s
+  graceTicks: 100, // no contact for anyone in their first 5 s...
+  gracePerRiver: 2, // ...plus 0.1 s per river in the race, since big lobbies spawn closer
   spawnGap: 2500, // metres between spawns where the band allows
 };
 
@@ -290,7 +291,8 @@ const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const biggerFirst = (a, b) => b.volume - a.volume || byId(a, b);
 
 function resolveContacts(world) {
-  const rs = world.rivers.filter((r) => isRacing(r) && world.tick - r.born >= TUNE.graceTicks);
+  const grace = TUNE.graceTicks + TUNE.gracePerRiver * world.rivers.length;
+  const rs = world.rivers.filter((r) => isRacing(r) && world.tick - r.born >= grace);
   if (rs.length < 2) return;
   const { carve, owner } = world;
   const pairs = new Map();
