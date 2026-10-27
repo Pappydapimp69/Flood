@@ -116,6 +116,36 @@ await check('the water HUD counts up as the river gathers water', async () => {
   await page.close();
 });
 
+await check('race: rank shows, and an absorbed player spectates the winner', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
+  await page.goto(base);
+  await until(page, (s) => s.ready, 'ready');
+  const rank = await page.evaluate(() => document.getElementById('rank').textContent);
+  if (!/^#\d+\/12 · \d+ flowing$/.test(rank)) throw new Error(`rank text: ${rank}`);
+  const s0 = await state(page);
+  await until(page, (s) => s.tick > s0.tick + 110, 'past spawn grace');
+  // Shrink the player and drop a bot on its head: next tick it must be absorbed.
+  await page.evaluate(() => {
+    const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out && !r.finished);
+    me.volume = 1;
+    bot.x = me.x + 5; bot.z = me.z;
+    window.__absorber = bot.id;
+  });
+  await until(page, () => true, 'tick');
+  for (let i = 0; i < 100; i++) {
+    const r = await page.evaluate(() => ({ out: __flood.river.out, focus: __flood.focus.id, banner: document.getElementById('banner').hidden ? '' : document.getElementById('banner').textContent }));
+    if (r.out && r.banner) {
+      const by = await page.evaluate(() => window.__absorber);
+      if (r.out.by !== by || r.focus !== by || !r.banner.includes(`Absorbed by ${by}`)) throw new Error(JSON.stringify(r));
+      if (shotDir) await page.screenshot({ path: `${shotDir}/play-race.png` });
+      await page.close();
+      return;
+    }
+    await page.waitForTimeout(50);
+  }
+  throw new Error('player was never absorbed');
+});
+
 await browser.close();
 server.close();
 if (fails.length) { console.error(`${fails.length} play check(s) failed`); process.exit(1); }

@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
-import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, DT, TICK_HZ } from '../shared/river.js';
+import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, DT, TICK_HZ } from '../shared/river.js';
+import { createBot, botSteer } from '../shared/bot.js';
 import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, drainLake, VERT } from './terrainMesh.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
@@ -48,13 +49,21 @@ const sun = new THREE.DirectionalLight('#fff3dc', 2.2);
 sun.position.set(-W * 0.6, W * 0.5, -W * 0.3);
 scene.add(sun);
 
-const ribbon = new Ribbon();
-scene.add(ribbon.mesh);
-const head = new THREE.Mesh(
-  new THREE.SphereGeometry(1, 20, 12),
-  new THREE.MeshPhongMaterial({ color: '#e9f7fb', emissive: '#3c7f95', transparent: true, opacity: 0.9 }),
-);
-scene.add(head);
+const PLAYER_COLOR = '#45d2ff';
+const BOT_COLORS = ['#4f8fd0', '#4fb39a', '#7d84d8', '#3fa8b8', '#6c95e8', '#58a77f', '#9480d8', '#3f93c4', '#6fae8f', '#8496e0', '#4c9aa8'];
+const headGeo = new THREE.SphereGeometry(1, 20, 12);
+
+// One render entry per river: ribbon, head and last-tick position for interpolation.
+function makeEntry(r, i) {
+  const mine = r.id === PLAYER;
+  const color = mine ? PLAYER_COLOR : BOT_COLORS[i % BOT_COLORS.length];
+  const ribbon = new Ribbon(color);
+  const head = new THREE.Mesh(headGeo, new THREE.MeshPhongMaterial({
+    color: mine ? '#f2fcff' : '#dfeff5', emissive: mine ? '#2aa6d6' : '#2e5d6e', transparent: true, opacity: 0.92,
+  }));
+  scene.add(ribbon.mesh, head);
+  return { r, ribbon, head, prev: { x: r.x, z: r.z } };
+}
 
 const camera = new THREE.PerspectiveCamera(55, 1, 20, 400000);
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -80,20 +89,29 @@ const hud = {
   dist: document.getElementById('dist'),
   time: document.getElementById('time'),
   litres: document.getElementById('litres'),
+  rank: document.getElementById('rank'),
   pop: document.getElementById('pop'),
+  feed: document.getElementById('feed'),
   banner: document.getElementById('banner'),
 };
 
-let world, river, prev, acc, mapView, finishedShown;
+const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
+let world, river, entries, bots, focus, acc, mapView, endShown;
 function newRun() {
+  if (entries) for (const e of entries) { scene.remove(e.ribbon.mesh, e.head); e.ribbon.geo.dispose(); e.head.material.dispose(); }
   world = createWorld(terrain);
-  river = addRiver(world, PLAYER);
-  prev = { x: river.x, z: river.z };
+  // Add in sorted id order so spawns are reproducible.
+  const ids = [PLAYER, ...Array.from({ length: BOTS }, (_, i) => `bot${String(i + 1).padStart(2, '0')}`)].sort();
+  for (const id of ids) addRiver(world, id);
+  river = world.rivers.find((r) => r.id === PLAYER);
+  bots = world.rivers.filter((r) => r !== river).map((r) => createBot(world, r));
+  entries = world.rivers.map(makeEntry);
+  focus = river;
   acc = 0;
-  finishedShown = false;
+  endShown = false;
   resetCarve(terrainMesh);
-  ribbon.reset();
   hud.banner.hidden = true;
+  hud.feed.textContent = '';
   const y = surfaceAt(world, river.x, river.z) * VERT;
   camera.position.set(river.x - river.dx * 1500, y + 1400, river.z - river.dz * 1500);
   camTarget.set(river.x, y, river.z);
@@ -104,13 +122,22 @@ const camLook = new THREE.Vector3();
 const camDir = new THREE.Vector2(0, -1);
 newRun();
 
+const nameOf = (r) => (r.id === PLAYER ? 'You' : r.id);
+function feed(text) {
+  const li = document.createElement('div');
+  li.textContent = text;
+  hud.feed.prepend(li);
+  while (hud.feed.children.length > 4) hud.feed.lastChild.remove();
+  setTimeout(() => li.remove(), 5000);
+}
+
 function tick() {
   for (const a of input.takeActions()) {
     if (a === 'map') {
       mapView = !mapView;
       controls.enabled = mapView;
       if (mapView) { controls.target.set(0, 0, 0); camera.position.set(W * 0.4, W * 0.7, W * 0.6); }
-    } else if ((a === 'restart' || a === 'tap') && river.finished) {
+    } else if ((a === 'restart' || a === 'tap') && !isRacing(river)) {
       newRun();
       return;
     }
@@ -118,14 +145,25 @@ function tick() {
   const steer = dbg.forceSteer ?? input.sample();
   dbg.steers.push(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
-  prev = { x: river.x, z: river.z };
-  step(world, new Map([[PLAYER, steer]]));
+  // Bots decide from the same start-of-tick state, then everyone steps together.
+  const inputs = new Map([[PLAYER, steer]]);
+  for (const b of bots) inputs.set(b.river.id, dbg.botsOff ? 0 : botSteer(world, b));
+  for (const e of entries) e.prev = { x: e.r.x, z: e.r.z };
+  step(world, inputs);
   applyCarve(terrainMesh, world.carve, world.dirty.splice(0));
   for (const e of world.events.splice(0)) {
-    if (e.type !== 'lake') continue;
-    drainLake(terrainMesh, world.lakeOf, e.lake);
-    if (e.river === river.idx) showPop(`+${fmtL(e.gain)}`);
+    if (e.type === 'lake') {
+      drainLake(terrainMesh, world.lakeOf, e.lake);
+      if (e.river === river.idx) showPop(`+${fmtL(e.gain)}`);
+    } else if (e.type === 'merge') {
+      const w = world.rivers[e.winner], l = world.rivers[e.loser];
+      if (w === river) showPop(`Absorbed ${nameOf(l)} +${fmtL(e.gain)}`);
+      feed(`${nameOf(w)} absorbed ${nameOf(l)}`);
+      // Spectate whoever absorbed the river we were watching.
+      if (l === focus) focus = w;
+    }
   }
+  if (focus.out) focus = world.rivers.find((r) => r.id === focus.out.by) ?? focus;
 }
 
 const fmtL = (v) => `${Math.round(v).toLocaleString('en-US')} L`;
@@ -140,6 +178,7 @@ function showPop(text) {
 }
 
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+const ordinal = (n) => `#${n}`;
 
 let last = performance.now();
 renderer.setAnimationLoop(() => {
@@ -151,39 +190,52 @@ renderer.setAnimationLoop(() => {
   acc += frameDt;
   while (acc >= DT) { tick(); acc -= DT; }
   const alpha = acc / DT;
-  const hx = prev.x + (river.x - prev.x) * alpha, hz = prev.z + (river.z - prev.z) * alpha;
-  const hy = surfaceAt(world, hx, hz, river.idx) * VERT;
 
-  head.position.set(hx, hy + 8, hz);
-  head.scale.set(70 * river.size, 25 * river.size, 70 * river.size);
-  ribbon.update(world, river, hx, hz);
+  let fx = 0, fz = 0, fy = 0;
+  for (const e of entries) {
+    const r = e.r;
+    const hx = e.prev.x + (r.x - e.prev.x) * alpha, hz = e.prev.z + (r.z - e.prev.z) * alpha;
+    const hy = surfaceAt(world, hx, hz, r.idx) * VERT;
+    e.head.visible = !r.out;
+    e.head.position.set(hx, hy + 8, hz);
+    e.head.scale.set(70 * r.size, 25 * r.size, 70 * r.size);
+    e.ribbon.update(world, r, hx, hz);
+    if (r === focus) { fx = hx; fz = hz; fy = hy; }
+  }
 
   if (mapView) {
     controls.update();
   } else {
     // Chase camera: behind and above the head, eased so turns feel smooth.
     const k = 1 - Math.exp(-frameDt * 2.5);
-    camDir.lerp(new THREE.Vector2(river.dx, river.dz), k).normalize();
-    const want = new THREE.Vector3(hx - camDir.x * 1300, Math.max(hy, 0) + 1100, hz - camDir.y * 1300);
+    camDir.lerp(new THREE.Vector2(focus.dx, focus.dz), k).normalize();
+    const want = new THREE.Vector3(fx - camDir.x * 1300, Math.max(fy, 0) + 1100, fz - camDir.y * 1300);
     // Stay above the ground along the whole sightline, not just at the camera.
     for (let f = 0.25; f <= 1; f += 0.25) {
-      const g = surfaceAt(world, hx - camDir.x * 1300 * f, hz - camDir.y * 1300 * f) * VERT;
+      const g = surfaceAt(world, fx - camDir.x * 1300 * f, fz - camDir.y * 1300 * f) * VERT;
       want.y = Math.max(want.y, g + 250 + 400 * f);
     }
     camera.position.lerp(want, k);
     camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
-    camTarget.lerp(new THREE.Vector3(hx + camDir.x * 600, hy, hz + camDir.y * 600), 1 - Math.exp(-frameDt * 6));
+    camTarget.lerp(new THREE.Vector3(fx + camDir.x * 600, fy, fz + camDir.y * 600), 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
   }
 
+  const table = standings(world);
+  const place = table.indexOf(river) + 1;
+  const alive = world.rivers.filter(isRacing).length;
+  hud.rank.textContent = `${ordinal(place)}/${world.rivers.length} · ${alive} flowing`;
   const toSea = world.dist[cellIndex(terrain, river.x, river.z)];
-  hud.dist.textContent = `${(toSea / 1000).toFixed(2)} km to sea`;
+  hud.dist.textContent = river.out ? `Watching ${nameOf(focus)}` : `${(toSea / 1000).toFixed(2)} km to sea`;
   const secs = (river.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);
   hud.litres.textContent = fmtL(river.volume);
-  if (river.finished && !finishedShown) {
-    finishedShown = true;
-    hud.banner.innerHTML = `<b>You reached the sea</b><span>${fmtTime(secs)} · ${(river.travelled / 1000).toFixed(1)} km · ${fmtL(river.volume)}</span><span>${river.lakes} lake${river.lakes === 1 ? '' : 's'} swallowed</span><small>Tap or press R to flow again</small>`;
+  if (!isRacing(river) && !endShown) {
+    endShown = true;
+    const head = river.finished
+      ? place === 1 ? 'You reached the sea first!' : `You reached the sea ${ordinal(place)}`
+      : `Absorbed by ${river.out.by}`;
+    hud.banner.innerHTML = `<b>${head}</b><span>${ordinal(place)} of ${world.rivers.length} · ${fmtTime(secs)} · ${fmtL(river.volume)}</span><span>${river.lakes} lake${river.lakes === 1 ? '' : 's'} swallowed</span><small>Tap or press R to race again</small>`;
     hud.banner.hidden = false;
   }
 
@@ -202,4 +254,5 @@ Object.assign(dbg, {
 Object.defineProperties(dbg, {
   world: { get: () => world },
   river: { get: () => river },
+  focus: { get: () => focus },
 });

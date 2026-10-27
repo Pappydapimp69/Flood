@@ -21,7 +21,7 @@ test('size is the fourth root of relative volume', () => {
   assert.ok(Math.abs(sizeOf(TUNE.startVolume * 16) - 2) < 1e-12);
 });
 
-test('a lake is swallowed once, by the first river to reach it', () => {
+test('a lake is swallowed once, by the biggest river touching it', () => {
   const w = createWorld(t42);
   const lake = w.lakes.reduce((a, b) => (b.cells > a.cells ? b : a));
   const n = t42.size;
@@ -32,9 +32,11 @@ test('a lake is swallowed once, by the first river to reach it', () => {
   const p = { x: ((k % n) / (n - 1) - 0.5) * t42.worldSize, z: (Math.floor(k / n) / (n - 1) - 0.5) * t42.worldSize };
   const a = addRiver(w, 'a', p), b = addRiver(w, 'b', p);
   step(w, new Map());
-  assert.equal(w.lakeTaken[lake.id], a.idx);
-  assert.ok(a.volume >= TUNE.startVolume + lakeGain(lake));
-  assert.ok(b.volume < TUNE.startVolume + lakeGain(lake), 'second river also got the lake');
+  // Both touch it in the same tick: the bigger one takes it, exactly once.
+  const [win, lose] = a.volume >= b.volume ? [a, b] : [b, a];
+  assert.equal(w.lakeTaken[lake.id], win.idx);
+  assert.ok(win.volume >= TUNE.startVolume + lakeGain(lake));
+  assert.ok(lose.volume < TUNE.startVolume + lakeGain(lake), 'both rivers got the lake');
   assert.equal(w.events.filter((e) => e.lake === lake.id).length, 1);
 });
 

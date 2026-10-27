@@ -24,6 +24,10 @@
     #banner[hidden] { display: none; }
     #help { position: fixed; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: 0; right: 0; text-align: center;
       font: 13px system-ui, sans-serif; color: #10303dcc; pointer-events: none; }
+    #rank { font-size: 18px; font-weight: 800; }
+    #feed { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); top: calc(12px + env(safe-area-inset-top, 0px));
+      display: grid; gap: 4px; justify-items: end; pointer-events: none; font: 600 13px system-ui, sans-serif; max-width: 45vw; }
+    #feed div { background: #0e3442cc; color: #eefaff; padding: 4px 10px; border-radius: 8px; }
     #litres::before { content: "💧 "; }
     #pop { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); font: 800 28px system-ui, sans-serif;
       color: #e8fbff; text-shadow: 0 2px 6px #0b3a4a; opacity: 0; pointer-events: none; }
@@ -40,9 +44,10 @@
 </head>
 <body>
   <div id="app"></div>
-  <div id="hud"><h1>FLOOD</h1><div id="stats"><div id="dist"></div><div id="litres"></div><div id="time"></div></div></div>
+  <div id="hud"><h1>FLOOD</h1><div id="stats"><div id="rank"></div><div id="dist"></div><div id="litres"></div><div id="time"></div></div></div>
   <div id="banner" hidden></div>
   <div id="pop"></div>
+  <div id="feed"></div>
   <div id="help">Steer: ← → or A D · on a phone, hold the left or right side · M: map</div>
   <div id="fallback" hidden></div>
   <script type="module" src="./src/client/main.js"></script>

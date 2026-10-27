@@ -32,6 +32,13 @@ export const TUNE = {
   lakeCellCap: 400, // ...counting at most this many cells
   // Bigger rivers are faster but turn slower, so the leader can't simply snowball.
   speedPerSize: 0.25, // max speed multiplier gained per unit of size above 1
+  // Contact: when a head touches a rival's head or channel, the smaller river
+  // is absorbed and the larger takes this share of its water.
+  absorb: 0.5,
+  contactDepth: 1, // metres of channel that counts as a rival's water
+  liveTicks: 300, // only channel dug in the last 15 s is live water; older is a dry bed
+  graceTicks: 100, // no contact for anyone in their first 5 s
+  spawnGap: 2500, // metres between spawns where the band allows
 };
 
 // Size from volume without transcendental Math: two square roots.
@@ -64,8 +71,9 @@ export function createWorld(terrain) {
   return {
     terrain, flow, dist: distanceToSea(terrain, downhill),
     lakeOf, lakes, lakeTaken: new Int32Array(lakes.length).fill(-1),
-    events: [], // for presentation: { type: 'lake', lake, river, gain, tick }
-    carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), tick: 0, rivers: [], dirty: [],
+    events: [], // for presentation: lake captures and merges, see step()
+    digs: [], // channel digs queued during a tick, applied together at its end
+    carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), dugAt: new Int32Array(n * n), tick: 0, rivers: [], dirty: [],
   };
 }
 
@@ -107,16 +115,31 @@ export function spawnBand(world) {
     world.band = { lo, hi, cells };
     spread += 0.04;
   } while (cells.length < 300 && spread < 0.5);
+  // Fallback for crowded lobbies: twice the spread.
+  const wlo = mid * (1 - spread * 2), whi = mid * (1 + spread * 2);
+  world.band.wide = cands.filter((i) => world.dist[i] >= wlo && world.dist[i] <= whi);
   return world.band;
 }
 
-// Keyed by player id, so a spawn never shifts when others join.
+// Keyed by player id. Keeps clear of rivers already placed, so add rivers in
+// a fixed order (sorted ids) when the result must be reproducible.
 export function spawnPoint(world, id) {
   const t = world.terrain, n = t.size;
-  const { cells } = spawnBand(world);
+  const band = spawnBand(world);
   const r = stream(t.seed, `spawn:${id}`);
-  const i = cells[Math.floor(r() * cells.length)];
-  return { x: ((i % n) / (n - 1) - 0.5) * t.worldSize, z: (Math.floor(i / n) / (n - 1) - 0.5) * t.worldSize };
+  const others = world.rivers.map((o) => o.path[0]);
+  let best = null, bestGap = -1;
+  for (let tries = 0; tries < 120; tries++) {
+    // Half the tries in the fair band, then a wider one if it is crowded.
+    const cells = tries < 60 ? band.cells : band.wide;
+    const i = cells[Math.floor(r() * cells.length)];
+    const p = { x: ((i % n) / (n - 1) - 0.5) * t.worldSize, z: (Math.floor(i / n) / (n - 1) - 0.5) * t.worldSize };
+    let gap = Infinity;
+    for (const o of others) gap = Math.min(gap, (o.x - p.x) ** 2 + (o.z - p.z) ** 2);
+    if (gap >= TUNE.spawnGap * TUNE.spawnGap) return p;
+    if (gap > bestGap) { bestGap = gap; best = p; }
+  }
+  return best;
 }
 
 export function addRiver(world, id, at = spawnPoint(world, id)) {
@@ -140,12 +163,17 @@ export function addRiver(world, id, at = spawnPoint(world, id)) {
     travelled: 0,
     finished: false,
     finishTick: -1,
+    out: null, // { by, tick } once absorbed by a rival
+    born: world.tick,
     path: [],
   };
   pushPathPoint(world, river);
   world.rivers.push(river);
+  applyDigs(world);
   return river;
 }
+
+export const isRacing = (r) => !r.finished && !r.out;
 
 function gradient(world, x, z, self) {
   const h = world.terrain.cell;
@@ -162,9 +190,25 @@ function normalize(r) {
 
 // One authoritative tick. inputs: Map<id, steer>, steer an integer in [-1, 1]
 // (negative = turn left as seen looking along the flow).
+//
+// Phases, so the result never depends on the order rivers were added:
+// 1. every racing river moves against last tick's surface;
+// 2. contacts resolve (smaller absorbed), judged on last tick's channels;
+// 3. lakes go to the biggest river touching them;
+// 4. this tick's channel digs are applied, in id order.
 export function step(world, inputs) {
   for (const r of world.rivers) {
-    if (r.finished) continue;
+    if (!isRacing(r)) continue;
+    moveRiver(world, r, inputs);
+  }
+  resolveContacts(world);
+  resolveLakes(world);
+  applyDigs(world);
+  world.tick++;
+}
+
+function moveRiver(world, r, inputs) {
+  {
     const steer = Math.max(-1, Math.min(1, inputs?.get(r.id) | 0));
     if (steer) {
       // Turn by adding a sideways component, then renormalising (angle = atan(a)).
@@ -189,7 +233,7 @@ export function step(world, inputs) {
       r.guidedTicks++;
       guidedStep(world, r, ci);
       afterMove(world, r);
-      continue;
+      return;
     }
 
     const here = surfaceAt(world, r.x, r.z, me);
@@ -239,7 +283,86 @@ export function step(world, inputs) {
     moveTo(world, r, nx, nz);
     afterMove(world, r);
   }
-  world.tick++;
+}
+
+const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+// Bigger first; equal volumes fall back to id so ties never depend on order.
+const biggerFirst = (a, b) => b.volume - a.volume || byId(a, b);
+
+function resolveContacts(world) {
+  const rs = world.rivers.filter((r) => isRacing(r) && world.tick - r.born >= TUNE.graceTicks);
+  if (rs.length < 2) return;
+  const { carve, owner } = world;
+  const pairs = new Map();
+  const add = (a, b, how) => {
+    const [p, q] = byId(a, b) < 0 ? [a, b] : [b, a];
+    const key = `${p.id}|${q.id}`;
+    if (!pairs.has(key)) pairs.set(key, Object.assign([p, q], { how }));
+  };
+  const live = new Set(rs.map((r) => r.idx));
+  for (const a of rs) {
+    // Head in a rival's channel.
+    const k = cellIndex(world.terrain, a.x, a.z);
+    const o = owner[k];
+    if (o >= 0 && o !== a.idx && live.has(o) && carve[k] > TUNE.contactDepth && isLive(world, k)) {
+      add(a, world.rivers[o], 'channel');
+    }
+    // Heads touching.
+    for (const b of rs) {
+      if (b.idx <= a.idx) continue;
+      const reach = (widthOf(a) + widthOf(b)) / 2;
+      const dx = a.x - b.x, dz = a.z - b.z;
+      if (dx * dx + dz * dz < reach * reach) add(a, b, 'head');
+    }
+  }
+  const order = [...pairs.values()].sort((u, v) => {
+    const bu = [...u].sort(biggerFirst)[0], bv = [...v].sort(biggerFirst)[0];
+    return biggerFirst(bu, bv) || byId([...u].sort(biggerFirst)[1], [...v].sort(biggerFirst)[1]);
+  });
+  for (const pair of order) {
+    if (pair[0].out || pair[1].out) continue;
+    const [winner, loser] = [...pair].sort(biggerFirst);
+    const gain = loser.volume * TUNE.absorb;
+    loser.out = { by: winner.id, tick: world.tick };
+    grow(winner, gain);
+    world.events.push({ type: 'merge', winner: winner.idx, loser: loser.idx, how: pair.how, gain, tick: world.tick });
+  }
+}
+
+function resolveLakes(world) {
+  const claims = new Map();
+  for (const r of world.rivers) {
+    if (r.out) continue;
+    const lake = world.lakeOf[cellIndex(world.terrain, r.x, r.z)];
+    if (lake < 0 || world.lakeTaken[lake] >= 0) continue;
+    const prev = claims.get(lake);
+    if (!prev || biggerFirst(r, prev) < 0) claims.set(lake, r);
+  }
+  for (const lake of [...claims.keys()].sort((a, b) => a - b)) {
+    const r = claims.get(lake);
+    world.lakeTaken[lake] = r.idx;
+    const gain = lakeGain(world.lakes[lake]);
+    grow(r, gain);
+    r.lakes++;
+    world.events.push({ type: 'lake', lake, river: r.idx, gain, tick: world.tick });
+  }
+}
+
+export function isLive(world, k) {
+  return world.tick - world.dugAt[k] < TUNE.liveTicks;
+}
+
+export function widthOf(r) {
+  return Math.min(TUNE.maxWidth, TUNE.width * r.size);
+}
+
+// Finish order, then racers by distance left, then the absorbed (latest out first).
+export function standings(world) {
+  const fin = world.rivers.filter((r) => r.finished).sort((a, b) => a.finishTick - b.finishTick || biggerFirst(a, b));
+  const left = (r) => world.dist[cellIndex(world.terrain, r.x, r.z)];
+  const racing = world.rivers.filter(isRacing).sort((a, b) => left(a) - left(b) || byId(a, b));
+  const out = world.rivers.filter((r) => r.out).sort((a, b) => b.out.tick - a.out.tick || biggerFirst(a, b));
+  return [...fin, ...racing, ...out];
 }
 
 function moveTo(world, r, nx, nz) {
@@ -271,16 +394,6 @@ function guidedStep(world, r, ci) {
 }
 
 function afterMove(world, r) {
-  // Swallow a lake the moment the head touches it (one-shot, first come).
-  const ci = cellIndex(world.terrain, r.x, r.z);
-  const lake = world.lakeOf[ci];
-  if (lake >= 0 && world.lakeTaken[lake] < 0) {
-    world.lakeTaken[lake] = r.idx;
-    const gain = lakeGain(world.lakes[lake]);
-    grow(r, gain);
-    r.lakes++;
-    world.events.push({ type: 'lake', lake, river: r.idx, gain, tick: world.tick });
-  }
   const last = r.path[r.path.length - 1];
   const lx = r.x - last.x, lz = r.z - last.z;
   if (lx * lx + lz * lz >= (world.terrain.cell * 0.75) ** 2) pushPathPoint(world, r);
@@ -298,18 +411,28 @@ export function cellIndex(t, wx, wz) {
   return y * n + x;
 }
 
-// Record a path point and dig the channel under it: a flat-bottomed trench at
-// (centre surface - depth), feathered at the banks.
+// Record a path point and queue the channel under it: a flat-bottomed trench
+// at (centre surface - depth), feathered at the banks.
 function pushPathPoint(world, r) {
-  const t = world.terrain, n = t.size, cell = t.cell;
+  const t = world.terrain;
   // Bed depth is measured from undug ground, so passes never stack into a pit.
   const centre = surfaceAt(world, r.x, r.z, r.idx);
-  const width = Math.min(TUNE.maxWidth, TUNE.width * r.size), depth = TUNE.depth * r.size;
+  const width = widthOf(r), depth = TUNE.depth * r.size;
   const bed = Math.min(centre, sampleFilled(t, r.x, r.z)) - depth;
   r.path.push({ x: r.x, z: r.z, water: centre - depth * 0.3, w: width, tick: world.tick });
+  world.digs.push({ r, x: r.x, z: r.z, width, depth, bed });
+}
 
+function applyDigs(world) {
+  const digs = world.digs.sort((a, b) => byId(a.r, b.r));
+  world.digs = [];
+  for (const d of digs) dig(world, d);
+}
+
+function dig(world, { r, x: px, z: pz, width, depth, bed }) {
+  const t = world.terrain, n = t.size, cell = t.cell;
   const rad = width / 2, feather = cell * 0.6;
-  const gx = (r.x / t.worldSize + 0.5) * (n - 1), gy = (r.z / t.worldSize + 0.5) * (n - 1);
+  const gx = (px / t.worldSize + 0.5) * (n - 1), gy = (pz / t.worldSize + 0.5) * (n - 1);
   const reach = Math.ceil((rad + feather) / cell);
   const cx = Math.round(gx), cy = Math.round(gy);
   for (let y = cy - reach; y <= cy + reach; y++) {
@@ -329,6 +452,8 @@ function pushPathPoint(world, r) {
         world.owner[k] = r.idx;
         world.dirty.push(k);
       }
+      // Refresh the live-water clock where this river still owns the cell.
+      if (world.owner[k] === r.idx && want > TUNE.contactDepth) world.dugAt[k] = world.tick;
     }
   }
 }
@@ -366,6 +491,7 @@ export function riverFingerprint(world) {
   mix(world.tick);
   for (const r of [...world.rivers].sort((a, b) => (a.id < b.id ? -1 : 1))) {
     mix(Math.round(r.x * 100)); mix(Math.round(r.z * 100)); mix(r.finishTick); mix(r.path.length); mix(Math.round(r.volume));
+    mix(r.out ? r.out.tick : -1);
   }
   return (h >>> 0).toString(16).padStart(8, '0');
 }

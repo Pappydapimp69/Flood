@@ -85,3 +85,33 @@ entries below for context. Each ends with a log entry here.
 - Rivals' channels already change the surface others feel; capture/merge rules come next.
 - Rival heads in one tick still read each other mid-update — snapshot first.
 - Runs take ~3–8 minutes; revisit pacing once there are opponents.
+
+## M4 — Bots (done)
+
+**Built**
+- The sim now runs in phases each tick: all rivers move against last tick's surface → contacts
+  → lakes → channel digs (in id order). Outcomes don't depend on the order rivers were added
+  (unit test reverses it).
+- Contact: a head touching a rival's head, or a rival's *live* channel (dug in the last 15 s),
+  absorbs the smaller river; the bigger takes 50% of its water. 5 s spawn grace. Older channel is
+  a dry bed — permanent trails made upstream, out-of-sight deaths the norm.
+- Lakes touched by several heads in one tick go to the biggest.
+- Spawns keep ≥2.5 km apart (wider band fallback when crowded).
+- `src/shared/bot.js`: bots steer from the same state a player sees — progress toward the sea,
+  untaken lakes, avoiding live water of anything that might be bigger, chasing clearly smaller
+  rivals by aggression. Each bot has its own id-keyed RNG; steering only beats going straight
+  by a margin.
+- Client: 11 bots by default (`?bots=N`), coloured ribbons, rank "#4/12 · 8 flowing", event feed,
+  "Absorbed …" pop, spectate the river that absorbed you, end banner with place.
+- Tests: `tests/unit/race.test.mjs` (determinism, add-order independence, contact rule, spawn
+  gap, standings, bots place better than never-steering rivers); play test for absorb + spectate.
+
+**Open**
+- Bot quality is mixed: they win every race on the test seeds but average placement beats
+  never-steering rivers on only some seeds. Tune when real players give a baseline.
+- Stragglers can take 10 minutes; consider a "the sea rises" shrink timer for the BR ending.
+
+**Carry forward to M5**
+- Inputs are just `Map<id, steer>` per tick, and the sim is deterministic — ready for a server
+  that runs the same `step()` and broadcasts state.
+- Bots run in the shared module, so the server can host them.

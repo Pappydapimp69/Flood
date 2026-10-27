@@ -42,9 +42,11 @@ export class Ribbon {
     for (let i = from; i < count; i++) this.writePoint(world, river, i, path[i].x, path[i].z, path[i].water);
     this.written = count;
     const last = path[count - 1];
-    this.writePoint(world, river, count, headX, headZ, last.water, true);
+    // An absorbed river stops at its last laid point; no live end.
+    const live = !river.out;
+    if (live) this.writePoint(world, river, count, headX, headZ, last.water, true);
     this.geo.attributes.position.needsUpdate = true;
-    this.geo.setDrawRange(0, count * 6);
+    this.geo.setDrawRange(0, (live ? count : count - 1) * 6);
   }
 
   writePoint(world, river, i, x, z, water, live = false) {
