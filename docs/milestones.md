@@ -166,3 +166,25 @@ entries below for context. Each ends with a log entry here.
 - Real phone profiling (headless can't measure GPU): the terrain is 262k vertices; a
   half-resolution display mesh is the next lever if phones struggle.
 - Bigger islands for big lobbies; bot tuning; a "ghost" prediction of your own head online.
+
+## M7 — Depth tug-of-war (done)
+
+**Built** (ADR 0003)
+- Cutting depth from size and speed; contact siphons water from the shallower river each tick
+  (1.2% at a full lead, 5% deadband, 1.5% cap); out below 40% of starting water.
+- Live rival channels no longer shape the surface others flow on — crossing costs water, never
+  traps. Dry beds are still terrain.
+- Bots compare depth instead of volume.
+- Client: heads and tags by depth (red ▲ deeper, green ▼ shallower, amber = even), "cutting N m
+  deep" HUD line, red screen edge + "X is draining you", "+N L from X" pops, "drained dry" wording.
+- Gamepad support (stick/D-pad steer, A select / race again, Y map, X sound) and the GitHub Pages
+  deploy from `main` landed alongside.
+- Tests: duel tests (deeper drains shallower to the floor, equal depths move nothing, live rival
+  channel never dents the surface), play tests for the drain warning and gamepad.
+
+**Measured** (10 seeds × 12 bots): biggest-at-60 s won 1/10 (unchanged from absorb), eliminations
+3.4 → 1.6 per race, ~22% of all water changes hands.
+
+**Carry forward to M8**
+- Lakes are still one-shot gulps; M8 drains them through your channel over time, and a deeper
+  rival crossing that channel taps the flow.

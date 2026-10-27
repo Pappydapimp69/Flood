@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
-import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, DT, TICK_HZ } from '../shared/river.js';
+import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, drainLake, VERT } from './terrainMesh.js';
@@ -112,6 +112,9 @@ const hud = {
   dist: document.getElementById('dist'),
   time: document.getElementById('time'),
   litres: document.getElementById('litres'),
+  depth: document.getElementById('depth'),
+  drain: document.getElementById('drain'),
+  drainText: document.getElementById('drain-text'),
   rank: document.getElementById('rank'),
   pop: document.getElementById('pop'),
   feed: document.getElementById('feed'),
@@ -201,6 +204,14 @@ function status(text) {
 const camTarget = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 const camDir = new THREE.Vector2(0, -1);
+// 1: cuts deeper than you (touching it drains you), -1: shallower (you drain
+// it), 0: too close to call — the same deadband the sim uses.
+function threatOf(r) {
+  const lead = Math.abs(r.depth - river.depth) / Math.max(Math.min(r.depth, river.depth), 0.5);
+  if (lead <= TUNE.siphonDeadband) return 0;
+  return r.depth > river.depth ? 1 : -1;
+}
+
 // Name tags over the nearest rivals, so you know who is who and who is bigger.
 const tagBox = document.getElementById('tags');
 const tagPool = [];
@@ -223,9 +234,9 @@ function placeTags() {
     tmpV.set(...o.e.screen).project(camera);
     if (tmpV.z > 1) { el.hidden = true; return; }
     el.hidden = false;
-    const threat = river && o.e.r.volume > river.volume;
-    el.className = river ? (threat ? 'threat' : 'prey') : '';
-    el.textContent = `${nameOf(o.e.r)} ${river ? (threat ? '▲' : '▼') : ''}`;
+    const t = river ? threatOf(o.e.r) : 0;
+    el.className = t > 0 ? 'threat' : t < 0 ? 'prey' : '';
+    el.textContent = `${nameOf(o.e.r)} ${t > 0 ? '▲' : t < 0 ? '▼' : river ? '=' : ''}`;
     el.style.transform = `translate(${((tmpV.x + 1) / 2) * innerWidth}px, ${((1 - tmpV.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
   });
 }
@@ -308,6 +319,30 @@ function raceIsOver(w) {
   return Number.isFinite(first) && w.tick - first >= FINISH_WINDOW;
 }
 
+// Water won and lost to rivals since the last feedback update, by rival index.
+const tug = { gain: new Map(), loss: new Map(), lastTick: -1, shownAt: 0 };
+
+// Every half second: a pop for water you siphoned, a red edge and a warning
+// while someone is siphoning you.
+function tugFeedback(now) {
+  const draining = river && isRacing(river) && world.tick - tug.lastTick < 6 && tug.loss.size > 0;
+  hud.drain.classList.toggle('on', !!draining);
+  if (now - tug.shownAt < 500) return;
+  tug.shownAt = now;
+  const top = (m) => [...m].sort((a, b) => b[1] - a[1])[0];
+  if (draining) {
+    const [who] = top(tug.loss);
+    hud.drainText.textContent = `${nameOf(world.rivers[who])} is cutting deeper — it's draining you`;
+  }
+  if (tug.gain.size) {
+    const total = [...tug.gain.values()].reduce((a, b) => a + b, 0);
+    const [who] = top(tug.gain);
+    showPop(`+${fmtL(total)} from ${nameOf(world.rivers[who])}`);
+  }
+  tug.gain.clear();
+  tug.loss.clear();
+}
+
 function advance(inputs) {
   for (const e of entries) e.prev = { x: e.r.x, z: e.r.z };
   step(world, inputs);
@@ -316,12 +351,17 @@ function advance(inputs) {
     if (e.type === 'lake') {
       drainLake(terrainMesh, world.lakeOf, e.lake);
       if (river && e.river === river.idx) { showPop(`+${fmtL(e.gain)}`); audio.lake(); }
+    } else if (e.type === 'siphon' && river) {
+      // Tally the tug-of-war; the render loop turns it into feedback.
+      if (e.to === river.idx) tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount);
+      if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
+      tug.lastTick = world.tick;
     } else if (e.type === 'merge') {
       const w = world.rivers[e.winner], l = world.rivers[e.loser];
-      if (w === river) { showPop(`Absorbed ${nameOf(l)} +${fmtL(e.gain)}`); audio.merge(true); }
+      if (w === river) { showPop(`You drained ${nameOf(l)} dry`); audio.merge(true); }
       if (l === river) audio.merge(false);
-      feed(`${nameOf(w)} absorbed ${nameOf(l)}`);
-      // Spectate whoever absorbed the river we were watching.
+      feed(`${nameOf(w)} drained ${nameOf(l)} dry`);
+      // Spectate whoever drained the river we were watching.
       if (l === focus) focus = w;
     }
   }
@@ -344,10 +384,10 @@ function showResults(table, final) {
   const place = river ? table.indexOf(river) + 1 : 0;
   let head = 'Race over';
   if (river?.finished) head = place === 1 ? 'You reached the sea first!' : `You reached the sea ${ordinal(place)}`;
-  else if (river?.out) head = `Absorbed by ${nameOf(world.rivers.find((r) => r.id === river.out.by))}`;
+  else if (river?.out) head = `Drained dry by ${nameOf(world.rivers.find((r) => r.id === river.out.by))}`;
   else if (river && final) head = `Time's up — ${ordinal(place)}`;
   const status = (r) => r.finished ? `sea · ${fmtTime(r.finishTick / TICK_HZ)}`
-    : r.out ? `absorbed by ${nameOf(world.rivers.find((o) => o.id === r.out.by))}` : 'still flowing';
+    : r.out ? `drained by ${nameOf(world.rivers.find((o) => o.id === r.out.by))}` : 'still flowing';
   const rows = table.slice(0, 5);
   if (river && place > 5) rows.push(river);
   const list = rows.map((r) => `<li class="${r === river ? 'me' : ''}"><span>${ordinal(table.indexOf(r) + 1)} ${escapeHtml(nameOf(r))}</span><span>${status(r)}</span></li>`).join('');
@@ -411,9 +451,9 @@ renderer.setAnimationLoop(() => {
     e.head.scale.set(70 * r.size * big, 25 * r.size * big, 70 * r.size * big);
     // Threat at a glance: red heads would absorb you, green ones you can absorb.
     if (river && r !== river) {
-      const threat = r.volume > river.volume;
-      e.head.material.emissive.set(threat ? '#a8281c' : '#2f8a3a');
-      e.head.material.color.set(threat ? '#ffb3a8' : '#c9f5c4');
+      const t = threatOf(r);
+      e.head.material.emissive.set(t > 0 ? '#a8281c' : t < 0 ? '#2f8a3a' : '#7a6a1c');
+      e.head.material.color.set(t > 0 ? '#ffb3a8' : t < 0 ? '#c9f5c4' : '#f5e9b0');
     }
     e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
     e.ribbon.update(world, r, hx, hz, now / 1000);
@@ -449,6 +489,8 @@ renderer.setAnimationLoop(() => {
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);
   hud.litres.textContent = fmtL(me.volume);
+  hud.depth.textContent = `cutting ${me.depth.toFixed(1)} m deep`;
+  tugFeedback(now);
   if (river && !isRacing(river) && !endShown) {
     endShown = true;
     showResults(table, false);

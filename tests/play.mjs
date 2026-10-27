@@ -117,7 +117,7 @@ await check('the water HUD counts up as the river gathers water', async () => {
   await page.close();
 });
 
-await check('race: rank shows, and an absorbed player spectates the winner', async () => {
+await check('race: rank shows, and a drained player spectates the winner', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   await page.goto(base);
   await until(page, (s) => s.ready, 'ready');
@@ -137,7 +137,7 @@ await check('race: rank shows, and an absorbed player spectates the winner', asy
     const r = await page.evaluate(() => ({ out: __flood.river.out, focus: __flood.focus.id, banner: document.getElementById('banner').hidden ? '' : document.getElementById('banner').textContent }));
     if (r.out && r.banner) {
       const by = await page.evaluate(() => window.__absorber);
-      if (r.out.by !== by || r.focus !== by || !r.banner.includes(`Absorbed by ${by}`)) throw new Error(JSON.stringify(r));
+      if (r.out.by !== by || r.focus !== by || !r.banner.includes(`Drained dry by ${by}`)) throw new Error(JSON.stringify(r));
       if (shotDir) await page.screenshot({ path: `${shotDir}/play-race.png` });
       const rows = await page.evaluate(() => document.querySelectorAll('#banner li').length);
       if (rows < 6) throw new Error(`results list has ${rows} rows`);
@@ -149,6 +149,30 @@ await check('race: rank shows, and an absorbed player spectates the winner', asy
     await page.waitForTimeout(50);
   }
   throw new Error('player was never absorbed');
+});
+
+await check('tug-of-war: a deeper rival on you shows the drain warning and takes water', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
+  await page.goto(base + '&nohint');
+  await until(page, (s) => s.ready && s.tick > 150, 'past spawn grace');
+  const r = await page.evaluate(async () => {
+    const me = __flood.river, bot = __flood.world.rivers.find((o) => o !== me && !o.out && !o.finished);
+    bot.volume = 1e6 * 81; bot.size = 3; // cuts about three times deeper
+    const v0 = me.volume;
+    let warned = '';
+    const park = setInterval(() => {
+      bot.x = me.x + 5; bot.z = me.z;
+      const d = document.getElementById('drain');
+      if (d.classList.contains('on')) warned = document.getElementById('drain-text').textContent;
+    }, 20);
+    await new Promise((res) => setTimeout(res, 2500));
+    clearInterval(park);
+    return { warned, lost: v0 - me.volume, bot: bot.id, tag: document.querySelector('#tags div.threat')?.textContent ?? '' };
+  });
+  if (!r.warned.includes(r.bot)) throw new Error(`no drain warning naming ${r.bot}: ${JSON.stringify(r)}`);
+  if (!(r.lost > 0)) throw new Error(`player lost no water: ${JSON.stringify(r)}`);
+  if (shotDir) await page.screenshot({ path: `${shotDir}/play-drain.png` });
+  await page.close();
 });
 
 // A fake standard-mapping gamepad the test can drive; installed before the page loads.
