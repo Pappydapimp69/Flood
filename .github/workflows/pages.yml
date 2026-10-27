@@ -1,7 +1,7 @@
 name: pages
 on:
   push:
-    branches: [ccr-8ebb946e-i3t5fj]
+    branches: [main, ccr-8ebb946e-i3t5fj]
   workflow_dispatch:
 permissions:
   contents: read
