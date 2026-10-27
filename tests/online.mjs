@@ -38,11 +38,12 @@ function checkPrints(v, who) {
   return n;
 }
 
+let errs = [];
 try {
   const ctxA = await browser.newContext({ viewport: { width: 800, height: 500 } });
   const ctxB = await browser.newContext({ viewport: { width: 390, height: 700 }, hasTouch: true, isMobile: true });
   const a = await ctxA.newPage(), b = await ctxB.newPage();
-  const errs = [];
+  errs = [];
   for (const p of [a, b]) p.on('pageerror', (e) => errs.push(e.message));
   await Promise.all([a.goto(`${base}?online&name=Ann`), b.goto(`${base}?online&name=Bo`)]);
 
@@ -75,7 +76,7 @@ try {
   if (errs.length) throw new Error(`page errors: ${errs.join(' | ')}`);
   console.log('online ok');
 } catch (e) {
-  console.error('online FAIL', e.message);
+  console.error('online FAIL', e.message, errs.join(' | '));
   code = 1;
 } finally {
   await browser.close();

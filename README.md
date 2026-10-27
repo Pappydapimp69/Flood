@@ -14,6 +14,9 @@ Steer with ← → (or A D); ↑ ↓ (W S) hurry or slow your fall. On a phone, 
   drops when more flows out than in.
 - Empty basins fill from every river running into them; you wait in the rising water until it's
   full, then flow across it like level ground.
+- Water is one network. Cut through a rival's live channel deeper than it runs and its water
+  keeps flowing into you until that channel goes dry; if they cut yours, yours flows into them.
+- Every start is the same height and the same route length from the sea.
 - More water is more mass: faster, harder to turn, deeper channels. Where rivers touch, the deeper
   one drains the shallower. Below 40% of your starting water, you're out.
 - Bright, flowing water is live and dangerous; grey channels are dry beds.

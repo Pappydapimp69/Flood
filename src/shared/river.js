@@ -57,7 +57,8 @@ export const TUNE = {
   glideSpeed: 140, // m/s sideways while falling (x0.5 slowed, x1.5 hurried)
   glideTurn: 0.04,
   startElevation: 0.62, // share of the highest peak
-  startTolerance: 0.02, // +- share of the peak
+  startTolerance: 0.02,
+  fairReach: 0.04, // starts sit within 4% of the same route length to the sea // +- share of the peak
   // Lava: a few flows down from the high ground. Water crossing lava boils off
   // and slows, and the lava it touches cools into a rock ridge.
   lavaFlows: 2,
@@ -67,6 +68,7 @@ export const TUNE = {
   lavaSlow: 0.6,
   damHeight: 4,
   // Contact is a depth tug-of-war: the deeper water siphons the shallower.
+  junctionK: 0.3, // share of a cut river's discharge that flows on into the river that cut it
   siphonRate: 0.012,
   siphonCap: 0.015,
   siphonDeadband: 0.05,
@@ -105,6 +107,7 @@ export function createWorld(terrain) {
     lakeOutlet: lakeOutlets(terrain, lakeOf, lakes), // cell just past each lake's spill point
     events: [], // for presentation, see step()
     digs: [], // channel digs queued during a tick, applied together at its end
+    junctions: new Map(), // 'from|to' -> { from, to, until }: a cut channel's water flowing on into the cutter
     carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), dugAt: new Int32Array(n * n), tick: 0, rivers: [], dirty: [],
   };
   world.lava = new Uint8Array(n * n); // 1 where lava flows
@@ -209,7 +212,17 @@ export function spawnBand(world) {
     }
     tol *= 1.5;
   } while (cells.length < 200 && tol < peak * 0.2);
-  world.band = { target, cells, wide: cells };
+  // Fair paths: of those, keep the ones as far from the sea as the median, by
+  // the shortest route water can take, widening until there's room for everyone.
+  const reach = world.reach;
+  const sorted = cells.map((c) => reach[c]).sort((a, b) => a - b);
+  const mid = sorted[sorted.length >> 1];
+  let fair = [];
+  let band = TUNE.fairReach;
+  for (; fair.length < 700 && band < 0.5; band *= 1.25) {
+    fair = cells.filter((c) => Math.abs(reach[c] - mid) <= mid * band);
+  }
+  world.band = { target, cells: fair, wide: fair, reach: mid };
   return world.band;
 }
 
@@ -474,12 +487,13 @@ function resolveContacts(world) {
     if (!prev || Math.abs(dp - dq) > Math.abs(prev[1] - prev[3])) contacts.set(key, [p, dp, q, dq, how]);
   };
   const live = new Set(rs.map((r) => r.idx));
+  const cuts = []; // heads in a rival's live channel: [a, aDepth, owner, channelDepth]
   for (const a of rs) {
     // Head in a rival's live channel: the channel's water is as deep as it was dug.
     const k = cellIndex(world.terrain, a.x, a.z);
     const o = owner[k];
     if (o >= 0 && o !== a.idx && live.has(o) && carve[k] > TUNE.contactDepth && isLive(world, k)) {
-      add(a, a.depth, world.rivers[o], carve[k], 'channel');
+      cuts.push([a, a.depth, world.rivers[o], carve[k]]);
     }
     // Heads touching.
     for (const b of rs) {
@@ -489,7 +503,6 @@ function resolveContacts(world) {
       if (dx * dx + dz * dz < reach * reach) add(a, a.depth, b, b.depth, 'head');
     }
   }
-  if (!contacts.size) return;
   // Amounts come from volumes at the start of the phase, so order can't matter.
   const start = new Map(rs.map((r) => [r, r.volume]));
   const lost = new Map(), top = new Map();
@@ -503,6 +516,23 @@ function resolveContacts(world) {
     flows.push({ win, lose, amount, how });
     lost.set(lose, (lost.get(lose) ?? 0) + amount);
   }
+  // A cut through a rival's channel joins the two: water runs on from the
+  // shallower into the deeper for as long as the cut stays live.
+  for (const [a, da, b, db] of cuts) {
+    const [win, dw, lose, dl] = da >= db ? [a, da, b, db] : [b, db, a, da];
+    if ((dw - dl) / Math.max(dl, 0.5) < TUNE.siphonDeadband) continue;
+    const jk = `${lose.id}|${win.id}`;
+    if (!world.junctions.has(jk)) world.events.push({ type: 'junction', from: lose.idx, to: win.idx, tick: world.tick });
+    world.junctions.set(jk, { from: lose, to: win, until: world.tick + TUNE.liveTicks });
+  }
+  for (const jk of [...world.junctions.keys()].sort()) {
+    const j = world.junctions.get(jk);
+    if (world.tick >= j.until || !start.has(j.from) || !start.has(j.to)) { world.junctions.delete(jk); continue; }
+    const amount = dischargeOf(j.from) * TUNE.junctionK;
+    flows.push({ win: j.to, lose: j.from, amount, how: 'junction' });
+    lost.set(j.from, (lost.get(j.from) ?? 0) + amount);
+  }
+  if (!flows.length) return;
   for (const f of flows) {
     // Scale down evenly if one river is being drained from several sides at once.
     const total = lost.get(f.lose), cap = start.get(f.lose) * TUNE.siphonCap;
@@ -660,8 +690,9 @@ function joinLake(world, r, lake, cell) {
   r.via.set(lake, { cell, e: TUNE.outletStart, born: world.tick });
   r.lakes++;
   // Joining a lake adds its water to yours at once, then keeps flowing.
+  // A full lake's surge comes off the brim: it doesn't lower the lake (a lake
+  // only falls when more flows out than in).
   const take = world.lakeVol[lake] * TUNE.joinShare;
-  world.lakeVol[lake] -= take;
   grow(r, take);
   world.events.push({ type: 'join', lake, river: r.idx, gain: take, tick: world.tick });
 }
@@ -687,7 +718,8 @@ function afterMove(world, r) {
   if (lake !== r.inLake) {
     if (r.inLake >= 0) joinLake(world, r, r.inLake, here);
     r.inLake = lake;
-    if (lake >= 0 && world.lakeVol[lake] < world.lakeCap[lake] * TUNE.fullAt) {
+    // Back in a lake you already drain: you run through it to your own outlet.
+    if (lake >= 0 && !r.via.has(lake) && world.lakeVol[lake] < world.lakeCap[lake] * TUNE.fullAt) {
       r.pooled = lake;
       r.pooledTicks = 0;
       world.events.push({ type: 'pool', lake, river: r.idx, tick: world.tick });

@@ -58,13 +58,13 @@ test('contact: the deeper river siphons the shallower until it dries up', () => 
   park();
   const b0 = b.volume;
   step(w, new Map());
-  const s = w.events.filter((e) => e.type === 'siphon');
+  const s = w.events.filter((e) => e.type === 'siphon' && e.how === 'head');
   assert.equal(s.length, 1);
   assert.equal(s[0].from, b.idx);
   const lead = (a.depth - b.depth) / b.depth;
   assert.ok(lead > 0.3, `lead ${lead}`);
   const want = b0 * TUNE.siphonRate * Math.min(1, lead);
-  assert.ok(Math.abs(b0 - b.volume - want) < want * 0.2, `took ${b0 - b.volume}, expected about ${want}`);
+  assert.ok(Math.abs(s[0].amount - want) < want * 0.2, `took ${s[0].amount}, expected about ${want}`);
   // Hold the contact: b drains to the floor and is out, credited to a.
   for (let k = 0; k < 400 && !b.out; k++) { park(); step(w, new Map()); }
   assert.equal(b.out?.by, 'a');

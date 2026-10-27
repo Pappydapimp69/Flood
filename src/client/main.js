@@ -415,6 +415,11 @@ function advance(inputs) {
       feed(`${nameOf(world.rivers[e.river])} filled a basin`);
     } else if (e.type === 'join') {
       if (river && e.river === river.idx) { showPop(`Lake joined · +${fmtL(e.gain)} now, more through your outlet`); audio.lake(); }
+    } else if (e.type === 'junction') {
+      const from = world.rivers[e.from], to = world.rivers[e.to];
+      if (to === river) showPop(`You cut into ${nameOf(from)} — its water flows into you`);
+      if (from === river) showPop(`${nameOf(to)} cut your channel — your water runs into it!`);
+      feed(`${nameOf(to)} cut into ${nameOf(from)}`);
     } else if (e.type === 'steam') {
       if (river && e.river === river.idx) steamed += e.amount;
     } else if (e.type === 'siphon' && river) {
@@ -601,10 +606,14 @@ renderer.setAnimationLoop(() => {
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);
   hud.litres.textContent = fmtL(me.volume);
+  // The water network feeding you: lakes through your outlets, rivers you cut into.
   const feeds = me.via.size;
+  let tribs = 0;
+  for (const j of world.junctions.values()) if (j.to === me) tribs++;
+  const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   hud.depth.textContent = me.pooled >= 0
     ? `filling a basin · ${Math.min(99, Math.floor(100 * world.lakeVol[me.pooled] / world.lakeCap[me.pooled]))}%`
-    : `cutting ${me.depth.toFixed(1)} m deep` + (me.inflow > 0 ? ` · +${fmtL(me.inflow * TICK_HZ)}/s from ${feeds} lake${feeds === 1 ? '' : 's'}` : '');
+    : `cutting ${me.depth.toFixed(1)} m deep` + (fedBy ? ` · fed by ${fedBy}` : '');
   tugFeedback(now);
   if (river && !isRacing(river) && !endShown) {
     endShown = true;

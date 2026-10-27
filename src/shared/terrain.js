@@ -8,8 +8,8 @@ export const SEA_LEVEL = 0;
 export const LAKE_MIN_DEPTH = 2;
 const FILL_EPS = 0.01; // metres; keeps every filled cell strictly above its outlet
 
-// Defaults: a ~48 km square map with an island ~40 km tall, peaks near 2 km.
-export const DEFAULTS = { size: 512, worldSize: 48000, maxHeight: 2100, seaDepth: 220 };
+// Defaults: a 64 km square map with an island ~55 km tall, peaks near 2.4 km.
+export const DEFAULTS = { size: 640, worldSize: 64000, maxHeight: 2400, seaDepth: 220 };
 
 const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
 const lerp = (a, b, t) => a + (b - a) * t;
