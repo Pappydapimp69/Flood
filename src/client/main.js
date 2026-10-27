@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
-import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -49,10 +49,10 @@ scene.add(sun);
 
 // The island changes per race online, so its meshes are rebuilt on demand.
 let terrain, terrainMesh, seabed, sea, W;
-function useIsland(seed) {
+function useIsland(seed, made) {
   if (terrain?.seed === seed) return;
   for (const m of [terrainMesh, seabed, sea]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
-  terrain = generateIsland(seed);
+  terrain = made ?? generateIsland(seed);
   W = terrain.worldSize;
   terrainMesh = buildTerrainMesh(terrain);
   seabed = buildSeabed(terrain);
@@ -143,10 +143,11 @@ let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, 
 // Online: frames from the server, consumed in order; ids give each char's river.
 let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 
-function beginRace(seed, raceIds, me) {
+// rolled: a world already built for this seed (solo rolls it), else built here.
+function beginRace(seed, raceIds, me, rolled) {
   for (const e of entries) { scene.remove(e.ribbon.mesh, e.head, e.streak); e.ribbon.geo.dispose(); e.head.material.dispose(); e.streak.material.dispose(); }
-  useIsland(seed);
-  world = createWorld(terrain);
+  useIsland(seed, rolled?.terrain);
+  world = rolled?.terrain === terrain ? rolled : createWorld(terrain);
   for (const id of raceIds) addRiver(world, id, undefined, { drop: !params.has('nodrop') }); // sorted ids: reproducible spawns
   river = world.rivers.find((r) => r.id === me) ?? null;
   focus = river ?? world.rivers[0];
@@ -180,10 +181,12 @@ function beginRace(seed, raceIds, me) {
 function newRun() {
   mode = 'solo';
   // A fresh island every race, unless ?seed pins one.
-  const seed = Number(params.get('seed')) || 1 + Math.floor(Math.random() * 1_000_000);
+  const want = Number(params.get('seed')) || 1 + Math.floor(Math.random() * 1_000_000);
   const all = [PLAYER, ...Array.from({ length: BOTS }, (_, i) => `bot${String(i + 1).padStart(2, '0')}`)].sort();
   names = {};
-  beginRace(seed, all, PLAYER);
+  // Reroll until the summit ring seats everyone.
+  const { seed, world: rolled } = rollIsland(want, all.length);
+  beginRace(seed, all, PLAYER, rolled);
   bots = world.rivers.filter((r) => r !== river).map((r) => createBot(world, r));
 }
 

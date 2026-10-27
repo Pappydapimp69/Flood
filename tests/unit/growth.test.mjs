@@ -103,3 +103,15 @@ test('in a bot race several rivers reach the sea, and the winner grew on the way
     assert.ok(fin[0].volume > TUNE.startVolume * 1.1, `seed ${seed}: winner volume ${fin[0].volume}`);
   }
 });
+
+test('the island is rerolled until the summit ring seats every river', async () => {
+  const { rollIsland, seats, spawnBand } = await import('../../src/shared/river.js');
+  const { world } = rollIsland(4, 30);
+  assert.ok(seats(world) >= 30, `only ${seats(world)} seats`);
+  // Every start cell is on the highest summit's own slopes.
+  const t = world.terrain, band = spawnBand(world);
+  let top = 0;
+  for (let i = 1; i < t.height.length; i++) if (t.height[i] > t.height[top]) top = i;
+  assert.equal(band.top, top);
+  for (const c of band.cells) assert.ok(t.height[c] > t.height[band.top] * 0.6, `start cell ${c} far below the summit`);
+});

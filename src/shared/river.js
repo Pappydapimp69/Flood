@@ -1,7 +1,7 @@
 // River simulation. Authoritative, fixed-tick, shared by client and server.
 // Rules: no transcendental Math; integer steering input; render never writes here.
 
-import { SEA_LEVEL, downhill, findLakes, MinHeap } from './terrain.js';
+import { SEA_LEVEL, downhill, findLakes, MinHeap, generateIsland } from './terrain.js';
 import { stream } from './rng.js';
 
 export const TICK_HZ = 20;
@@ -56,9 +56,8 @@ export const TUNE = {
   dropAlt: 6000, // metres above the ground at the start
   glideSpeed: 140, // m/s sideways while falling (x0.5 slowed, x1.5 hurried)
   glideTurn: 0.1, // radians per tick while falling: a full circle in about 3 s
-  startElevation: 0.5, // share of the highest peak
+  startElevation: 0.75, // share of the highest peak
   startTolerance: 0.02,
-  startRadius: 0.2, // starts lie within this fraction of the map width of its centre
   fairReach: 0.04, // starts sit within 4% of the same route length to the sea // +- share of the peak
   // Lava: a few flows down from the high ground. Water crossing lava boils off
   // and slows, and the lava it touches cools into a rock ridge.
@@ -78,7 +77,7 @@ export const TUNE = {
   liveTicks: 300, // only channel dug in the last 15 s is live water; older is a dry bed
   graceTicks: 100,
   gracePerRiver: 2,
-  spawnGap: 2000,
+  spawnGap: 1200,
 };
 
 // Size from volume without transcendental Math: two square roots.
@@ -199,34 +198,65 @@ export function surfaceAt(world, wx, wz, self = -1) {
 // highest peak, within a small tolerance), on open ground. Cached per world.
 export function spawnBand(world) {
   if (world.band) return world.band;
-  const t = world.terrain, n = t.size;
-  let peak = 0;
-  for (let i = 0; i < n * n; i++) if (t.height[i] > peak) peak = t.height[i];
+  const t = world.terrain, n = t.size, h = t.height;
+  let top = 0;
+  for (let i = 1; i < n * n; i++) if (h[i] > h[top]) top = i;
+  const peak = h[top];
   const target = peak * TUNE.startElevation;
   let tol = peak * TUNE.startTolerance, cells;
   do {
+    // The highest summit's own slopes: everything connected to the top that
+    // stays above the start contour. Starts ring the summit, nowhere else.
+    const near = new Uint8Array(n * n), queue = [top];
+    near[top] = 1;
     cells = [];
-    for (let i = 0; i < n * n; i++) {
-      const x = i % n, y = (i - x) / n;
-      // Around the central summit only, never out toward a coast.
-      const cx = x / (n - 1) - 0.5, cy = y / (n - 1) - 0.5;
-      if (cx * cx + cy * cy > TUNE.startRadius * TUNE.startRadius) continue;
-      if (Math.abs(t.height[i] - target) <= tol && t.filled[i] - t.height[i] < 0.5) cells.push(i);
+    while (queue.length) {
+      const c = queue.pop(), cx = c % n, cy = (c - cx) / n;
+      if (Math.abs(h[c] - target) <= tol && t.filled[c] - h[c] < 0.5) cells.push(c);
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const x = cx + dx, y = cy + dy;
+        if (x < 8 || y < 8 || x >= n - 8 || y >= n - 8) continue;
+        const k = y * n + x;
+        if (!near[k] && h[k] >= target - tol) { near[k] = 1; queue.push(k); }
+      }
     }
     tol *= 1.5;
   } while (cells.length < 200 && tol < peak * 0.2);
+  cells.sort((a, b) => a - b);
   // Fair paths: of those, keep the ones as far from the sea as the median, by
-  // the shortest route water can take, widening until there's room for everyone.
+  // the shortest route water can take, widening until most of the ring is in.
   const reach = world.reach;
   const sorted = cells.map((c) => reach[c]).sort((a, b) => a - b);
   const mid = sorted[sorted.length >> 1];
   let fair = [];
-  let band = TUNE.fairReach;
-  for (; fair.length < 700 && band < 0.5; band *= 1.25) {
+  for (let band = TUNE.fairReach; fair.length < cells.length * 0.6 && band < 0.5; band *= 1.25) {
     fair = cells.filter((c) => Math.abs(reach[c] - mid) <= mid * band);
   }
-  world.band = { target, cells: fair, wide: fair, reach: mid };
+  world.band = { target, cells: fair, wide: fair, reach: mid, top };
   return world.band;
+}
+
+// How many rivers the start ring can seat at least spawnGap apart (greedy, in
+// index order). A map that can't seat everyone gets rerolled.
+export function seats(world) {
+  const t = world.terrain, n = t.size, gap2 = TUNE.spawnGap * TUNE.spawnGap;
+  const placed = [];
+  for (const c of spawnBand(world).cells) {
+    const x = ((c % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(c / n) / (n - 1) - 0.5) * t.worldSize;
+    if (placed.every((p) => (p.x - x) ** 2 + (p.z - z) ** 2 >= gap2)) placed.push({ x, z });
+  }
+  return placed.length;
+}
+
+// The island for a race: from `seed`, the next seed and the next until the
+// summit ring seats every river. Returns the seed used and its fresh world.
+export function rollIsland(seed, rivers, tries = 40) {
+  let world;
+  for (let i = 0; i < tries; i++, seed = (seed % 1_000_000) + 1) {
+    world = createWorld(generateIsland(seed));
+    if (seats(world) >= rivers) break;
+  }
+  return { seed: world.terrain.seed, world };
 }
 
 // Keyed by player id. Keeps clear of rivers already placed, so add rivers in

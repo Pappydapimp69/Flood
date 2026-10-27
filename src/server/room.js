@@ -2,8 +2,7 @@
 // drive it with fake connections. A connection is { send(obj), close() }.
 
 import { randomBytes } from 'node:crypto';
-import { generateIsland } from '../shared/terrain.js';
-import { createWorld, addRiver, step, isRacing, standings, riverFingerprint, TICK_HZ } from '../shared/river.js';
+import { rollIsland, addRiver, step, isRacing, standings, riverFingerprint, TICK_HZ } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { encodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 
@@ -94,8 +93,8 @@ export class Room {
     const botIds = Array.from({ length: nBots }, (_, i) => `bot${String(i + 1).padStart(2, '0')}`);
     this.ids = [...humans.map((s) => s.id), ...botIds].sort();
     this.names = Object.fromEntries(humans.map((s) => [s.id, s.name || s.id]));
-    this.seed = this.fixedSeed ?? 1 + (randomBytes(4).readUInt32LE(0) % 1_000_000);
-    this.world = createWorld(generateIsland(this.seed));
+    // Reroll the island until its summit ring seats every river.
+    ({ seed: this.seed, world: this.world } = rollIsland(this.fixedSeed ?? 1 + (randomBytes(4).readUInt32LE(0) % 1_000_000), this.ids.length));
     for (const id of this.ids) addRiver(this.world, id, undefined, { drop: true });
     this.bots = this.world.rivers.filter((r) => botIds.includes(r.id)).map((r) => createBot(this.world, r));
     this.byId = new Map(humans.map((s) => [s.id, s]));
