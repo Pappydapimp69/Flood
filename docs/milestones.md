@@ -142,3 +142,27 @@ entries below for context. Each ends with a log entry here.
 - Own-input latency is one round trip; add local "ghost" prediction of your head if it feels slow.
 - Ribbon/water look, phone performance (262k-vertex terrain), win screens, menus polish.
 - Many early merges in 80-player rooms on a 48 km island — consider bigger maps for big lobbies.
+
+## M6 — Polish (done)
+
+**Built**
+- Water shader: flow stripes and bank foam scroll along each channel; water older than the
+  15 s live window fades to a grey dry bed, so you can see which channel is lethal. The fade
+  reads the sim's own `TUNE.liveTicks`.
+- Threat at a glance: rival heads are red if bigger than you (they'd absorb you), green if
+  smaller; name tags with ▲/▼ over the 8 nearest rivals. Heads grow into markers in map view.
+- Results: end screen with your place, time, litres, lakes and the top 5 (+ you), "Race again"
+  in solo, "Next race starts soon" online; final results when the race ends.
+- Finish window: a race ends 90 s after the first river reaches the sea (server and solo),
+  so stragglers can't drag it out.
+- First-run hint (once per browser, `?nohint` to skip); keyboard help hidden on phones.
+- Phones: no MSAA and pixel ratio capped at 1.5; pixel ratio re-read on resize.
+- Sound: river hiss that follows speed, lake gulp, merge thud; starts on first gesture,
+  never blocks the game; mute button (remembered).
+- HUD hidden until a race starts; online without a server explains how to start one.
+- Tests: finish-window unit test; play test checks the results list and "Race again".
+
+**Not done / next ideas**
+- Real phone profiling (headless can't measure GPU): the terrain is 262k vertices; a
+  half-resolution display mesh is the next lever if phones struggle.
+- Bigger islands for big lobbies; bot tuning; a "ghost" prediction of your own head online.

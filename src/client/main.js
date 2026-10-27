@@ -3,11 +3,12 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
 import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, DT, TICK_HZ } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
-import { decodeFrame, FP_EVERY } from '../shared/protocol.js';
+import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, drainLake, VERT } from './terrainMesh.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
 import { connect } from './net.js';
+import { createAudio } from './audio.js';
 
 // Test/debug surface. Tests poll this instead of waiting on wall-clock time.
 const dbg = (window.__flood = { ready: false, error: null, frames: 0, steers: [], prints: new Map() });
@@ -22,14 +23,18 @@ function fail(msg) {
   el.hidden = false;
 }
 
+// Phones and tablets: no MSAA and a lower pixel-ratio cap; fill rate is the bottleneck there.
+const lowPower = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches;
+const maxRatio = lowPower ? 1.5 : 2;
+
 let renderer;
 try {
-  renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+  renderer = new THREE.WebGLRenderer({ antialias: !lowPower, powerPreference: 'high-performance' });
 } catch (e) {
   fail('WebGL is not available in this browser.');
   throw e;
 }
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.getElementById('app').appendChild(renderer.domElement);
 
@@ -64,7 +69,7 @@ const headGeo = new THREE.SphereGeometry(1, 20, 12);
 function makeEntry(r, i) {
   const mine = r === river;
   const color = mine ? PLAYER_COLOR : BOT_COLORS[i % BOT_COLORS.length];
-  const ribbon = new Ribbon(color);
+  const ribbon = new Ribbon(color, mine);
   const head = new THREE.Mesh(headGeo, new THREE.MeshPhongMaterial({
     color: mine ? '#f2fcff' : '#dfeff5', emissive: mine ? '#2aa6d6' : '#2e5d6e', transparent: true, opacity: 0.92,
   }));
@@ -86,12 +91,19 @@ function fitCamera() {
   // Keep the horizontal view wide in portrait, so phones see the banks too.
   camera.fov = aspect < 1 ? Math.min(85, (2 * Math.atan(Math.tan((55 * Math.PI) / 360) / aspect) * 180) / Math.PI) : 55;
   camera.updateProjectionMatrix();
+  // Re-read the pixel ratio: zoom, OS scaling or a new monitor change it after load.
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxRatio));
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
 fitCamera();
 addEventListener('resize', fitCamera);
 
 const input = createInput(renderer.domElement);
+const audio = createAudio();
+const muteBtn = document.getElementById('mute');
+const showMute = () => { muteBtn.textContent = audio.muted ? '🔇' : '🔊'; };
+muteBtn.onclick = () => { audio.toggle(); showMute(); };
+showMute();
 const hud = {
   dist: document.getElementById('dist'),
   time: document.getElementById('time'),
@@ -102,12 +114,13 @@ const hud = {
   banner: document.getElementById('banner'),
   menu: document.getElementById('menu'),
   status: document.getElementById('status'),
+  hint: document.getElementById('hint'),
 };
 
 const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
 
 // A race: the world plus what draws it. `river` is null when spectating.
-let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, endShown, mode;
+let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, endShown, mode, raceOver, finalShown;
 // Online: frames from the server, consumed in order; ids give each char's river.
 let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 
@@ -122,6 +135,10 @@ function beginRace(seed, raceIds, me) {
   acc = 0;
   endShown = false;
   endTable = null;
+  raceOver = false;
+  finalShown = false;
+  showHint();
+  document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
   hud.banner.hidden = true;
   hud.feed.textContent = '';
@@ -139,6 +156,7 @@ function newRun() {
   bots = world.rivers.filter((r) => r !== river).map((r) => createBot(world, r));
 }
 
+let everOpen = false;
 function goOnline(name) {
   mode = 'online';
   input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true); };
@@ -146,7 +164,10 @@ function goOnline(name) {
   status('Connecting…');
   net = connect({
     name,
-    onStatus: (s) => { if (s === 'lost') status('Connection lost — rejoining…'); },
+    onStatus: (s) => {
+      if (s === 'open') everOpen = true;
+      if (s === 'lost') status(everOpen ? 'Connection lost — rejoining…' : 'No game server here — run it with npm run server · retrying…');
+    },
     onMessage: (m) => {
       if (m.t === 'lobby') status(`Lobby · ${m.players} player${m.players === 1 ? '' : 's'} · race starts in ${m.startsIn}s`);
       else if (m.t === 'start') {
@@ -175,6 +196,35 @@ function status(text) {
 const camTarget = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 const camDir = new THREE.Vector2(0, -1);
+// Name tags over the nearest rivals, so you know who is who and who is bigger.
+const tagBox = document.getElementById('tags');
+const tagPool = [];
+const tmpV = new THREE.Vector3();
+function placeTags() {
+  const near = entries
+    .filter((e) => e.screen && e.r !== river)
+    .map((e) => ({ e, d: Math.hypot(e.r.x - focus.x, e.r.z - focus.z) }))
+    .filter((o) => o.d < 5000 && !mapView)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 8);
+  while (tagPool.length < near.length) {
+    const el = document.createElement('div');
+    tagBox.append(el);
+    tagPool.push(el);
+  }
+  tagPool.forEach((el, i) => {
+    const o = near[i];
+    if (!o) { el.hidden = true; return; }
+    tmpV.set(...o.e.screen).project(camera);
+    if (tmpV.z > 1) { el.hidden = true; return; }
+    el.hidden = false;
+    const threat = river && o.e.r.volume > river.volume;
+    el.className = river ? (threat ? 'threat' : 'prey') : '';
+    el.textContent = `${nameOf(o.e.r)} ${river ? (threat ? '▲' : '▼') : ''}`;
+    el.style.transform = `translate(${((tmpV.x + 1) / 2) * innerWidth}px, ${((1 - tmpV.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
+  });
+}
+
 const nameOf = (r) => (r === river ? 'You' : names[r.id] ?? r.id);
 function feed(text) {
   const li = document.createElement('div');
@@ -206,11 +256,12 @@ function sampleSteer() {
 }
 
 function soloTick() {
-  if (handleActions()) return;
+  if (handleActions() || raceOver) return;
   // Bots decide from the same start-of-tick state, then everyone steps together.
   const inputs = new Map([[PLAYER, sampleSteer()]]);
   for (const b of bots) inputs.set(b.river.id, dbg.botsOff ? 0 : botSteer(world, b));
   advance(inputs);
+  if (raceIsOver(world)) raceOver = true;
 }
 
 function onlineTick() {
@@ -222,6 +273,14 @@ function onlineTick() {
   }
 }
 
+// Same rule as the server: everyone stops once nobody is racing, or 90 s
+// after the first river reaches the sea.
+function raceIsOver(w) {
+  if (!w.rivers.some(isRacing)) return true;
+  const first = Math.min(...w.rivers.filter((r) => r.finished).map((r) => r.finishTick));
+  return Number.isFinite(first) && w.tick - first >= FINISH_WINDOW;
+}
+
 function advance(inputs) {
   for (const e of entries) e.prev = { x: e.r.x, z: e.r.z };
   step(world, inputs);
@@ -229,10 +288,11 @@ function advance(inputs) {
   for (const e of world.events.splice(0)) {
     if (e.type === 'lake') {
       drainLake(terrainMesh, world.lakeOf, e.lake);
-      if (river && e.river === river.idx) showPop(`+${fmtL(e.gain)}`);
+      if (river && e.river === river.idx) { showPop(`+${fmtL(e.gain)}`); audio.lake(); }
     } else if (e.type === 'merge') {
       const w = world.rivers[e.winner], l = world.rivers[e.loser];
-      if (w === river) showPop(`Absorbed ${nameOf(l)} +${fmtL(e.gain)}`);
+      if (w === river) { showPop(`Absorbed ${nameOf(l)} +${fmtL(e.gain)}`); audio.merge(true); }
+      if (l === river) audio.merge(false);
       feed(`${nameOf(w)} absorbed ${nameOf(l)}`);
       // Spectate whoever absorbed the river we were watching.
       if (l === focus) focus = w;
@@ -250,6 +310,38 @@ function showPop(text) {
   hud.pop.classList.add('show');
   clearTimeout(popTimer);
   popTimer = setTimeout(() => hud.pop.classList.remove('show'), 1600);
+}
+
+function showResults(table, final) {
+  const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
+  const place = river ? table.indexOf(river) + 1 : 0;
+  let head = 'Race over';
+  if (river?.finished) head = place === 1 ? 'You reached the sea first!' : `You reached the sea ${ordinal(place)}`;
+  else if (river?.out) head = `Absorbed by ${nameOf(world.rivers.find((r) => r.id === river.out.by))}`;
+  else if (river && final) head = `Time's up — ${ordinal(place)}`;
+  const status = (r) => r.finished ? `sea · ${fmtTime(r.finishTick / TICK_HZ)}`
+    : r.out ? `absorbed by ${nameOf(world.rivers.find((o) => o.id === r.out.by))}` : 'still flowing';
+  const rows = table.slice(0, 5);
+  if (river && place > 5) rows.push(river);
+  const list = rows.map((r) => `<li class="${r === river ? 'me' : ''}"><span>${ordinal(table.indexOf(r) + 1)} ${escapeHtml(nameOf(r))}</span><span>${status(r)}</span></li>`).join('');
+  const sub = river ? `<span>${ordinal(place)} of ${world.rivers.length} · ${fmtTime(secs)} · ${fmtL(river.volume)} · ${river.lakes} lake${river.lakes === 1 ? '' : 's'}</span>` : '';
+  const again = mode === 'solo'
+    ? `<button id="again">Race again</button>`
+    : `<small>${final ? 'Next race starts soon' : 'The race goes on — watch it out'}</small>`;
+  hud.banner.innerHTML = `<b>${head}</b>${sub}<ol>${list}</ol>${final || !river ? '' : '<small>Final results when the race ends</small>'}${again}`;
+  hud.banner.hidden = false;
+  document.getElementById('again')?.addEventListener('click', () => newRun());
+}
+const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+let hintTimer;
+function showHint() {
+  let seen = false;
+  try { seen = localStorage.getItem('flood.hint') === '1'; localStorage.setItem('flood.hint', '1'); } catch { /* no storage */ }
+  if (seen || params.has('nohint')) return;
+  hud.hint.hidden = false;
+  clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => { hud.hint.hidden = true; }, 9000);
 }
 
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -286,11 +378,20 @@ renderer.setAnimationLoop(() => {
     const hy = surfaceAt(world, hx, hz, r.idx) * VERT;
     e.head.visible = !r.out;
     e.head.position.set(hx, hy + 8, hz);
-    e.head.scale.set(70 * r.size, 25 * r.size, 70 * r.size);
-    e.ribbon.update(world, r, hx, hz);
+    const big = mapView ? 6 : 1; // heads read as markers on the map
+    e.head.scale.set(70 * r.size * big, 25 * r.size * big, 70 * r.size * big);
+    // Threat at a glance: red heads would absorb you, green ones you can absorb.
+    if (river && r !== river) {
+      const threat = r.volume > river.volume;
+      e.head.material.emissive.set(threat ? '#a8281c' : '#2f8a3a');
+      e.head.material.color.set(threat ? '#ffb3a8' : '#c9f5c4');
+    }
+    e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
+    e.ribbon.update(world, r, hx, hz, now / 1000);
     if (r === focus) { fx = hx; fz = hz; fy = hy; }
   }
 
+  placeTags();
   if (mapView) {
     controls.update();
   } else {
@@ -321,18 +422,14 @@ renderer.setAnimationLoop(() => {
   hud.litres.textContent = fmtL(me.volume);
   if (river && !isRacing(river) && !endShown) {
     endShown = true;
-    const head = river.finished
-      ? place === 1 ? 'You reached the sea first!' : `You reached the sea ${ordinal(place)}`
-      : `Absorbed by ${nameOf(world.rivers.find((r) => r.id === river.out.by))}`;
-    const again = mode === 'solo' ? 'Tap or press R to race again' : 'Next race starts after this one';
-    hud.banner.innerHTML = `<b>${head}</b><span>${ordinal(place)} of ${world.rivers.length} · ${fmtTime(secs)} · ${fmtL(river.volume)}</span><span>${river.lakes} lake${river.lakes === 1 ? '' : 's'} swallowed</span><small>${again}</small>`;
-    hud.banner.hidden = false;
+    showResults(table, false);
   }
-  if (endTable && mode === 'online' && nextFrame >= frames.length) {
-    const winner = endTable[0];
-    status(`Race over — ${winner === river?.id ? 'you won!' : `${names[winner] ?? winner} won`} · next race soon`);
-    endTable = null;
+  const over = mode === 'solo' ? raceOver : endTable && nextFrame >= frames.length;
+  if (over && !finalShown) {
+    finalShown = true;
+    showResults(table, true);
   }
+  audio.update(Math.min(1, (river?.speed ?? 0) / 220), !!river && isRacing(river));
 
   renderer.render(scene, camera);
   dbg.frames++;

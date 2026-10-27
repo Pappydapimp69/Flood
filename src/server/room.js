@@ -5,7 +5,7 @@ import { randomBytes } from 'node:crypto';
 import { generateIsland } from '../shared/terrain.js';
 import { createWorld, addRiver, step, isRacing, standings, riverFingerprint, TICK_HZ } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
-import { encodeFrame, FP_EVERY } from '../shared/protocol.js';
+import { encodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 
 export const ROOM = {
   minRivers: 12, // bots fill up to this
@@ -97,6 +97,7 @@ export class Room {
     this.byId = new Map(humans.map((s) => [s.id, s]));
     this.log = [];
     this.prints = new Map();
+    this.firstFinish = -1;
     this.state = 'race';
     this.lobbyEnds = 0;
     for (const seat of this.seats.values()) if (seat.conn) this.sendStart(seat);
@@ -121,7 +122,9 @@ export class Room {
     this.log.push(frame.i);
     this.broadcast(frame);
     if (w.tick % FP_EVERY === 0) this.prints.set(w.tick, riverFingerprint(w));
-    if (!w.rivers.some(isRacing) || w.tick >= this.cfg.maxTicks) this.end();
+    if (this.firstFinish < 0 && w.rivers.some((r) => r.finished)) this.firstFinish = Math.min(...w.rivers.filter((r) => r.finished).map((r) => r.finishTick));
+    const windowUp = this.firstFinish >= 0 && w.tick - this.firstFinish >= FINISH_WINDOW;
+    if (!w.rivers.some(isRacing) || windowUp || w.tick >= this.cfg.maxTicks) this.end();
   }
 
   end() {

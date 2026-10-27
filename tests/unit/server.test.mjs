@@ -5,7 +5,7 @@ import { startServer } from '../../src/server/server.mjs';
 import { Room } from '../../src/server/room.js';
 import { generateIsland } from '../../src/shared/terrain.js';
 import { createWorld, addRiver, step, riverFingerprint } from '../../src/shared/river.js';
-import { decodeFrame, FP_EVERY } from '../../src/shared/protocol.js';
+import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../../src/shared/protocol.js';
 
 // A test client: collects messages, can wait for one matching a predicate.
 function client(port, hello = {}) {
@@ -107,4 +107,18 @@ test('a wrong fingerprint gets a resync', async () => {
   } finally {
     srv.close();
   }
+});
+
+test('a race ends at most 90 s after the first river reaches the sea', () => {
+  const sent = [];
+  const conn = { send: (m) => sent.push(m), close() {} };
+  const room = new Room({ seed: 42, opts: { lobbyMs: 0 } });
+  room.hello(conn, {});
+  room.start();
+  while (room.state === 'race') room.tickRace();
+  const end = sent.find((m) => m.t === 'end');
+  assert.ok(end, 'no end message');
+  assert.equal(end.standings.length, 12);
+  assert.ok(room.firstFinish >= 0, 'nobody finished');
+  assert.ok(room.world.tick - room.firstFinish <= FINISH_WINDOW + 1, `ran ${room.world.tick - room.firstFinish} ticks past the first finish`);
 });

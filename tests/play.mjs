@@ -138,6 +138,10 @@ await check('race: rank shows, and an absorbed player spectates the winner', asy
       const by = await page.evaluate(() => window.__absorber);
       if (r.out.by !== by || r.focus !== by || !r.banner.includes(`Absorbed by ${by}`)) throw new Error(JSON.stringify(r));
       if (shotDir) await page.screenshot({ path: `${shotDir}/play-race.png` });
+      const rows = await page.evaluate(() => document.querySelectorAll('#banner li').length);
+      if (rows < 6) throw new Error(`results list has ${rows} rows`);
+      await page.click('#again');
+      await until(page, (st) => !st.ready || st.tick < 20, 'restart after Race again');
       await page.close();
       return;
     }

@@ -6,6 +6,11 @@ lakes to grow, cut rivals off, and be the first to reach the sea.
 ## Play
 Steer with ← → (or A D). On a phone, hold the left or right side of the screen. `M` toggles the map.
 
+- Flow downhill to the sea; first one there wins (the race ends 90 s later).
+- Swallow lakes to grow. Bigger rivers are faster and win contacts, but turn slower.
+- Touch a smaller river (green ▼) to absorb it; avoid bigger ones (red ▲).
+- Bright, flowing water is live and dangerous; grey channels are dry beds.
+
 ## Run it
 ```
 npm start            # solo only: static files on http://127.0.0.1:8080/  (?seed=42, ?bots=20)

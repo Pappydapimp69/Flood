@@ -32,3 +32,4 @@ export function decodeFrame(ids, chars) {
 }
 
 export const FP_EVERY = 100; // ticks between fingerprint checks
+export const FINISH_WINDOW = 20 * 90; // ticks the race runs on after the first river reaches the sea
