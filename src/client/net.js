@@ -41,8 +41,9 @@ export function connect({ name, onMessage, onStatus }) {
   const send = (obj) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); };
   return {
     // Send steer when it changes, and every second anyway so a lost message heals.
-    steer(s, now) {
-      if (s === lastSteer && now - sentAt < 1000) return;
+    // force: a press or release, sent even if it repeats the last value (a tap).
+    steer(s, now, force = false) {
+      if (!force && s === lastSteer && now - sentAt < 1000) return;
       lastSteer = s;
       sentAt = now;
       send({ t: 'in', s });

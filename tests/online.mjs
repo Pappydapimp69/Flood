@@ -25,7 +25,8 @@ async function until(page, fn, what, tries = 900) {
     if (fn(v)) return v;
     await page.waitForTimeout(100);
   }
-  throw new Error(`timed out: ${what}`);
+  const v = await view(page);
+  throw new Error(`timed out: ${what} (page tick ${v.tick}, you ${v.you}, server tick ${room.world?.tick}, state ${room.state})`);
 }
 function checkPrints(v, who) {
   let n = 0;
@@ -50,12 +51,16 @@ try {
   if (va.you === vb.you) throw new Error('both players got the same seat');
   const slotA = room.ids.indexOf(va.you);
 
+  // Hold left until the server has stamped it into a frame (the page may render slowly).
   await a.keyboard.down('ArrowLeft');
-  await until(a, (v) => v.tick > 2 * FP_EVERY + 10, 'A past two checks');
+  for (let i = 0; i < 300 && !room.log.some((f) => f[slotA] === '-'); i++) await a.waitForTimeout(50);
   await a.keyboard.up('ArrowLeft');
   if (!room.log.some((f) => f[slotA] === '-')) throw new Error('A steering never reached the server');
+  await until(a, (v) => v.tick > 2 * FP_EVERY + 10, 'A past two checks');
   console.log(`ok   both players in one race (${room.ids.length} rivers), A's steering reached the server`);
 
+  // A live client must keep up with the server, not just match it on old ticks.
+  await until(a, (v) => v.tick >= room.world.tick - 40, 'A keeps up with the live race');
   const pa = checkPrints(await view(a), 'A');
   const pb = checkPrints(await until(b, (v) => v.prints.length >= 2, 'B prints'), 'B');
   console.log(`ok   no desync: A matched ${pa}, B matched ${pb} server fingerprints`);

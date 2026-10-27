@@ -10,14 +10,18 @@ export function createInput(target) {
   const pointers = new Map(); // pointerId -> 'left' | 'right'
   const actions = []; // one-shot keys: 'restart', 'map'
 
-  const press = (side) => { held[side] = true; pulse[side] = true; };
+  let onChange = null; // (steer) => void, fired on every press and release
+  const current = () => (held.left === held.right ? 0 : held.left ? -1 : 1);
+  const press = (side) => { held[side] = true; pulse[side] = true; onChange?.(side === 'left' ? -1 : 1); };
   const sync = () => {
     held.left = keys.left || [...pointers.values()].includes('left');
     held.right = keys.right || [...pointers.values()].includes('right');
+    onChange?.(current());
   };
   const keys = { left: false, right: false };
 
   addEventListener('keydown', (e) => {
+    if (e.repeat && (LEFT.has(e.code) || RIGHT.has(e.code))) return e.preventDefault(); // held already
     if (LEFT.has(e.code)) { keys.left = true; press('left'); e.preventDefault(); }
     else if (RIGHT.has(e.code)) { keys.right = true; press('right'); e.preventDefault(); }
     else if (e.code === 'KeyR' || e.code === 'Enter' || e.code === 'Space') actions.push('restart');
@@ -49,5 +53,7 @@ export function createInput(target) {
       return l === r ? 0 : l ? -1 : 1;
     },
     takeActions() { return actions.splice(0); },
+    // Online play sends steer as it changes instead of waiting for the next frame.
+    set onChange(fn) { onChange = fn; },
   };
 }

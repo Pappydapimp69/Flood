@@ -141,6 +141,7 @@ function newRun() {
 
 function goOnline(name) {
   mode = 'online';
+  input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true); };
   if (!terrain) { useIsland(1); camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0); }
   status('Connecting…');
   net = connect({
@@ -157,7 +158,8 @@ function goOnline(name) {
         frames = m.log.slice();
         nextFrame = 0;
       } else if (m.t === 'f') {
-        if (world && m.k === nextFrame + frames.length) frames.push(m.i);
+        // frames[k] is tick k's frame; nextFrame is the next one to apply.
+        if (world && m.k === frames.length) frames.push(m.i);
       } else if (m.t === 'end') {
         endTable = m.standings;
       }
