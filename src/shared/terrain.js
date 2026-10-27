@@ -1,14 +1,14 @@
 // Island generator. Pure data, no three.js — the server will run this too.
 // Rules: deterministic from (seed, size); no transcendental Math feeding state.
 
-import { hash2 } from './rng.js';
+import { hash2, stream } from './rng.js';
 
 export const SEA_LEVEL = 0;
 // Filled cells deeper than this count as lakes; shallower fills read as flats.
 export const LAKE_MIN_DEPTH = 2;
 const FILL_EPS = 0.01; // metres; keeps every filled cell strictly above its outlet
 
-// Defaults: a 64 km square map with an island ~55 km tall, peaks near 2.4 km.
+// Defaults: a 64 km square map, an island up to ~58 km long, a summit near 2.4 km.
 export const DEFAULTS = { size: 640, worldSize: 64000, maxHeight: 2400, seaDepth: 220 };
 
 const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
@@ -54,35 +54,57 @@ function ridged(x, y, seed, octaves) {
   return sum / norm;
 }
 
-// Raw height field: an elongated north-south island with a mountain spine
-// set west of centre, a narrow northern cape and noisy coasts.
-function rawHeight(u, v, seed, maxHeight, seaDepth) {
-  // u, v in [-1, 1]; v = -1 is north.
-  const wx = u + 0.18 * (fbm(u * 2.2, v * 2.2, seed + 11, 4) - 0.5);
-  const wy = v + 0.18 * (fbm(u * 2.2 + 5, v * 2.2 - 3, seed + 23, 4) - 0.5);
+// Island shape, drawn from the seed: which way it points, how long and wide,
+// how ragged the coast, where a cape runs out. No trig (rotation is a unit
+// vector from sqrt), so every machine builds the same island.
+function shapeOf(seed) {
+  const r = stream(seed, 'shape');
+  let ax = r() * 2 - 1, ay = r() * 2 - 1;
+  const len = Math.sqrt(ax * ax + ay * ay) || 1;
+  ax /= len; ay /= len;
+  return {
+    ax, ay, // long axis
+    long: 0.8 + 0.12 * r(), // half-length along the axis
+    wide: 0.45 + 0.3 * r(), // half-width across it
+    cape: r() < 0.6 ? (r() < 0.5 ? -1 : 1) : 0, // a finger at one end, or none
+    capeW: 0.14 + 0.12 * r(),
+    coast: 0.35 + 0.35 * r(), // coastline raggedness
+    warp: 0.12 + 0.14 * r(),
+    ridge: 0.5 + 0.3 * r(), // how far the ridges run from the summit
+  };
+}
 
-  // Cape: the north narrows to a finger.
-  const capeK = smooth(-0.35, -0.95, wy);
-  const halfW = lerp(0.5, 0.16, capeK);
-  const ex = (wx + 0.05 * capeK) / halfW, ey = wy / 0.88;
+// Raw height field: one central summit with ridges running out along the
+// island's long axis, then noisy hills down to the coast.
+function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
+  // x, y in [-1, 1]; rotate into the island's frame: u along the long axis.
+  const u = x * S.ax + y * S.ay, v = -x * S.ay + y * S.ax;
+  const wu = u + S.warp * (fbm(x * 2.2, y * 2.2, seed + 11, 4) - 0.5);
+  const wv = v + S.warp * (fbm(x * 2.2 + 5, y * 2.2 - 3, seed + 23, 4) - 0.5);
+
+  // Cape: one end narrows to a finger.
+  const capeK = S.cape ? smooth(0.35, 0.95, wu * S.cape) : 0;
+  const halfW = lerp(S.wide, S.capeW, capeK);
+  const ex = wu / S.long, ey = wv / halfW;
   let d2 = ex * ex + ey * ey;
-  d2 += 0.55 * (fbm(u * 5, v * 5, seed + 31, 5) - 0.5);
+  d2 += S.coast * 1.6 * (fbm(x * 5, y * 5, seed + 31, 5) - 0.5);
   const land = smooth(1.0, 0.55, d2);
 
-  // Spine: strongest along a line west of centre, fading to the coasts.
-  const sx = (wx + 0.12) / 0.42;
-  const spine = clamp01(1 - sx * sx) * smooth(1.05, 0.25, ey * ey);
-  const peaks = ridged(u * 3.1, v * 3.1, seed + 47, 6);
-  const hills = fbm(u * 6, v * 6, seed + 59, 5);
+  // Summit at the centre; ridges along the long axis, fading to the coasts.
+  const c2 = (wu * wu + wv * wv) / 0.09;
+  const summit = clamp01(1 - c2);
+  const ridge = clamp01(1 - (wv * wv) / 0.03) * smooth(S.ridge, 0.05, Math.abs(wu));
+  const peaks = ridged(x * 3.1, y * 3.1, seed + 47, 6);
+  const hills = fbm(x * 6, y * 6, seed + 59, 5);
 
   // A dome under everything tilts the interior seaward, so only a few basins
   // survive the fill as lakes instead of every valley floor.
   const dome = clamp01(1 - d2);
-  const elev = 0.02 + 0.1 * hills * dome + 0.3 * dome + 0.65 * spine * peaks;
+  const elev = 0.02 + 0.1 * hills * dome + 0.28 * dome + 0.4 * ridge * peaks + 0.45 * summit * summit * (0.6 + 0.4 * peaks);
   // Both branches meet at -0.15 * seaDepth where land reaches 0.
   if (land > 0) return lerp(-seaDepth * 0.15, elev * maxHeight, smooth(0.0, 0.35, land));
   // Reach full depth before the map edge so the seabed outside matches.
-  const deep = Math.max(smooth(1.0, 2.2, d2), smooth(0.75, 0.97, Math.max(Math.abs(u), Math.abs(v))));
+  const deep = Math.max(smooth(1.0, 2.2, d2), smooth(0.75, 0.97, Math.max(Math.abs(x), Math.abs(y))));
   return -seaDepth * lerp(0.15, 1, deep);
 }
 
@@ -125,11 +147,12 @@ function fillDepressions(h, n) {
 export function generateIsland(seed = 1, opts = {}) {
   const { size: n, worldSize, maxHeight, seaDepth } = { ...DEFAULTS, ...opts };
   const height = new Float32Array(n * n);
+  const shape = shapeOf(seed);
   for (let y = 0; y < n; y++) {
     const v = (y / (n - 1)) * 2 - 1;
     for (let x = 0; x < n; x++) {
       const u = (x / (n - 1)) * 2 - 1;
-      height[y * n + x] = rawHeight(u, v, seed, maxHeight, seaDepth);
+      height[y * n + x] = rawHeight(u, v, seed, maxHeight, seaDepth, shape);
     }
   }
   const filled = fillDepressions(height, n);

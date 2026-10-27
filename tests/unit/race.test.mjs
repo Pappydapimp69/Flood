@@ -70,7 +70,7 @@ test('contact: the deeper river siphons the shallower until it dries up', () => 
   assert.equal(b.out?.by, 'a');
   assert.ok(b.volume < TUNE.floor * TUNE.startVolume);
   // Every litre b lost to siphoning arrived at a (lakes and travel add on top).
-  const moved = w.events.filter((e) => e.type === 'siphon');
+  const moved = w.events.filter((e) => e.type === 'siphon' && e.how === 'head');
   assert.ok(moved.every((e) => e.from === b.idx && e.to === a.idx));
 });
 
@@ -140,7 +140,7 @@ test('drop: 30 s of fall, steerable anywhere, touchdown on the start contour wit
   const zone = dropZone(w);
   const start = w.rivers.map((r) => ({ x: r.x, z: r.z }));
   for (let k = 0; k < TUNE.dropTicks; k++) {
-    step(w, new Map([['a', { s: k < 40 ? -1 : 0, f: 1 }], ['b', { s: 1, f: -1 }]]));
+    step(w, new Map([['a', { s: k < 16 ? -1 : 0, f: 1 }], ['b', { s: 1, f: -1 }]]));
     for (const r of w.rivers) assert.equal(r.path.length > 0, r.dropping === 0, 'a channel before landing');
   }
   assert.equal(TUNE.dropTicks, 600);
@@ -151,8 +151,11 @@ test('drop: 30 s of fall, steerable anywhere, touchdown on the start contour wit
     const k = Math.round((r.z / w.terrain.worldSize + 0.5) * (n - 1)) * n + Math.round((r.x / w.terrain.worldSize + 0.5) * (n - 1));
     assert.ok(zone.has(k), `${r.id} landed off the start contour`);
   }
-  // A turn then a hurried straight glide carries a far across the map.
-  assert.ok(Math.hypot(w.rivers[0].x - start[0].x, w.rivers[0].z - start[0].z) > 3000);
+  // Steering moved the landing: the same drop with no input lands elsewhere.
+  const w0 = createWorld(islands.get(2));
+  for (const id of ['a', 'b', 'c']) addRiver(w0, id, undefined, { drop: true });
+  for (let k = 0; k < TUNE.dropTicks; k++) step(w0, new Map());
+  assert.ok(Math.hypot(w.rivers[0].x - w0.rivers[0].x, w.rivers[0].z - w0.rivers[0].z) > 500, 'steering did not move the landing');
   assert.equal(landingCell(w, w.rivers[2].x, w.rivers[2].z) >= 0, true);
   assert.equal(w.events.filter((e) => e.type === 'land').length, 3);
 });

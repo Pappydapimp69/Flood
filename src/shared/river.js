@@ -55,9 +55,10 @@ export const TUNE = {
   dropTicks: 600,
   dropAlt: 6000, // metres above the ground at the start
   glideSpeed: 140, // m/s sideways while falling (x0.5 slowed, x1.5 hurried)
-  glideTurn: 0.04,
-  startElevation: 0.62, // share of the highest peak
+  glideTurn: 0.1, // radians per tick while falling: a full circle in about 3 s
+  startElevation: 0.5, // share of the highest peak
   startTolerance: 0.02,
+  startRadius: 0.2, // starts lie within this fraction of the map width of its centre
   fairReach: 0.04, // starts sit within 4% of the same route length to the sea // +- share of the peak
   // Lava: a few flows down from the high ground. Water crossing lava boils off
   // and slows, and the lava it touches cools into a rock ridge.
@@ -77,7 +78,7 @@ export const TUNE = {
   liveTicks: 300, // only channel dug in the last 15 s is live water; older is a dry bed
   graceTicks: 100,
   gracePerRiver: 2,
-  spawnGap: 2500,
+  spawnGap: 2000,
 };
 
 // Size from volume without transcendental Math: two square roots.
@@ -207,7 +208,9 @@ export function spawnBand(world) {
     cells = [];
     for (let i = 0; i < n * n; i++) {
       const x = i % n, y = (i - x) / n;
-      if (x < 8 || y < 8 || x >= n - 8 || y >= n - 8) continue;
+      // Around the central summit only, never out toward a coast.
+      const cx = x / (n - 1) - 0.5, cy = y / (n - 1) - 0.5;
+      if (cx * cx + cy * cy > TUNE.startRadius * TUNE.startRadius) continue;
       if (Math.abs(t.height[i] - target) <= tol && t.filled[i] - t.height[i] < 0.5) cells.push(i);
     }
     tol *= 1.5;

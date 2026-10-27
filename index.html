@@ -75,6 +75,14 @@
     #menu input { background: #eaf5fb; color: #10303d; text-align: center; }
     #menu button { background: #45d2ff; color: #062430; cursor: pointer; }
     #menu button.alt { background: transparent; color: #eefaff; outline: 2px solid #45d2ff88; }
+    #splash { position: fixed; inset: 0; display: grid; place-content: center; gap: 18px; text-align: center; cursor: pointer;
+      background: radial-gradient(circle at 50% 40%, #1d6f8ccc, #062430f2 70%); color: #eefaff; font: 16px system-ui, sans-serif; z-index: 10; }
+    #splash h2 { margin: 0; font-size: clamp(56px, 14vw, 120px); letter-spacing: 0.18em; text-shadow: 0 4px 24px #45d2ff88; }
+    #splash p { margin: 0; color: #cfe8f2; }
+    #splash b { font-size: 20px; animation: breathe 1.6s ease-in-out infinite alternate; }
+    @keyframes breathe { from { opacity: 0.45; } to { opacity: 1; } }
+    @media (prefers-reduced-motion: reduce) { #splash b { animation: none; } }
+    #splash[hidden] { display: none; }
     #fallback { position: fixed; inset: 0; display: grid; place-items: center; font: 16px system-ui; color: #10303d; }
     #fallback[hidden] { display: none; }
   </style>
@@ -94,7 +102,12 @@
   <div id="status" hidden></div>
   <div id="hint" hidden>← → steer · ↑ ↓ while falling · join lakes to grow · touch smaller <b class="g">▼</b> rivers to absorb them, avoid bigger <b class="r">▲</b> ones · bright water is live, grey channels are dry</div>
   <button id="mute" aria-label="Sound on or off"></button>
-  <div id="menu">
+  <div id="splash" hidden>
+    <h2>FLOOD</h2>
+    <p>Every player is a river. Race downhill to the sea.</p>
+    <b>Press any button</b>
+  </div>
+  <div id="menu" hidden>
     <h2>FLOOD</h2>
     <p>Every player is a river. Swallow lakes, cut rivals off, reach the sea first.</p>
     <input id="name" maxlength="12" placeholder="Your name" autocomplete="nickname">

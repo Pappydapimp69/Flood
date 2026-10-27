@@ -293,6 +293,7 @@ function menuActions() {
   for (const a of input.takeActions()) {
     const menuOpen = !hud.menu.hidden;
     const again = document.getElementById('again');
+    if (!splash.hidden) { if (a === 'confirm') leaveSplash(); continue; }
     if (a === 'mute') { audio.toggle(); showMute(); }
     else if (menuOpen && (a === 'up' || a === 'down')) {
       const btns = [...hud.menu.querySelectorAll('button')];
@@ -572,9 +573,11 @@ renderer.setAnimationLoop(() => {
     else if ((lookIdle += frameDt) > 1.5) camYaw *= Math.exp(-frameDt * 1.5);
     const course = courseOf(focus, fx, fz);
     const ang = Math.atan2(camDir.x * course.y - camDir.y * course.x, camDir.x * course.x + camDir.y * course.y);
-    const DEAD = 0.21; // ~12 degrees
+    // Falling, the camera swings with every turn so aiming reads at once.
+    const falling = !!focus.dropping;
+    const DEAD = falling ? 0 : 0.21; // ~12 degrees on the ground
     if (Math.abs(ang) > DEAD) {
-      const turn = (Math.abs(ang) - DEAD) * Math.sign(ang) * (1 - Math.exp(-frameDt * 1.2));
+      const turn = (Math.abs(ang) - DEAD) * Math.sign(ang) * (1 - Math.exp(-frameDt * (falling ? 6 : 1.2)));
       camDir.rotateAround(new THREE.Vector2(0, 0), turn).normalize();
     }
     const view = camDir.clone().rotateAround(new THREE.Vector2(0, 0), camYaw);
@@ -640,6 +643,14 @@ Object.assign(dbg, {
 
 // Start: ?seed / ?solo / ?bots go straight to a solo race, ?online joins the server,
 // otherwise show the menu.
+const splash = document.getElementById('splash');
+function leaveSplash() {
+  if (splash.hidden) return;
+  splash.hidden = true;
+  audio.music();
+  hud.menu.hidden = false;
+  document.getElementById('play-online').focus();
+}
 const nameBox = document.getElementById('name');
 try { nameBox.value = localStorage.getItem('flood.name') ?? ''; } catch { /* no storage */ }
 const pickName = () => {
@@ -651,7 +662,13 @@ document.getElementById('play-solo').onclick = () => { hud.menu.hidden = true; n
 document.getElementById('play-online').onclick = () => { hud.menu.hidden = true; goOnline(pickName()); };
 if (params.has('online')) { hud.menu.hidden = true; goOnline(params.get('name') ?? ''); }
 else if (params.has('seed') || params.has('solo') || params.has('bots')) { hud.menu.hidden = true; newRun(); }
-else { useIsland(1); camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0); }
+else {
+  // Splash first: the press that leaves it starts the music, then the menu.
+  useIsland(1 + Math.floor(Math.random() * 1_000_000));
+  camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0);
+  splash.hidden = false;
+  for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, leaveSplash);
+}
 // Live getters (Object.assign would copy today's values, not the getters).
 Object.defineProperties(dbg, {
   world: { get: () => world },
