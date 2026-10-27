@@ -42,8 +42,8 @@ export const TUNE = {
   joinShare: 0.06, // share of a lake's water you take at once when you join it
   fullAt: 0.999, // a lake this full is level ground you flow across
   maxPoolTicks: 900, // guaranteed exit: after 45 s pooled, the basin tops up and spills
-  trailErode: 0.04, // metres your recent channel deepens per 10 ticks, times size
-  trailErodePoints: 12, // how much of the recent channel keeps eroding
+  trailErode: 0.04, // metres your whole channel deepens per 10 ticks, times size, for good
+  trailPasses: 20, // ticks to sweep a whole trail once (a slice of it each tick)
   // Dry basins: a few lakes start empty and must be filled by the rivers that
   // run into them before anyone can flow across.
   basins: 5,
@@ -428,7 +428,7 @@ export function step(world, inputs) {
   }
   resolveContacts(world);
   hydrology(world);
-  if (world.tick % 10 === 0) erodeTrails(world);
+  erodeTrails(world);
   applyDigs(world);
   world.tick++;
 }
@@ -654,23 +654,36 @@ function hydrology(world) {
   }
 }
 
-// Erosion along the stretch each river is flowing in now: its last few path
-// points keep deepening, faster for heavier rivers, up to three times its depth.
-// Outlets are recut to how far they have eroded.
+// Erosion is forever: every river's whole trail keeps deepening as long as it
+// pours, faster for heavier rivers, never below sea level. A trail is swept a
+// slice per tick, all of it every trailPasses ticks. Outlets are recut to how
+// far they have eroded. Cells are marked for redraw every quarter metre.
 function erodeTrails(world) {
-  const t = world.terrain, n = t.size;
-  for (const r of world.rivers.filter((o) => isRacing(o) && !o.dropping).sort(byId)) {
-    const pts = r.path.slice(-TUNE.trailErodePoints);
-    const add = TUNE.trailErode * r.size, cap = r.depth * 3;
-    for (const p of pts) {
+  const t = world.terrain, n = t.size, ticks = TUNE.trailPasses;
+  const phase = world.tick % ticks;
+  // Each cell erodes once per sweep, however many path points cross it.
+  if (!world.erodedAt) world.erodedAt = new Int32Array(n * n);
+  const sweep = Math.floor(world.tick / ticks) + 1;
+  for (const r of world.rivers.filter((o) => !o.out && !o.dropping).sort(byId)) {
+    const add = (TUNE.trailErode * r.size * ticks) / 10;
+    const per = Math.ceil(r.path.length / ticks);
+    const end = Math.min(r.path.length, (phase + 1) * per);
+    for (let i = phase * per; i < end; i++) {
+      const p = r.path[i];
       const c = cellIndex(t, p.x, p.z), cx = c % n, cy = (c - cx) / n;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const k = (cy + dy) * n + cx + dx;
-        if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL) continue;
-        const v = Math.min(cap, world.carve[k] + add);
-        if (v > world.carve[k]) { world.carve[k] = v; world.dirty.push(k); }
+        if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL || world.erodedAt[k] === sweep) continue;
+        world.erodedAt[k] = sweep;
+        const was = world.carve[k];
+        // Deep canyons cut slower, but never stop.
+        const v = Math.min(t.height[k] + world.rock[k] - SEA_LEVEL - 0.5, was + add / (1 + was / (TUNE.depth * 3)));
+        if (v <= was) continue;
+        world.carve[k] = v;
+        if (Math.floor(v * 4) !== Math.floor(was * 4)) world.dirty.push(k);
       }
     }
+    if (phase || !isRacing(r)) continue;
     for (const [, o] of r.via) {
       const x = ((o.cell % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(o.cell / n) / (n - 1) - 0.5) * t.worldSize;
       world.digs.push({ r, x, z, width: widthOf(r), depth: o.e, bed: t.filled[o.cell] - o.e });

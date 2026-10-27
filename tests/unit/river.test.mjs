@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateIsland } from '../../src/shared/terrain.js';
-import { createWorld, addRiver, step, riverFingerprint, surfaceAt, TICK_HZ, TUNE } from '../../src/shared/river.js';
+import { createWorld, addRiver, step, riverFingerprint, surfaceAt, cellIndex, TICK_HZ, TUNE } from '../../src/shared/river.js';
 
 const SEEDS = [1, 2, 3, 42, 1337];
 const islands = new Map(SEEDS.map((s) => [s, generateIsland(s)]));
@@ -57,14 +57,26 @@ test('steering changes where the river goes', () => {
   assert.ok(ends.size >= 2, `all policies ended at ${[...ends]}`);
 });
 
-test('digging stays bounded and only on land', () => {
-  const { w, r } = run(2, 'wiggle');
+// Erosion is forever: the whole trail keeps deepening, start included.
+test('the start of a trail keeps eroding long after the head has left', () => {
+  const w = createWorld(islands.get(2));
+  const r = addRiver(w, 'p1');
+  for (let k = 0; k < 200; k++) step(w, new Map());
+  const p = r.path[1], c = cellIndex(w.terrain, p.x, p.z);
+  const d0 = w.carve[c];
+  for (let k = 0; k < 400 && !r.finished; k++) step(w, new Map());
+  assert.ok(w.carve[c] > d0 + 0.5, `start went ${d0} -> ${w.carve[c]}`);
+});
+
+test('digging stays on land and never cuts below sea level', () => {
+  const { w } = run(2, 'wiggle');
   const t = w.terrain;
-  const cap = TUNE.depth * 3 * r.size * 1.42; // max cutting depth: final size at top speed
   let dug = 0;
   for (let i = 0; i < w.carve.length; i++) {
-    assert.ok(w.carve[i] >= 0 && w.carve[i] <= cap, `carve ${w.carve[i]} at ${i} (cap ${cap})`);
-    if (w.carve[i] > 0) { dug++; assert.ok(t.filled[i] > 0, 'dug the sea'); }
+    if (w.carve[i] <= 0) continue;
+    dug++;
+    assert.ok(t.filled[i] > 0, 'dug the sea');
+    assert.ok(t.height[i] + w.rock[i] - w.carve[i] >= -0.01, `cell ${i} cut below sea level`);
   }
   assert.ok(dug > 100, `only ${dug} cells dug`);
 });
