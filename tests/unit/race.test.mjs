@@ -87,6 +87,28 @@ test('contact: equal depths move nothing', () => {
   assert.ok(!a.out && !b.out);
 });
 
+test('cutting deeper across a tapper\'s channel steals its lake', () => {
+  const w = createWorld(islands.get(42));
+  const lake = w.lakes.reduce((a, b) => (b.cells > a.cells ? b : a));
+  const n = w.terrain.size, k0 = w.lakeOf.indexOf(lake.id);
+  const at = { x: ((k0 % n) / (n - 1) - 0.5) * w.terrain.worldSize, z: (Math.floor(k0 / n) / (n - 1) - 0.5) * w.terrain.worldSize };
+  const tapper = addRiver(w, 'a', at);
+  const cutter = addRiver(w, 'b', { x: at.x + 4000, z: at.z });
+  const grace = TUNE.graceTicks + TUNE.gracePerRiver * w.rivers.length;
+  for (let k = 0; k < grace + 60; k++) step(w, new Map());
+  assert.equal(w.lakeTaken[lake.id], tapper.idx, 'tapper lost the lake early');
+  // A channel cell the tapper dug after tapping, then a much deeper cutter on it.
+  const t0 = w.lakeTapTick[lake.id];
+  const k = w.owner.findIndex((o, i) => o === tapper.idx && w.dugAt[i] >= t0 && w.carve[i] > 2 && i !== k0);
+  assert.ok(k >= 0, 'no channel dug after the tap');
+  Object.assign(cutter, { x: ((k % n) / (n - 1) - 0.5) * w.terrain.worldSize, z: (Math.floor(k / n) / (n - 1) - 0.5) * w.terrain.worldSize, dx: 0, dz: 0, speed: 0 });
+  cutter.volume = TUNE.startVolume * 81; cutter.size = 3;
+  // At zero speed the cutter only creeps (under 1 m) in its first tick, so it stays on the cell.
+  step(w, new Map());
+  assert.equal(w.lakeTaken[lake.id], cutter.idx, 'deeper cutter did not take the lake');
+  assert.ok(w.events.some((e) => e.type === 'tapcut' && e.how === 'cut' && e.to === cutter.idx));
+});
+
 test('a live rival channel costs water to cross but never traps', () => {
   const { w, a } = duel();
   // Live rival water is not felt as terrain; the same cells read as ground for its owner too.

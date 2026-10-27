@@ -21,23 +21,55 @@ test('size is the fourth root of relative volume', () => {
   assert.ok(Math.abs(sizeOf(TUNE.startVolume * 16) - 2) < 1e-12);
 });
 
-test('a lake is swallowed once, by the biggest river touching it', () => {
-  const w = createWorld(t42);
+// A head standing in the biggest lake of seed 42.
+function atBigLake(w) {
   const lake = w.lakes.reduce((a, b) => (b.cells > a.cells ? b : a));
-  const n = t42.size;
-  const at = { x: (lake.gx / (n - 1) - 0.5) * t42.worldSize, z: (lake.gy / (n - 1) - 0.5) * t42.worldSize };
-  // Centroid may sit outside an odd-shaped lake; find a real cell of it instead.
-  let k = cellIndex(t42, at.x, at.z);
-  if (w.lakeOf[k] !== lake.id) k = w.lakeOf.indexOf(lake.id);
-  const p = { x: ((k % n) / (n - 1) - 0.5) * t42.worldSize, z: (Math.floor(k / n) / (n - 1) - 0.5) * t42.worldSize };
+  const n = t42.size, k = w.lakeOf.indexOf(lake.id);
+  return { lake, p: { x: ((k % n) / (n - 1) - 0.5) * t42.worldSize, z: (Math.floor(k / n) / (n - 1) - 0.5) * t42.worldSize } };
+}
+
+test('a lake is tapped once, by the biggest river touching it', () => {
+  const w = createWorld(t42);
+  const { lake, p } = atBigLake(w);
   const a = addRiver(w, 'a', p), b = addRiver(w, 'b', p);
   step(w, new Map());
-  // Both touch it in the same tick: the bigger one takes it, exactly once.
   const [win, lose] = a.volume >= b.volume ? [a, b] : [b, a];
   assert.equal(w.lakeTaken[lake.id], win.idx);
-  assert.ok(win.volume >= TUNE.startVolume + lakeGain(lake));
-  assert.ok(lose.volume < TUNE.startVolume + lakeGain(lake), 'both rivers got the lake');
-  assert.equal(w.events.filter((e) => e.lake === lake.id).length, 1);
+  assert.equal(w.events.filter((e) => e.type === 'tap' && e.lake === lake.id).length, 1);
+  assert.equal(lose.inflow, 0);
+});
+
+test('a tapped lake drains in gradually and delivers exactly its water', () => {
+  const w = createWorld(t42);
+  const { lake, p } = atBigLake(w);
+  const r = addRiver(w, 'a', p);
+  const total = lakeGain(lake);
+  step(w, new Map());
+  const first = r.inflow;
+  assert.ok(first > 0 && first < total * 0.01, `first tick brought ${first} of ${total}`);
+  let delivered = first, k = 1, at40 = 0;
+  while (w.lakeLeft[lake.id] > 0 && k < 20 * 300) {
+    step(w, new Map());
+    delivered += w.lakeTaken[lake.id] === r.idx || w.lakeLeft[lake.id] === 0 ? r.inflow : 0;
+    if (++k === 20 * 40) at40 = delivered;
+    if (r.finished) break;
+  }
+  if (!r.finished) {
+    assert.ok(Math.abs(delivered - total) < 1, `delivered ${delivered} of ${total}`);
+    assert.ok(at40 > total * 0.85, `only ${at40 / total} after 40 s`);
+    assert.ok(w.events.some((e) => e.type === 'emptied' && e.lake === lake.id));
+  }
+});
+
+test('reaching the sea lets your lakes go for others to tap', () => {
+  const w = createWorld(t42);
+  const { lake, p } = atBigLake(w);
+  const r = addRiver(w, 'a', p);
+  step(w, new Map());
+  r.finished = true;
+  step(w, new Map());
+  assert.equal(w.lakeTaken[lake.id], -1);
+  assert.ok(w.lakeLeft[lake.id] > 0);
 });
 
 test('spawns are fair: every spawn sits in one narrow distance-to-sea band', () => {

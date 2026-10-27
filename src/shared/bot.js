@@ -46,13 +46,15 @@ export function botSteer(world, bot) {
       score += ((here - world.dist[k]) / L) * 2 * w; // progress toward the sea
       if (surfaceAt(world, x, z, r.idx) > r.low + TUNE.climb + 8) score -= 2 * w; // uphill wall
       const lake = world.lakeOf[k];
-      if (lake >= 0 && world.lakeTaken[lake] < 0) score += (0.6 + bot.skill) * w;
+      if (lake >= 0 && world.lakeTaken[lake] < 0 && world.lakeLeft[lake] > 0) score += (0.6 + bot.skill) * w;
       const o = world.owner[k];
       if (o >= 0 && o !== r.idx && world.carve[k] > TUNE.contactDepth && isLive(world, k)) {
         const owner = world.rivers[o];
         // Contact is a depth contest: avoid live water dug deeper than we cut,
         // and cross shallow channels on purpose to siphon them.
         if (isRacing(owner)) score += world.carve[k] > r.depth * 0.95 ? -4 * w : world.carve[k] < r.depth * 0.8 ? bot.aggression * 0.8 * w : 0;
+        // Cutting a shallower river's channel also steals the lakes it's draining.
+        if (isRacing(owner) && owner.inflow > 0 && world.carve[k] < r.depth * 0.9) score += (0.4 + bot.aggression) * w;
       }
     }
     for (const o of rivals) {

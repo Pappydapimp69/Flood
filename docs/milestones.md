@@ -188,3 +188,25 @@ entries below for context. Each ends with a log entry here.
 **Carry forward to M8**
 - Lakes are still one-shot gulps; M8 drains them through your channel over time, and a deeper
   rival crossing that channel taps the flow.
+
+## M8 — Lakes drain through your channel (done)
+
+**Built**
+- Touching a full lake *taps* it instead of swallowing it. Its water arrives over time: the share
+  that flows out per tick ramps from 0.15% to 0.6% over 20 s as the outlet erodes (~90% within
+  40 s); under 1,000 L the rest arrives at once (no endless decay tail). Total is the same as the
+  old one-shot gain.
+- Cutting a lake off: a head that cuts deeper than a rival's channel, on a stretch dug after that
+  rival tapped a lake, takes over the tap (the outlet starts eroding afresh). A tapper drained dry
+  hands its lakes to whoever drained it; one that reaches the sea lets them go for others to tap.
+- Bots value cutting across shallower rivers that are draining lakes.
+- Client: lakes sink toward their beds and fade to mud as they empty; HUD shows
+  "+N L/s from K lakes"; pops for tapping, cutting and being cut; feed line for cuts.
+- Tests: tap goes to the biggest head, gradual drain delivers exactly the lake's water (>85% in
+  40 s), finishing releases your lakes, a deeper cutter steals a tap.
+
+**Measured** (10 seeds × 12 bots): ~29 taps, ~8 cuts and ~25 lakes emptied per race; the river
+biggest at 60 s won 0/10 (no snowball).
+
+**Carry forward to M9**
+- Empty basins: a few lakes start dry and must be filled before you can spill on.

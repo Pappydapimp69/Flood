@@ -7,7 +7,9 @@ lakes to grow, cut rivals off, and be the first to reach the sea.
 Steer with ← → (or A D). On a phone, hold the left or right side of the screen. With a controller: stick or D-pad steers, A selects / races again, Y opens the map, X toggles sound. `M` toggles the map on a keyboard.
 
 - Flow downhill to the sea; first one there wins (the race ends 90 s later).
-- Swallow lakes to grow. Bigger rivers are faster and cut deeper, but turn slower.
+- Tap lakes to grow: a lake you touch drains into you over the next half minute through your
+  channel. A rival cutting deeper across that channel steals the flow. Bigger rivers are faster
+  and cut deeper, but turn slower.
 - Speed cuts deeper too. Where rivers touch, the deeper one drains the shallower each moment.
   Cross shallower rivers (green ▼) to drain them; keep off deeper ones (red ▲). Drained below
   40% of your starting water, you're out.

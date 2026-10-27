@@ -30,6 +30,13 @@ export const TUNE = {
   lakeBase: 120_000, // litres for swallowing any lake...
   lakePerCell: 9_000, // ...plus this per lake cell...
   lakeCellCap: 400, // ...counting at most this many cells
+  // A tapped lake drains through your channel instead of arriving at once: its
+  // outlet erodes, so the share flowing out per tick ramps up, then the lake
+  // runs dry. About 90% arrives within 40 s.
+  drainStart: 0.0015, // share of what's left per tick when first tapped...
+  drainEnd: 0.006, // ...rising to this as the outlet erodes...
+  erodeTicks: 400, // ...over 20 s
+  drainFloor: 1000, // litres; below this the rest arrives at once (no endless tail)
   // Bigger rivers are faster but turn slower, so the leader can't simply snowball.
   speedPerSize: 0.25, // max speed multiplier gained per unit of size above 1
   // Contact is a depth tug-of-war: where a head touches a rival's head or live
@@ -75,7 +82,10 @@ export function createWorld(terrain) {
   const { label: lakeOf, lakes } = findLakes(terrain);
   return {
     terrain, flow, dist: distanceToSea(terrain, downhill),
-    lakeOf, lakes, lakeTaken: new Int32Array(lakes.length).fill(-1),
+    lakeOf, lakes,
+    lakeTaken: new Int32Array(lakes.length).fill(-1), // river draining each lake, -1 if none
+    lakeTapTick: new Int32Array(lakes.length).fill(-1), // tick its current tap began
+    lakeLeft: Float64Array.from(lakes, (l) => lakeGain(l)), // litres still in it
     events: [], // for presentation: lake captures and merges, see step()
     digs: [], // channel digs queued during a tick, applied together at its end
     carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), dugAt: new Int32Array(n * n), tick: 0, rivers: [], dirty: [],
@@ -163,6 +173,7 @@ export function addRiver(world, id, at = spawnPoint(world, id)) {
     size: 1,
     depth: TUNE.depth,
     lakes: 0,
+    inflow: 0, // litres per tick arriving from tapped lakes
     low: Infinity, // lowest surface reached; water can't climb far above it
     best: Infinity, // best distance-to-sea so far, for stall detection
     stall: 0,
@@ -211,6 +222,7 @@ export function step(world, inputs) {
   }
   resolveContacts(world);
   resolveLakes(world);
+  drainLakes(world);
   applyDigs(world);
   world.tick++;
 }
@@ -302,6 +314,7 @@ function resolveContacts(world) {
   const grace = TUNE.graceTicks + TUNE.gracePerRiver * world.rivers.length;
   const rs = world.rivers.filter((r) => isRacing(r) && world.tick - r.born >= grace);
   if (rs.length < 2) return;
+  cutTaps(world, rs);
   const { carve, owner } = world;
   // Contacts from last tick's channels and this tick's heads: [a, aDepth, b, bDepth, how].
   const contacts = new Map();
@@ -359,22 +372,81 @@ function resolveContacts(world) {
   }
 }
 
+// Touching a full, untapped lake taps it: from then on it drains into you
+// (drainLakes). Several heads in one tick: the biggest gets it.
 function resolveLakes(world) {
   const claims = new Map();
   for (const r of world.rivers) {
-    if (r.out) continue;
+    if (!isRacing(r)) continue;
     const lake = world.lakeOf[cellIndex(world.terrain, r.x, r.z)];
-    if (lake < 0 || world.lakeTaken[lake] >= 0) continue;
+    if (lake < 0 || world.lakeTaken[lake] >= 0 || world.lakeLeft[lake] <= 0) continue;
     const prev = claims.get(lake);
     if (!prev || biggerFirst(r, prev) < 0) claims.set(lake, r);
   }
   for (const lake of [...claims.keys()].sort((a, b) => a - b)) {
     const r = claims.get(lake);
     world.lakeTaken[lake] = r.idx;
-    const gain = lakeGain(world.lakes[lake]);
-    grow(r, gain);
+    world.lakeTapTick[lake] = world.tick;
     r.lakes++;
-    world.events.push({ type: 'lake', lake, river: r.idx, gain, tick: world.tick });
+    world.events.push({ type: 'tap', lake, river: r.idx, left: world.lakeLeft[lake], tick: world.tick });
+  }
+}
+
+// Each tapped lake pours a growing share of what's left into its tapper.
+// A tapper that is drained dry hands its lakes to whoever drained it; one that
+// reached the sea lets them go, so another river can tap the rest.
+function drainLakes(world) {
+  for (const r of world.rivers) r.inflow = 0;
+  for (let lake = 0; lake < world.lakes.length; lake++) {
+    let idx = world.lakeTaken[lake];
+    if (idx < 0) continue;
+    let r = world.rivers[idx];
+    if (r.out) {
+      const by = world.rivers.find((o) => o.id === r.out.by);
+      if (by && isRacing(by)) moveTap(world, lake, by, 'out');
+      else releaseTap(world, lake);
+      continue;
+    }
+    if (r.finished) { releaseTap(world, lake); continue; }
+    const age = world.tick - world.lakeTapTick[lake];
+    const rate = TUNE.drainStart + (TUNE.drainEnd - TUNE.drainStart) * Math.min(1, age / TUNE.erodeTicks);
+    let amount = world.lakeLeft[lake] * rate;
+    if (world.lakeLeft[lake] - amount < TUNE.drainFloor) amount = world.lakeLeft[lake];
+    world.lakeLeft[lake] -= amount;
+    grow(r, amount);
+    r.inflow += amount;
+    if (world.lakeLeft[lake] <= 0) {
+      world.lakeLeft[lake] = 0;
+      world.lakeTaken[lake] = -1;
+      world.events.push({ type: 'emptied', lake, river: r.idx, tick: world.tick });
+    }
+  }
+}
+
+function moveTap(world, lake, to, how) {
+  const from = world.lakeTaken[lake];
+  world.lakeTaken[lake] = to.idx;
+  world.lakeTapTick[lake] = world.tick; // the new outlet starts eroding afresh
+  to.lakes++;
+  world.events.push({ type: 'tapcut', lake, from, to: to.idx, how, tick: world.tick });
+}
+
+function releaseTap(world, lake) {
+  world.events.push({ type: 'release', lake, from: world.lakeTaken[lake], tick: world.tick });
+  world.lakeTaken[lake] = -1;
+}
+
+// A head cutting deeper than a rival's channel, in a stretch dug after that
+// rival tapped a lake, has cut between the lake and its tapper: the flow is now
+// the cutter's. Judged on last tick's channels, rivers in id order.
+function cutTaps(world, rs) {
+  for (const a of [...rs].sort(byId)) {
+    const k = cellIndex(world.terrain, a.x, a.z);
+    const o = world.owner[k];
+    if (o < 0 || o === a.idx || a.depth <= world.carve[k] * (1 + TUNE.siphonDeadband)) continue;
+    for (let lake = 0; lake < world.lakes.length; lake++) {
+      if (world.lakeTaken[lake] === o && world.lakeTapTick[lake] <= world.dugAt[k]) moveTap(world, lake, a, 'cut');
+    }
   }
 }
 

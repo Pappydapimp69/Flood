@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
-import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, lakeGain, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
-import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, drainLake, VERT } from './terrainMesh.js';
+import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, setLakeLevel, VERT } from './terrainMesh.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
 import { connect } from './net.js';
@@ -145,6 +145,7 @@ function beginRace(seed, raceIds, me) {
   raceOver = false;
   finalShown = false;
   pendingActions.length = 0; // presses from the menu don't carry into the race
+  lakeShown.clear();
   showHint();
   document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
@@ -343,14 +344,32 @@ function tugFeedback(now) {
   tug.loss.clear();
 }
 
+// Lake levels follow how much water is left; redrawn in small steps.
+const lakeShown = new Map();
+function updateLakes() {
+  const { lakes, lakeLeft } = world;
+  for (let i = 0; i < lakes.length; i++) {
+    const full = lakeLeft[i] / lakeGain(lakes[i]);
+    const was = lakeShown.get(i) ?? 1;
+    if (Math.abs(was - full) < 0.04 && !(full === 0 && was !== 0)) continue;
+    lakeShown.set(i, full);
+    setLakeLevel(terrainMesh, world.lakeOf, world.carve, i, full);
+  }
+}
+
 function advance(inputs) {
   for (const e of entries) e.prev = { x: e.r.x, z: e.r.z };
   step(world, inputs);
   applyCarve(terrainMesh, world.carve, world.dirty.splice(0));
+  if (world.tick % 10 === 0) updateLakes();
   for (const e of world.events.splice(0)) {
-    if (e.type === 'lake') {
-      drainLake(terrainMesh, world.lakeOf, e.lake);
-      if (river && e.river === river.idx) { showPop(`+${fmtL(e.gain)}`); audio.lake(); }
+    if (e.type === 'tap') {
+      if (river && e.river === river.idx) { showPop(`Lake tapped · ${fmtL(e.left)} flowing in`); audio.lake(); }
+    } else if (e.type === 'tapcut') {
+      const from = world.rivers[e.from], to = world.rivers[e.to];
+      if (e.how === 'cut' && to === river) showPop(`You cut ${nameOf(from)} off its lake`);
+      if (e.how === 'cut' && from === river) showPop(`${nameOf(to)} cut you off your lake!`);
+      if (e.how === 'cut') feed(`${nameOf(to)} cut ${nameOf(from)} off a lake`);
     } else if (e.type === 'siphon' && river) {
       // Tally the tug-of-war; the render loop turns it into feedback.
       if (e.to === river.idx) tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount);
@@ -489,7 +508,8 @@ renderer.setAnimationLoop(() => {
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);
   hud.litres.textContent = fmtL(me.volume);
-  hud.depth.textContent = `cutting ${me.depth.toFixed(1)} m deep`;
+  const taps = world.lakeTaken.reduce((n, t) => n + (t === me.idx ? 1 : 0), 0);
+  hud.depth.textContent = `cutting ${me.depth.toFixed(1)} m deep` + (me.inflow > 0 ? ` · +${fmtL(me.inflow * TICK_HZ)}/s from ${taps} lake${taps === 1 ? '' : 's'}` : '');
   tugFeedback(now);
   if (river && !isRacing(river) && !endShown) {
     endShown = true;

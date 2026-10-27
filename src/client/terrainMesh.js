@@ -57,7 +57,7 @@ export function buildTerrainMesh(t) {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'terrain';
-  mesh.userData = { t, base, baseColors: colors.slice(), pristineColors: colors.slice() };
+  mesh.userData = { t, base, pristineBase: base.slice(), baseColors: colors.slice(), pristineColors: colors.slice() };
   for (let i = 0; i < n * n; i++) setNormal(mesh, i);
   return mesh;
 }
@@ -102,27 +102,50 @@ export function applyCarve(mesh, carve, dirty) {
 
 const MUD = new THREE.Color('#8f7f5c');
 
-// A swallowed lake dries to a mudflat. The game surface keeps its level (so
-// drainage still holds); only the look changes.
-export function drainLake(mesh, lakeOf, lake) {
-  const { baseColors } = mesh.userData;
-  const col = mesh.geometry.attributes.color;
+// A draining lake: its water sinks toward the bed and its colour fades to mud
+// as `full` goes from 1 to 0. Display only — the game surface keeps the lake's
+// spill level, so drainage still holds.
+export function setLakeLevel(mesh, lakeOf, carve, lake, full) {
+  const { t, base, pristineBase, pristineColors, baseColors } = mesh.userData, n = t.size;
+  const cells = lakeCellsOf(mesh, lakeOf, lake);
+  if (!cells.length) return;
+  const geo = mesh.geometry, pos = geo.attributes.position, col = geo.attributes.color;
+  const keep = 0.25 + 0.75 * full; // never quite to the bed: a drained lake reads as a mudflat
+  const touched = new Set();
   let lo = Infinity, hi = -Infinity;
-  for (let k = 0; k < lakeOf.length; k++) {
-    if (lakeOf[k] !== lake) continue;
-    MUD.toArray(col.array, k * 3);
-    MUD.toArray(baseColors, k * 3);
+  for (const k of cells) {
+    base[k] = t.height[k] + (pristineBase[k] - t.height[k]) * keep;
+    pos.setY(k, (base[k] - carve[k]) * VERT);
+    tmp.fromArray(pristineColors, k * 3).lerp(MUD, 1 - full).toArray(baseColors, k * 3);
+    tmp.toArray(col.array, k * 3);
+    for (const o of [0, -1, 1, -n, n]) touched.add(k + o);
     if (k < lo) lo = k;
     if (k > hi) hi = k;
   }
-  if (lo > hi) return;
-  col.addUpdateRange(lo * 3, (hi - lo + 1) * 3);
-  col.needsUpdate = true;
+  for (const k of touched) if (k >= 0 && k < n * n) setNormal(mesh, k);
+  for (const a of [pos, col, geo.attributes.normal]) {
+    a.addUpdateRange(Math.max(0, lo - n) * a.itemSize, (hi - lo + 2 * n + 1) * a.itemSize);
+    a.needsUpdate = true;
+  }
+}
+
+function lakeCellsOf(mesh, lakeOf, lake) {
+  const ud = mesh.userData;
+  if (!ud.lakeCells) {
+    ud.lakeCells = new Map();
+    for (let k = 0; k < lakeOf.length; k++) {
+      if (lakeOf[k] < 0) continue;
+      if (!ud.lakeCells.has(lakeOf[k])) ud.lakeCells.set(lakeOf[k], []);
+      ud.lakeCells.get(lakeOf[k]).push(k);
+    }
+  }
+  return ud.lakeCells.get(lake) ?? [];
 }
 
 export function resetCarve(mesh) {
   const { t, base, baseColors } = mesh.userData, n = t.size;
   const geo = mesh.geometry, pos = geo.attributes.position;
+  base.set(mesh.userData.pristineBase);
   for (let i = 0; i < n * n; i++) pos.setY(i, base[i] * VERT);
   baseColors.set(mesh.userData.pristineColors);
   geo.attributes.color.array.set(baseColors);
