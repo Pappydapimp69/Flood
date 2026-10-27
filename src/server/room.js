@@ -52,6 +52,7 @@ export class Room {
     if (!seat || seat.conn !== conn) return;
     seat.conn = null;
     seat.held = 0; // a dropped player's river keeps flowing, unsteered
+    seat.fwd = 0;
     // Seats never raced in can go; racers keep theirs for a reconnect.
     if (!seat.id || this.state !== 'race') this.seats.delete(seat.token);
   }
@@ -61,7 +62,10 @@ export class Room {
     if (!seat || !seat.id) return;
     const s = msg.s;
     if (s !== -1 && s !== 0 && s !== 1) return;
+    const f = msg.f ?? 0;
+    if (f !== -1 && f !== 0 && f !== 1) return;
     seat.held = s;
+    seat.fwd = f;
     if (s) seat.pulse = s; // a tap shorter than a tick still turns once
   }
 
@@ -113,7 +117,8 @@ export class Room {
     for (const id of this.ids) {
       const seat = this.byId.get(id);
       if (!seat) continue;
-      steers.set(id, seat.held || seat.pulse);
+      const st = seat.held || seat.pulse;
+      steers.set(id, seat.fwd ? { s: st, f: seat.fwd } : st);
       seat.pulse = 0;
     }
     for (const b of this.bots) steers.set(b.river.id, botSteer(w, b));

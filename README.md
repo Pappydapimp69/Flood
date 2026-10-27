@@ -4,18 +4,18 @@ A browser battle royale where every player is a river. Race downhill across an i
 lakes to grow, cut rivals off, and be the first to reach the sea.
 
 ## Play
-Steer with ← → (or A D). On a phone, hold the left or right side of the screen. With a controller: stick or D-pad steers, A selects / races again, Y opens the map, X toggles sound. `M` toggles the map on a keyboard.
+Steer with ← → (or A D); ↑ ↓ (W S) hurry or slow your fall. On a phone, hold the left or right side of the screen. With a controller: left stick or D-pad steers, right stick turns the camera, A selects / races again, Y opens the map, X toggles sound. `M` toggles the map on a keyboard.
 
-- Every race starts with a drop from the sky: steer to pick your landing inside the glowing zone.
-- Flow downhill to the sea; first one there wins (the race ends 90 s later).
-- Tap lakes to grow: a lake you touch drains into you over the next half minute through your
-  channel. A rival cutting deeper across that channel steals the flow. Bigger rivers are faster
-  and cut deeper, but turn slower.
-- Speed cuts deeper too. Where rivers touch, the deeper one drains the shallower each moment.
-  Cross shallower rivers (green ▼) to drain them; keep off deeper ones (red ▲). Drained below
-  40% of your starting water, you're out.
-- A few lakes are dry basins: run into one and you must fill it (water and time) before you
-  spill on, leaving a reservoir others can tap. Steer around them unless you're big.
+- Every race is a new island. It starts with a 30 s drop from the sky: steer toward the ring to
+  pick your landing. Every start sits at the same height.
+- Flow downhill to the sea; first one there wins (the race ends 90 s later). The game never steers.
+- Lakes are reservoirs. Rivers flowing in fill them; join one and your mass jumps at once, then it
+  keeps feeding you through the outlet you cut, which erodes deeper the more it carries. A lake only
+  drops when more flows out than in.
+- Empty basins fill from every river running into them; you wait in the rising water until it's
+  full, then flow across it like level ground.
+- More water is more mass: faster, harder to turn, deeper channels. Where rivers touch, the deeper
+  one drains the shallower. Below 40% of your starting water, you're out.
 - Bright, flowing water is live and dangerous; grey channels are dry beds.
 
 ## Run it

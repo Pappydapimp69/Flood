@@ -309,8 +309,12 @@ export function landingCell(world, x, z) {
   const cx = c % n, cy = (c - cx) / n;
   let best = -1, bestD = Infinity;
   for (let rad = 1; rad < n; rad++) {
-    for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
-      if (Math.max(Math.abs(dx), Math.abs(dy)) !== rad) continue;
+    // Just the ring's edge: top and bottom rows, then the two side columns.
+    for (let i = 0; i < 8 * rad; i++) {
+      const side = i < 2 * (2 * rad + 1) ? (i & 1) : 2 + (i & 1);
+      const j = side < 2 ? (i >> 1) - rad : ((i - 2 * (2 * rad + 1)) >> 1) - rad + 1;
+      const dx = side < 2 ? j : side === 2 ? -rad : rad;
+      const dy = side < 2 ? (side === 0 ? -rad : rad) : j;
       const x2 = cx + dx, y2 = cy + dy;
       if (x2 < 0 || y2 < 0 || x2 >= n || y2 >= n) continue;
       const k = y2 * n + x2;

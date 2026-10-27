@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
-import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, lakeGain, dropZone, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -66,6 +66,13 @@ const PLAYER_COLOR = '#45d2ff';
 const BOT_COLORS = ['#4f8fd0', '#4fb39a', '#7d84d8', '#3fa8b8', '#6c95e8', '#58a77f', '#9480d8', '#3f93c4', '#6fae8f', '#8496e0', '#4c9aa8'];
 const headGeo = new THREE.SphereGeometry(1, 20, 12);
 const streakGeo = new THREE.CylinderGeometry(0.15, 1, 1, 8, 1, true).translate(0, 0.5, 0);
+// Where your drop will touch down if you keep this heading: a ring on the start contour.
+const marker = new THREE.Mesh(
+  new THREE.RingGeometry(0.7, 1, 40).rotateX(-Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: '#7ff0ff', transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }),
+);
+marker.renderOrder = 2;
+marker.visible = false;
 
 // One render entry per river: ribbon, head and last-tick position for interpolation.
 function makeEntry(r, i) {
@@ -105,7 +112,7 @@ addEventListener('resize', fitCamera);
 const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
-  document.getElementById('help').textContent = 'Controller: stick or D-pad steers · A: select / race again · Y: map · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (up / down while falling) · right stick turns the camera · A: select / race again · Y: map · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -155,6 +162,7 @@ function beginRace(seed, raceIds, me) {
   document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
   updateLakes(); // dry basins show as dry from the first frame
+  if (!marker.parent) scene.add(marker);
   for (const m of [trees, lava]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); m.dispose(); }
   trees = buildTrees(world, lowPower ? 1500 : 4000);
   lava = buildLava(world);
@@ -164,13 +172,15 @@ function beginRace(seed, raceIds, me) {
   hud.feed.textContent = '';
   const y = surfaceAt(world, focus.x, focus.z) * VERT;
   camDir.set(focus.dx, focus.dz).normalize();
+  camYaw = 0;
   camera.position.set(focus.x - focus.dx * 1500, y + 1400, focus.z - focus.dz * 1500);
   camTarget.set(focus.x, y, focus.z);
 }
 
 function newRun() {
   mode = 'solo';
-  const seed = Number(params.get('seed')) || 1;
+  // A fresh island every race, unless ?seed pins one.
+  const seed = Number(params.get('seed')) || 1 + Math.floor(Math.random() * 1_000_000);
   const all = [PLAYER, ...Array.from({ length: BOTS }, (_, i) => `bot${String(i + 1).padStart(2, '0')}`)].sort();
   names = {};
   beginRace(seed, all, PLAYER);
@@ -180,7 +190,7 @@ function newRun() {
 let everOpen = false;
 function goOnline(name) {
   mode = 'online';
-  input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true); };
+  input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true, river.dropping ? input.forward() : 0); };
   if (!terrain) { useIsland(1); camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0); }
   status('Connecting…');
   net = connect({
@@ -228,6 +238,8 @@ function courseOf(r, hx, hz) {
 const camTarget = new THREE.Vector3();
 const camLook = new THREE.Vector3();
 const camDir = new THREE.Vector2(0, -1);
+// Right stick: a look offset around the head, eased back behind it once released.
+let camYaw = 0, lookIdle = 0;
 // 1: cuts deeper than you (touching it drains you), -1: shallower (you drain
 // it), 0: too close to call — the same deadband the sim uses.
 function threatOf(r) {
@@ -310,11 +322,13 @@ function handleActions() {
   return false;
 }
 
+// This tick's input: steer, plus hurry / slow while falling.
 function sampleSteer() {
   const steer = dbg.forceSteer ?? input.sample();
   dbg.steers.push(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
-  return steer;
+  const f = river?.dropping ? (dbg.forceFwd ?? input.forward()) : 0;
+  return f ? { s: steer, f } : steer;
 }
 
 function soloTick() {
@@ -369,15 +383,14 @@ function tugFeedback(now) {
   tug.loss.clear();
 }
 
-// Lake levels follow how much water is left; redrawn in small steps.
+// Lake levels follow the water each holds; redrawn in small steps.
 const lakeShown = new Map();
 function updateLakes() {
-  const { lakes, lakeLeft } = world;
+  const { lakes, lakeVol, lakeCap } = world;
   for (let i = 0; i < lakes.length; i++) {
-    // A dry basin shows how far it has been filled; any other lake what's left.
-    const full = (world.lakeDry[i] ? world.basinFill[i] : lakeLeft[i]) / lakeGain(lakes[i]);
+    const full = Math.min(1, lakeVol[i] / lakeCap[i]);
     const was = lakeShown.get(i) ?? 1;
-    if (Math.abs(was - full) < 0.04 && !(full === 0 && was !== 0)) continue;
+    if (Math.abs(was - full) < 0.03 && !(full >= 0.999 && was < 0.999) && !(full === 0 && was !== 0)) continue;
     lakeShown.set(i, full);
     setLakeLevel(terrainMesh, world.lakeOf, world.carve, i, full);
   }
@@ -396,17 +409,12 @@ function advance(inputs) {
     if (e.type === 'land') {
       if (river && e.river === river.idx) { highlightZone(terrainMesh, dropZone(world), false); audio.lake(); }
     } else if (e.type === 'pool') {
-      if (river && e.river === river.idx) showPop('Dry basin — filling it before you can spill on');
+      if (river && e.river === river.idx) showPop('Basin! Your water fills it — spill out once it is full');
     } else if (e.type === 'spill') {
-      if (river && e.river === river.idx) showPop(`Breached! ${fmtL(e.left)} left behind as a reservoir`);
+      if (river && e.river === river.idx) showPop('Full — spilling on, and the lake keeps feeding you');
       feed(`${nameOf(world.rivers[e.river])} filled a basin`);
-    } else if (e.type === 'tap') {
-      if (river && e.river === river.idx) { showPop(`Lake tapped · ${fmtL(e.left)} flowing in`); audio.lake(); }
-    } else if (e.type === 'tapcut') {
-      const from = world.rivers[e.from], to = world.rivers[e.to];
-      if (e.how === 'cut' && to === river) showPop(`You cut ${nameOf(from)} off its lake`);
-      if (e.how === 'cut' && from === river) showPop(`${nameOf(to)} cut you off your lake!`);
-      if (e.how === 'cut') feed(`${nameOf(to)} cut ${nameOf(from)} off a lake`);
+    } else if (e.type === 'join') {
+      if (river && e.river === river.idx) { showPop(`Lake joined · +${fmtL(e.gain)} now, more through your outlet`); audio.lake(); }
     } else if (e.type === 'steam') {
       if (river && e.river === river.idx) steamed += e.amount;
     } else if (e.type === 'siphon' && river) {
@@ -472,6 +480,24 @@ function showHint() {
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const ordinal = (n) => `#${n}`;
 
+// While falling, ring the start-contour cell you'd land on holding this heading.
+let markerAt = 0;
+function showMarker(now) {
+  marker.visible = !!river?.dropping && isRacing(river);
+  if (!marker.visible || now - markerAt < 150) return;
+  markerAt = now;
+  const left = river.dropping / TICK_HZ;
+  const half = W / 2, n = terrain.size;
+  const px = Math.max(-half, Math.min(half, river.x + river.dx * TUNE.glideSpeed * left));
+  const pz = Math.max(-half, Math.min(half, river.z + river.dz * TUNE.glideSpeed * left));
+  const k = landingCell(world, px, pz);
+  const x = ((k % n) / (n - 1) - 0.5) * W, z = (Math.floor(k / n) / (n - 1) - 0.5) * W;
+  marker.position.set(x, surfaceAt(world, x, z) * VERT + 30, z);
+  const sc = 250 + 900 * Math.min(1, left / 10); // shrinks as touchdown nears
+  marker.scale.set(sc, 1, sc);
+  dbg.marker = { x, z, k };
+}
+
 let last = performance.now(), sendAcc = 0;
 renderer.setAnimationLoop(() => {
   // One clock for both ends (the rAF timestamp can predate a performance.now() start).
@@ -494,7 +520,10 @@ renderer.setAnimationLoop(() => {
     while (acc >= DT && nextFrame < frames.length) { onlineTick(); acc -= DT; }
     if (nextFrame >= frames.length) acc = Math.min(acc, DT); // starved: wait, don't bank time
     sendAcc += frameDt;
-    if (sendAcc >= DT) { sendAcc = 0; if (river && isRacing(river)) net.steer(sampleSteer(), now); }
+    if (sendAcc >= DT) {
+      sendAcc = 0;
+      if (river && isRacing(river)) { const v = sampleSteer(); net.steer(v.s ?? v, now, false, v.f ?? 0); }
+    }
   }
   const alpha = Math.min(1, acc / DT);
 
@@ -524,6 +553,7 @@ renderer.setAnimationLoop(() => {
 
   placeTags();
   pulseLava(lava, now / 1000);
+  showMarker(now);
   if (mapView) {
     controls.update();
   } else {
@@ -531,6 +561,10 @@ renderer.setAnimationLoop(() => {
     // course over the last few hundred metres (not the head's tick-to-tick heading,
     // which gravity tugs constantly), ignores small changes, turns slowly, and
     // only its height reacts quickly (up fast, down slowly, so it doesn't bob).
+    // Right stick swings the camera round; let go and it eases back behind.
+    const look = input.look();
+    if (look) { camYaw = Math.max(-Math.PI, Math.min(Math.PI, camYaw + look * frameDt * 2.2)); lookIdle = 0; }
+    else if ((lookIdle += frameDt) > 1.5) camYaw *= Math.exp(-frameDt * 1.5);
     const course = courseOf(focus, fx, fz);
     const ang = Math.atan2(camDir.x * course.y - camDir.y * course.x, camDir.x * course.x + camDir.y * course.y);
     const DEAD = 0.21; // ~12 degrees
@@ -538,10 +572,11 @@ renderer.setAnimationLoop(() => {
       const turn = (Math.abs(ang) - DEAD) * Math.sign(ang) * (1 - Math.exp(-frameDt * 1.2));
       camDir.rotateAround(new THREE.Vector2(0, 0), turn).normalize();
     }
-    const back = 1300, want = new THREE.Vector3(fx - camDir.x * back, Math.max(fy, 0) + 1100, fz - camDir.y * back);
+    const view = camDir.clone().rotateAround(new THREE.Vector2(0, 0), camYaw);
+    const back = 1300, want = new THREE.Vector3(fx - view.x * back, Math.max(fy, 0) + 1100, fz - view.y * back);
     // Stay above the ground along the whole sightline, not just at the camera.
     for (let f = 0.25; f <= 1; f += 0.25) {
-      const g = surfaceAt(world, fx - camDir.x * back * f, fz - camDir.y * back * f) * VERT;
+      const g = surfaceAt(world, fx - view.x * back * f, fz - view.y * back * f) * VERT;
       want.y = Math.max(want.y, g + 250 + 400 * f);
     }
     const kXZ = 1 - Math.exp(-frameDt * 5);
@@ -550,7 +585,7 @@ renderer.setAnimationLoop(() => {
     const kY = 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
     camera.position.y += (want.y - camera.position.y) * kY;
     camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
-    camTarget.lerp(new THREE.Vector3(fx + camDir.x * 600, fy, fz + camDir.y * 600), 1 - Math.exp(-frameDt * 6));
+    camTarget.lerp(new THREE.Vector3(fx + view.x * 600, fy, fz + view.y * 600), 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
   }
 
@@ -561,15 +596,15 @@ renderer.setAnimationLoop(() => {
   hud.rank.textContent = river ? `${ordinal(place)}/${world.rivers.length} · ${alive} flowing` : `Spectating · ${alive} flowing`;
   const toSea = world.reach[cellIndex(terrain, focus.x, focus.z)];
   hud.dist.textContent = focus !== river ? `Watching ${nameOf(focus)}`
-    : river.dropping ? `Steer your landing · ${Math.ceil(river.dropping / TICK_HZ)} s`
+    : river.dropping ? `Aim for the ring · ← → turn, ↑ ↓ faster / slower · ${Math.ceil(river.dropping / TICK_HZ)} s`
     : `${(toSea / 1000).toFixed(2)} km to sea`;
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);
   hud.litres.textContent = fmtL(me.volume);
-  const taps = world.lakeTaken.reduce((n, t) => n + (t === me.idx ? 1 : 0), 0);
-  hud.depth.textContent = me.filling
-    ? `filling a basin · ${Math.round(100 * world.basinFill[me.filling.lake] / lakeGain(world.lakes[me.filling.lake]))}%`
-    : `cutting ${me.depth.toFixed(1)} m deep` + (me.inflow > 0 ? ` · +${fmtL(me.inflow * TICK_HZ)}/s from ${taps} lake${taps === 1 ? '' : 's'}` : '');
+  const feeds = me.via.size;
+  hud.depth.textContent = me.pooled >= 0
+    ? `filling a basin · ${Math.min(99, Math.floor(100 * world.lakeVol[me.pooled] / world.lakeCap[me.pooled]))}%`
+    : `cutting ${me.depth.toFixed(1)} m deep` + (me.inflow > 0 ? ` · +${fmtL(me.inflow * TICK_HZ)}/s from ${feeds} lake${feeds === 1 ? '' : 's'}` : '');
   tugFeedback(now);
   if (river && !isRacing(river) && !endShown) {
     endShown = true;
@@ -613,4 +648,5 @@ Object.defineProperties(dbg, {
   world: { get: () => world },
   river: { get: () => river },
   focus: { get: () => focus },
+  camYaw: { get: () => camYaw },
 });

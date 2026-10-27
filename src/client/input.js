@@ -6,6 +6,8 @@
 
 const LEFT = new Set(['ArrowLeft', 'KeyA']);
 const RIGHT = new Set(['ArrowRight', 'KeyD']);
+const FWD = new Set(['ArrowUp', 'KeyW']);
+const BACK = new Set(['ArrowDown', 'KeyS']);
 
 // Standard gamepad mapping.
 const PAD = { A: 0, B: 1, X: 2, Y: 3, BACK: 8, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
@@ -26,22 +28,34 @@ export function createInput(target) {
     held.right = keys.right || pad.right || [...pointers.values()].includes('right');
     onChange?.(current());
   };
-  const keys = { left: false, right: false };
-  const pad = { left: false, right: false, down: new Set(), stickY: 0, seen: false };
+  const keys = { left: false, right: false, fwd: false, back: false };
+  const pad = { left: false, right: false, down: new Set(), stickY: 0, seen: false, fwd: 0, look: 0 };
+  // Forward / back: hurry or slow the drop. Keys or left stick up / down.
+  const forward = () => {
+    const k = keys.fwd === keys.back ? 0 : keys.fwd ? 1 : -1;
+    return k || pad.fwd;
+  };
 
   addEventListener('keydown', (e) => {
     if (e.repeat && (LEFT.has(e.code) || RIGHT.has(e.code))) return e.preventDefault(); // held already
     if (LEFT.has(e.code)) { keys.left = true; press('left'); e.preventDefault(); }
     else if (RIGHT.has(e.code)) { keys.right = true; press('right'); e.preventDefault(); }
-    else if (e.code === 'KeyR' || e.code === 'Enter' || e.code === 'Space') actions.push('restart');
+    else if (FWD.has(e.code) || BACK.has(e.code)) {
+      const was = forward();
+      keys[FWD.has(e.code) ? 'fwd' : 'back'] = true;
+      if (forward() !== was) onChange?.(current());
+      e.preventDefault();
+    } else if (e.code === 'KeyR' || e.code === 'Enter' || e.code === 'Space') actions.push('restart');
     else if (e.code === 'KeyM') actions.push('map');
   });
   addEventListener('keyup', (e) => {
     if (LEFT.has(e.code)) keys.left = false;
     else if (RIGHT.has(e.code)) keys.right = false;
+    else if (FWD.has(e.code)) keys.fwd = false;
+    else if (BACK.has(e.code)) keys.back = false;
     sync();
   });
-  addEventListener('blur', () => { keys.left = keys.right = pad.left = pad.right = false; pointers.clear(); sync(); });
+  addEventListener('blur', () => { keys.left = keys.right = keys.fwd = keys.back = pad.left = pad.right = false; pad.fwd = pad.look = 0; pointers.clear(); sync(); });
 
   // Touch / mouse: hold the left or right half of the screen.
   target.addEventListener('pointerdown', (e) => {
@@ -61,23 +75,33 @@ export function createInput(target) {
       pulse.left = pulse.right = false;
       return l === r ? 0 : l ? -1 : 1;
     },
+    // Hurry (+1) or slow (-1) the drop.
+    forward,
+    // Right stick x, -1..1: turns the camera. 0 inside the dead zone.
+    look: () => pad.look,
     takeActions() { return actions.splice(0); },
-    // Read gamepads; call once per frame. Steering is the left stick or D-pad.
+    // Read gamepads; call once per frame. Steering is the left stick or D-pad,
+    // its up / down hurries or slows the drop; the right stick turns the camera.
     // Button presses become actions: A 'confirm' (and 'restart'), X 'mute',
     // Y/Back 'map', D-pad or stick up/down 'up'/'down' for menus.
     poll() {
       const pads = navigator.getGamepads?.() ?? [];
-      let l = false, r = false, y = 0;
+      let l = false, r = false, y = 0, look = 0;
       const now = new Set();
       for (const gp of pads) {
         if (!gp) continue;
         const x = gp.axes[0] ?? 0;
         y = gp.axes[1] ?? 0;
+        const rx = gp.axes[2] ?? 0;
+        if (Math.abs(rx) > 0.2 && Math.abs(rx) > Math.abs(look)) look = rx;
         if (x < -DEADZONE || gp.buttons[PAD.LEFT]?.pressed) l = true;
         if (x > DEADZONE || gp.buttons[PAD.RIGHT]?.pressed) r = true;
         gp.buttons.forEach((b, i) => { if (b.pressed) now.add(i); });
       }
       if (!pads.some(Boolean)) return;
+      pad.look = look;
+      const f = y < -DEADZONE || now.has(PAD.UP) ? 1 : y > DEADZONE || now.has(PAD.DOWN) ? -1 : 0;
+      if (f !== pad.fwd) { pad.fwd = f; onChange?.(current()); }
       if (!pad.seen) { pad.seen = true; onPad?.(); }
       for (const i of now) {
         if (pad.down.has(i)) continue; // edges only

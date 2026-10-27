@@ -16,7 +16,7 @@ const state = (page) => page.evaluate(() => {
   if (!__flood.world) return { ready: false, error: __flood.error, tick: -1 }; // still on the menu
   const r = __flood.river;
   return { ready: __flood.ready, error: __flood.error, tick: __flood.world.tick, x: r.x, z: r.z, dx: r.dx, dz: r.dz,
-    travelled: r.travelled, points: r.path.length, carved: __flood.world.carve.some((c) => c > 0) };
+    travelled: r.travelled, points: r.path.length, dropping: r.dropping, carved: __flood.world.carve.some((c) => c > 0) };
 });
 
 // Poll the game's own clock, never wall time.
@@ -56,7 +56,7 @@ async function steerRun(page, act) {
   const a = await until(page, (s) => s.tick >= 10, 'tick 10');
   await page.evaluate(() => { __flood.forceSteer = undefined; });
   await act();
-  const b = await until(page, (s) => s.tick >= a.tick + 30, '30 ticks');
+  const b = await until(page, (s) => s.tick >= a.tick + 15, '15 ticks'); // under a half turn, so the sign holds
   return turned(a, b);
 }
 
@@ -98,7 +98,7 @@ await check('a short tap still registers (event-time capture)', async () => {
   await until(page, (s) => s.ready, 'ready');
   // Each press+release lands inside one frame; held-state sampling alone would see nothing.
   await page.evaluate(() => { __flood.steers.length = 0; });
-  for (let i = 0; i < 3; i++) { await page.keyboard.press('ArrowLeft', { delay: 0 }); await page.waitForTimeout(400); }
+  for (let i = 0; i < 3; i++) { await page.keyboard.press('ArrowLeft', { delay: 0 }); await page.waitForTimeout(1200); } // a frame apart even at 2 fps headless
   const steers = await page.evaluate(() => __flood.steers.slice());
   const lefts = steers.filter((v) => v === -1).length;
   if (lefts < 3) throw new Error(`only ${lefts} left ticks from 3 taps: ${steers.join('')}`);
@@ -177,7 +177,7 @@ await check('tug-of-war: a deeper rival on you shows the drain warning and takes
   await page.close();
 });
 
-await check('dry basin: the HUD shows filling, then the head spills on', async () => {
+await check('dry basin: the HUD shows filling, then the head spills on once it is full', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   await page.goto(base + '&nohint');
   await until(page, (s) => s.ready && s.tick > 5, 'race');
@@ -192,33 +192,41 @@ await check('dry basin: the HUD shows filling, then the head spills on', async (
   }
   if (!saw.startsWith('filling a basin')) throw new Error(`HUD never showed filling: ${saw}`);
   if (shotDir) await page.screenshot({ path: `${shotDir}/play-basin.png` });
-  await until(page, () => true, 'tick');
+  // Top it up rather than wait out the fill: a full basin lets the head go.
+  await page.evaluate(() => { const w = __flood.world, b = __flood.river.pooled; if (b >= 0) w.lakeVol[b] = w.lakeCap[b]; });
   for (let i = 0; i < 400; i++) {
-    if (await page.evaluate(() => !__flood.river.filling)) { await page.close(); return; }
+    if (await page.evaluate(() => __flood.river.pooled < 0)) { await page.close(); return; }
     await page.waitForTimeout(50);
   }
   throw new Error('never spilled');
 });
 
-await check('sky drop: fall with a countdown, steer the landing inside the zone, then flow', async () => {
+await check('sky drop: fall with a countdown and a landing ring, aim and hurry, land on the contour', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   await page.goto(`${root}?seed=1&nohint`);
   await until(page, (s) => s.ready, 'ready');
   const d0 = await page.evaluate(() => ({ dropping: __flood.river.dropping, alt: __flood.river.alt, hud: document.getElementById('dist').textContent, x: __flood.river.x, z: __flood.river.z }));
   if (!(d0.dropping > 0 && d0.alt > 0)) throw new Error(`not falling at the start: ${JSON.stringify(d0)}`);
-  if (!d0.hud.startsWith('Steer your landing')) throw new Error(`HUD: ${d0.hud}`);
+  if (!d0.hud.startsWith('Aim for the ring')) throw new Error(`HUD: ${d0.hud}`);
   await page.keyboard.down('ArrowLeft');
-  if (shotDir) { await page.waitForTimeout(800); await page.screenshot({ path: `${shotDir}/play-drop.png` }); }
-  await until(page, (s) => s.tick > 125, 'landed');
+  await page.keyboard.down('ArrowUp');
+  await until(page, (s) => s.tick > 60, 'gliding');
   await page.keyboard.up('ArrowLeft');
+  const m = await page.evaluate(() => __flood.marker);
+  if (!m) throw new Error('no landing ring');
+  if (shotDir) await page.screenshot({ path: `${shotDir}/play-drop.png` });
+  // Skip most of the 30 s fall for everyone, so the test doesn't sit through it.
+  await page.evaluate(() => { for (const r of __flood.world.rivers) if (r.dropping > 20) r.dropping = 20; });
+  await until(page, (s) => !s.dropping && s.points > 0, 'landed');
+  await page.keyboard.up('ArrowUp');
   const d1 = await page.evaluate(() => {
-    const r = __flood.river, w = __flood.world, n = w.terrain.size;
-    const k = Math.round((r.z / w.terrain.worldSize + 0.5) * (n - 1)) * n + Math.round((r.x / w.terrain.worldSize + 0.5) * (n - 1));
-    return { dropping: r.dropping, path: r.path.length, inZone: w.band.wide.includes(k) || r.path.length > 3, moved: Math.hypot(r.path[0].x, r.path[0].z) };
+    const r = __flood.river, w = __flood.world, n = w.terrain.size, p = r.path[0];
+    const k = Math.round((p.z / w.terrain.worldSize + 0.5) * (n - 1)) * n + Math.round((p.x / w.terrain.worldSize + 0.5) * (n - 1));
+    return { dropping: r.dropping, path: r.path.length, inZone: w.dropZone.has(k), x: p.x, z: p.z };
   });
   if (d1.dropping || !d1.path) throw new Error(`did not land: ${JSON.stringify(d1)}`);
-  const landed = await page.evaluate(() => ({ x: __flood.river.path[0].x, z: __flood.river.path[0].z }));
-  if (Math.hypot(landed.x - d0.x, landed.z - d0.z) < 100) throw new Error('steering during the fall did not move the landing');
+  if (!d1.inZone) throw new Error(`landed off the start contour: ${JSON.stringify(d1)}`);
+  if (Math.hypot(d1.x - d0.x, d1.z - d0.z) < 100) throw new Error('steering during the fall did not move the landing');
   await page.close();
 });
 
@@ -238,7 +246,7 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   await page.waitForFunction(() => window.__flood?.renderer);
   const button = (i, on) => page.evaluate(([i, on]) => { __pad.buttons[i].pressed = on; __pad.buttons[i].value = on ? 1 : 0; }, [i, on]);
   // Held longer than a slow headless frame, so the per-frame poll sees it.
-  const tap = async (i) => { await button(i, true); await page.waitForTimeout(700); await button(i, false); await page.waitForTimeout(500); };
+  const tap = async (i) => { await button(i, true); await page.waitForTimeout(1200); await button(i, false); await page.waitForTimeout(1200); };
   // First down focuses "Play online", the second "Solo vs bots"; then A.
   await tap(13);
   await tap(13);
@@ -260,6 +268,12 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
     await set(0);
     if (!steers.includes(-1)) throw new Error(`${how} left gave ${steers.join('')}`);
   }
+  // Right stick swings the camera; released, it eases back behind the river.
+  await page.evaluate(() => { __pad.axes[2] = 1; });
+  let yaw = 0;
+  for (let i = 0; i < 100 && yaw < 0.3; i++) { await page.waitForTimeout(100); yaw = Math.max(yaw, await page.evaluate(() => __flood.camYaw)); }
+  await page.evaluate(() => { __pad.axes[2] = 0; });
+  if (yaw < 0.3) throw new Error(`right stick did not turn the camera: ${yaw}`);
   // Finish the run by force (after the spawn grace), then A on the results card starts a new one.
   const t0 = (await state(page)).tick;
   await until(page, (st) => st.tick > Math.max(t0, 140), 'past spawn grace');

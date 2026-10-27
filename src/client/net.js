@@ -42,11 +42,13 @@ export function connect({ name, onMessage, onStatus }) {
   return {
     // Send steer when it changes, and every second anyway so a lost message heals.
     // force: a press or release, sent even if it repeats the last value (a tap).
-    steer(s, now, force = false) {
-      if (!force && s === lastSteer && now - sentAt < 1000) return;
-      lastSteer = s;
+    // f: hurry (+1) or slow (-1) the drop.
+    steer(s, now, force = false, f = 0) {
+      const key = s * 3 + f;
+      if (!force && key === lastSteer && now - sentAt < 1000) return;
+      lastSteer = key;
       sentAt = now;
-      send({ t: 'in', s });
+      send(f ? { t: 'in', s, f } : { t: 'in', s });
     },
     fingerprint(k, fp) { send({ t: 'fp', k, fp }); },
     close() { closed = true; ws.close(); },
