@@ -1,0 +1,5 @@
+# Brain local store (per-project private mirror; never commit)
+.brain/
+node_modules/
+*.png
+!docs/**/*.png

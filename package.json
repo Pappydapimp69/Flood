@@ -1,0 +1,12 @@
+{
+  "name": "flood",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Battle royale where every player is a river racing to the sea. Runs in the browser.",
+  "type": "module",
+  "scripts": {
+    "start": "node tools/serve.mjs",
+    "test": "node --test tests/unit/*.test.mjs",
+    "smoke": "node tests/smoke.mjs"
+  }
+}
