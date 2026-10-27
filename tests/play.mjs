@@ -247,7 +247,7 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   const button = (i, on) => page.evaluate(([i, on]) => { __pad.buttons[i].pressed = on; __pad.buttons[i].value = on ? 1 : 0; }, [i, on]);
   // Held longer than a slow headless frame, so the per-frame poll sees it.
   const tap = async (i) => { await button(i, true); await page.waitForTimeout(1200); await button(i, false); await page.waitForTimeout(1200); };
-  // A leaves the splash (music starts) and focuses "Play online"; down moves to "Solo vs bots"; then A.
+  // A leaves the splash (music starts) and focuses "Play solo"; down stays on it (the only button); then A.
   await tap(0);
   if (await page.evaluate(() => !document.getElementById('splash').hidden)) throw new Error('A did not leave the splash');
   await tap(13);

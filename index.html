@@ -110,9 +110,10 @@
   <div id="menu" hidden>
     <h2>FLOOD</h2>
     <p>Every player is a river. Swallow lakes, cut rivals off, reach the sea first.</p>
-    <input id="name" maxlength="12" placeholder="Your name" autocomplete="nickname">
-    <button id="play-online">Play online</button>
-    <button id="play-solo" class="alt">Solo vs bots</button>
+    <!-- Online play is off for now (the server still runs it via ?online). -->
+    <input id="name" maxlength="12" placeholder="Your name" autocomplete="nickname" hidden>
+    <button id="play-online" hidden>Play online</button>
+    <button id="play-solo">Play solo vs bots</button>
   </div>
   <div id="fallback" hidden></div>
   <script type="module" src="./src/client/main.js"></script>

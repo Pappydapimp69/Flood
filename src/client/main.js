@@ -296,12 +296,12 @@ function menuActions() {
     if (!splash.hidden) { if (a === 'confirm') leaveSplash(); continue; }
     if (a === 'mute') { audio.toggle(); showMute(); }
     else if (menuOpen && (a === 'up' || a === 'down')) {
-      const btns = [...hud.menu.querySelectorAll('button')];
+      const btns = [...hud.menu.querySelectorAll('button:not([hidden])')];
       const i = btns.indexOf(document.activeElement);
       btns[i < 0 ? 0 : (i + (a === 'down' ? 1 : btns.length - 1)) % btns.length].focus();
     } else if (a === 'confirm' && menuOpen) {
       const focused = hud.menu.contains(document.activeElement) && document.activeElement.tagName === 'BUTTON';
-      (focused ? document.activeElement : document.getElementById('play-online')).click();
+      (focused ? document.activeElement : document.getElementById('play-solo')).click();
     } else if (a === 'confirm' && again && !hud.banner.hidden) again.click();
     else if (a !== 'confirm' && a !== 'up' && a !== 'down') keep.push(a);
   }
@@ -649,7 +649,7 @@ function leaveSplash() {
   splash.hidden = true;
   audio.music();
   hud.menu.hidden = false;
-  document.getElementById('play-online').focus();
+  document.getElementById('play-solo').focus();
 }
 const nameBox = document.getElementById('name');
 try { nameBox.value = localStorage.getItem('flood.name') ?? ''; } catch { /* no storage */ }
