@@ -50,8 +50,9 @@ export function botSteer(world, bot) {
       const o = world.owner[k];
       if (o >= 0 && o !== r.idx && world.carve[k] > TUNE.contactDepth && isLive(world, k)) {
         const owner = world.rivers[o];
-        // Avoid anything that might be bigger; only cut off clearly smaller rivers.
-        if (isRacing(owner)) score += owner.volume > r.volume * 0.8 ? -4 * w : owner.volume < r.volume * 0.75 ? bot.aggression * 0.8 * w : 0;
+        // Contact is a depth contest: avoid live water dug deeper than we cut,
+        // and cross shallow channels on purpose to siphon them.
+        if (isRacing(owner)) score += world.carve[k] > r.depth * 0.95 ? -4 * w : world.carve[k] < r.depth * 0.8 ? bot.aggression * 0.8 * w : 0;
       }
     }
     for (const o of rivals) {
@@ -60,7 +61,7 @@ export function botSteer(world, bot) {
       if (d > TUNE_BOT.sight) continue;
       const toward = (ox * dx + oz * dz) / (d || 1); // -1..1
       const near = 1 - d / TUNE_BOT.sight;
-      const danger = o.volume > r.volume * 0.8 ? -4 : o.volume < r.volume * 0.75 ? bot.aggression * 1.2 : 0;
+      const danger = o.depth > r.depth * 0.95 ? -4 : o.depth < r.depth * 0.8 ? bot.aggression * 1.2 : 0;
       score += danger * toward * near * (1 + widthOf(o) / 400);
     }
     score += (bot.rng() - 0.5) * (1 - bot.skill) * 1.2;

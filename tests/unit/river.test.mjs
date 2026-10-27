@@ -50,7 +50,7 @@ test('steering changes where the river goes', () => {
 test('digging stays bounded and only on land', () => {
   const { w, r } = run(2, 'wiggle');
   const t = w.terrain;
-  const cap = TUNE.depth * 3 * r.size; // size only grows, so the final size bounds every pass
+  const cap = TUNE.depth * 3 * r.size * 1.42; // max cutting depth: final size at top speed
   let dug = 0;
   for (let i = 0; i < w.carve.length; i++) {
     assert.ok(w.carve[i] >= 0 && w.carve[i] <= cap, `carve ${w.carve[i]} at ${i} (cap ${cap})`);

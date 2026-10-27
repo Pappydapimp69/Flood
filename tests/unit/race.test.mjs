@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateIsland } from '../../src/shared/terrain.js';
-import { createWorld, addRiver, step, standings, isRacing, spawnPoint, TUNE, TICK_HZ } from '../../src/shared/river.js';
+import { createWorld, addRiver, step, standings, isRacing, spawnPoint, surfaceAt, TUNE, TICK_HZ } from '../../src/shared/river.js';
 import { createBot, botSteer } from '../../src/shared/bot.js';
 
 const islands = new Map([1, 2, 42].map((s) => [s, generateIsland(s)]));
@@ -38,22 +38,65 @@ test('outcome does not depend on the order rivers were added', () => {
   assert.deepEqual(summary(race(2, [...ids].reverse(), spawns)), summary(race(2, ids, spawns)));
 });
 
-test('contact: the smaller river is absorbed and the bigger gains its water', () => {
+// Two rivers after the spawn grace; depth comes from size and speed, so the
+// tests set volume and copy state rather than poking depth directly.
+function duel() {
   const w = createWorld(islands.get(1));
-  const a = addRiver(w, 'big'), b = addRiver(w, 'small', { x: a.x + 30, z: a.z + 30 });
-  a.volume = TUNE.startVolume * 3;
+  const a = addRiver(w, 'a'), b = addRiver(w, 'b', { x: a.x + 3000, z: a.z });
   const grace = TUNE.graceTicks + TUNE.gracePerRiver * w.rivers.length;
-  for (let k = 0; k < grace - 1; k++) step(w, new Map());
-  assert.ok(!a.out && !b.out, 'merged during the spawn grace');
-  step(w, new Map()); // last grace tick
-  // Put them head to head now that grace is over.
-  b.x = a.x + 10; b.z = a.z;
-  const before = a.volume + b.volume * TUNE.absorb;
+  for (let k = 0; k < grace; k++) step(w, new Map());
+  assert.ok(!w.events.some((e) => e.type === 'siphon'), 'water moved during the spawn grace');
+  // Park b exactly on a: same place, heading and speed, so only volume differs.
+  const park = () => Object.assign(b, { x: a.x, z: a.z, dx: a.dx, dz: a.dz, speed: a.speed, low: a.low, guided: a.guided, stall: a.stall });
+  return { w, a, b, park };
+}
+
+test('contact: the deeper river siphons the shallower until it dries up', () => {
+  const { w, a, b, park } = duel();
+  a.volume = TUNE.startVolume * 16; // size 2: cuts twice as deep at the same speed
+  a.size = 2;
+  park();
+  const b0 = b.volume;
   step(w, new Map());
-  assert.equal(b.out?.by, 'big');
-  assert.ok(!a.out);
-  assert.ok(a.volume >= before - 1e-6);
-  assert.equal(w.events.filter((e) => e.type === 'merge').length, 1);
+  const s = w.events.filter((e) => e.type === 'siphon');
+  assert.equal(s.length, 1);
+  assert.equal(s[0].from, b.idx);
+  const lead = (a.depth - b.depth) / b.depth;
+  assert.ok(lead > 0.3, `lead ${lead}`);
+  const want = b0 * TUNE.siphonRate * Math.min(1, lead);
+  assert.ok(Math.abs(b0 - b.volume - want) < want * 0.2, `took ${b0 - b.volume}, expected about ${want}`);
+  // Hold the contact: b drains to the floor and is out, credited to a.
+  for (let k = 0; k < 400 && !b.out; k++) { park(); step(w, new Map()); }
+  assert.equal(b.out?.by, 'a');
+  assert.ok(b.volume < TUNE.floor * TUNE.startVolume);
+  // Every litre b lost to siphoning arrived at a (lakes and travel add on top).
+  const moved = w.events.filter((e) => e.type === 'siphon');
+  assert.ok(moved.every((e) => e.from === b.idx && e.to === a.idx));
+});
+
+test('contact: equal depths move nothing', () => {
+  const { w, a, b, park } = duel();
+  // Fresh ground, away from both channels, so only the heads touch.
+  const p = spawnPoint(w, 'fresh');
+  Object.assign(a, { x: p.x, z: p.z, low: Infinity });
+  park();
+  b.volume = a.volume; b.size = a.size;
+  step(w, new Map());
+  assert.equal(a.depth, b.depth);
+  assert.ok(!w.events.some((e) => e.type === 'siphon'));
+  assert.ok(!a.out && !b.out);
+});
+
+test('a live rival channel costs water to cross but never traps', () => {
+  const { w, a } = duel();
+  // Live rival water is not felt as terrain; the same cells read as ground for its owner too.
+  const k = w.owner.findIndex((o, i) => o === a.idx && w.carve[i] > 2);
+  assert.ok(k >= 0);
+  const n = w.terrain.size, t = w.terrain;
+  const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+  const other = w.rivers.find((r) => r !== a).idx;
+  assert.ok(Math.abs(surfaceAt(w, x, z, other) - t.filled[k]) < 1e-3, 'live rival channel dented the surface');
+  assert.ok(surfaceAt(w, x, z) < t.filled[k] - 2, 'rendered surface should show the channel');
 });
 
 test('spawns keep their distance', () => {

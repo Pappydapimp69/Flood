@@ -32,9 +32,13 @@ export const TUNE = {
   lakeCellCap: 400, // ...counting at most this many cells
   // Bigger rivers are faster but turn slower, so the leader can't simply snowball.
   speedPerSize: 0.25, // max speed multiplier gained per unit of size above 1
-  // Contact: when a head touches a rival's head or channel, the smaller river
-  // is absorbed and the larger takes this share of its water.
-  absorb: 0.5,
+  // Contact is a depth tug-of-war: where a head touches a rival's head or live
+  // channel, the deeper water siphons the shallower each tick. Depth comes from
+  // mass and speed, so a small river racing down a slope can out-cut a big slow one.
+  siphonRate: 0.012, // share of the loser's water per tick at a 100% depth lead
+  siphonCap: 0.015, // most a river can lose to all contacts in one tick
+  siphonDeadband: 0.05, // depth leads under 5% move nothing
+  floor: 0.4, // below this share of the starting volume a river dries up and is out
   contactDepth: 1, // metres of channel that counts as a rival's water
   liveTicks: 300, // only channel dug in the last 15 s is live water; older is a dry bed
   graceTicks: 100, // no contact for anyone in their first 5 s...
@@ -87,7 +91,9 @@ export function surfaceAt(world, wx, wz, self = -1) {
   const y0 = gy < 0 ? 0 : gy > n - 2 ? n - 2 : Math.floor(gy);
   const fx = Math.min(1, Math.max(0, gx - x0)), fy = Math.min(1, Math.max(0, gy - y0));
   const i = y0 * n + x0, f = t.filled, c = world.carve, o = world.owner;
-  const cv = (k) => (self >= 0 && o[k] === self ? 0 : c[k]);
+  // A river doesn't feel its own channel, nor a rival's live water (crossing that
+  // costs water instead, see resolveContacts); old dry beds are ordinary ground.
+  const cv = (k) => (self >= 0 && o[k] >= 0 && (o[k] === self || world.tick - world.dugAt[k] < TUNE.liveTicks) ? 0 : c[k]);
   const a = f[i] - cv(i), b = f[i + 1] - cv(i + 1), d = f[i + n] - cv(i + n), e = f[i + n + 1] - cv(i + n + 1);
   return (a + (b - a) * fx) + ((d + (e - d) * fx) - (a + (b - a) * fx)) * fy;
 }
@@ -155,6 +161,7 @@ export function addRiver(world, id, at = spawnPoint(world, id)) {
     speed: TUNE.minSpeed,
     volume: TUNE.startVolume,
     size: 1,
+    depth: TUNE.depth,
     lakes: 0,
     low: Infinity, // lowest surface reached; water can't climb far above it
     best: Infinity, // best distance-to-sea so far, for stall detection
@@ -164,7 +171,7 @@ export function addRiver(world, id, at = spawnPoint(world, id)) {
     travelled: 0,
     finished: false,
     finishTick: -1,
-    out: null, // { by, tick } once absorbed by a rival
+    out: null, // { by, tick } once drained below the floor by a rival
     born: world.tick,
     path: [],
   };
@@ -194,7 +201,7 @@ function normalize(r) {
 //
 // Phases, so the result never depends on the order rivers were added:
 // 1. every racing river moves against last tick's surface;
-// 2. contacts resolve (smaller absorbed), judged on last tick's channels;
+// 2. contacts resolve (deeper siphons shallower), judged on last tick's channels;
 // 3. lakes go to the biggest river touching them;
 // 4. this tick's channel digs are applied, in id order.
 export function step(world, inputs) {
@@ -259,6 +266,7 @@ function moveRiver(world, r, inputs) {
     const top = TUNE.maxSpeed * (1 + TUNE.speedPerSize * (r.size - 1));
     const target = Math.max(TUNE.minSpeed, Math.min(top, TUNE.baseSpeed + TUNE.slopeSpeed * along));
     r.speed += (target - r.speed) * TUNE.speedEase;
+    r.depth = depthOf(r);
 
     let nx = r.x + r.dx * r.speed * DT, nz = r.z + r.dz * r.speed * DT;
     const ceiling = r.low + TUNE.climb;
@@ -295,39 +303,59 @@ function resolveContacts(world) {
   const rs = world.rivers.filter((r) => isRacing(r) && world.tick - r.born >= grace);
   if (rs.length < 2) return;
   const { carve, owner } = world;
-  const pairs = new Map();
-  const add = (a, b, how) => {
-    const [p, q] = byId(a, b) < 0 ? [a, b] : [b, a];
+  // Contacts from last tick's channels and this tick's heads: [a, aDepth, b, bDepth, how].
+  const contacts = new Map();
+  const add = (a, da, b, db, how) => {
+    const [p, dp, q, dq] = byId(a, b) < 0 ? [a, da, b, db] : [b, db, a, da];
     const key = `${p.id}|${q.id}`;
-    if (!pairs.has(key)) pairs.set(key, Object.assign([p, q], { how }));
+    const prev = contacts.get(key);
+    // Two touches between the same pair: keep the bigger depth gap.
+    if (!prev || Math.abs(dp - dq) > Math.abs(prev[1] - prev[3])) contacts.set(key, [p, dp, q, dq, how]);
   };
   const live = new Set(rs.map((r) => r.idx));
   for (const a of rs) {
-    // Head in a rival's channel.
+    // Head in a rival's live channel: the channel's water is as deep as it was dug.
     const k = cellIndex(world.terrain, a.x, a.z);
     const o = owner[k];
     if (o >= 0 && o !== a.idx && live.has(o) && carve[k] > TUNE.contactDepth && isLive(world, k)) {
-      add(a, world.rivers[o], 'channel');
+      add(a, a.depth, world.rivers[o], carve[k], 'channel');
     }
     // Heads touching.
     for (const b of rs) {
       if (b.idx <= a.idx) continue;
       const reach = (widthOf(a) + widthOf(b)) / 2;
       const dx = a.x - b.x, dz = a.z - b.z;
-      if (dx * dx + dz * dz < reach * reach) add(a, b, 'head');
+      if (dx * dx + dz * dz < reach * reach) add(a, a.depth, b, b.depth, 'head');
     }
   }
-  const order = [...pairs.values()].sort((u, v) => {
-    const bu = [...u].sort(biggerFirst)[0], bv = [...v].sort(biggerFirst)[0];
-    return biggerFirst(bu, bv) || byId([...u].sort(biggerFirst)[1], [...v].sort(biggerFirst)[1]);
-  });
-  for (const pair of order) {
-    if (pair[0].out || pair[1].out) continue;
-    const [winner, loser] = [...pair].sort(biggerFirst);
-    const gain = loser.volume * TUNE.absorb;
-    loser.out = { by: winner.id, tick: world.tick };
-    grow(winner, gain);
-    world.events.push({ type: 'merge', winner: winner.idx, loser: loser.idx, how: pair.how, gain, tick: world.tick });
+  if (!contacts.size) return;
+  // Amounts come from volumes at the start of the phase, so order can't matter.
+  const start = new Map(rs.map((r) => [r, r.volume]));
+  const lost = new Map(), top = new Map();
+  const flows = [];
+  for (const key of [...contacts.keys()].sort()) {
+    const [p, dp, q, dq, how] = contacts.get(key);
+    const [win, dw, lose, dl] = dp >= dq ? [p, dp, q, dq] : [q, dq, p, dp];
+    const lead = (dw - dl) / Math.max(dl, 0.5);
+    if (lead < TUNE.siphonDeadband) continue;
+    const amount = start.get(lose) * TUNE.siphonRate * Math.min(1, lead);
+    flows.push({ win, lose, amount, how });
+    lost.set(lose, (lost.get(lose) ?? 0) + amount);
+  }
+  for (const f of flows) {
+    // Scale down evenly if one river is being drained from several sides at once.
+    const total = lost.get(f.lose), cap = start.get(f.lose) * TUNE.siphonCap;
+    const amount = total > cap ? (f.amount * cap) / total : f.amount;
+    grow(f.lose, -amount);
+    grow(f.win, amount);
+    world.events.push({ type: 'siphon', from: f.lose.idx, to: f.win.idx, amount, how: f.how, tick: world.tick });
+    if (!top.has(f.lose) || amount > top.get(f.lose).amount) top.set(f.lose, { by: f.win, amount });
+  }
+  for (const r of [...top.keys()].sort(byId)) {
+    if (r.volume >= TUNE.floor * TUNE.startVolume) continue;
+    const by = top.get(r).by;
+    r.out = { by: by.id, tick: world.tick };
+    world.events.push({ type: 'merge', winner: by.idx, loser: r.idx, gain: 0, how: 'drained', tick: world.tick });
   }
 }
 
@@ -352,6 +380,12 @@ function resolveLakes(world) {
 
 export function isLive(world, k) {
   return world.tick - world.dugAt[k] < TUNE.liveTicks;
+}
+
+// Cutting depth from mass (size) and speed: 0.7x when crawling, up to 1.42x at
+// top speed. Linear, so it stays deterministic everywhere.
+export function depthOf(r) {
+  return TUNE.depth * r.size * (0.7 + 0.6 * Math.min(1.2, r.speed / TUNE.maxSpeed));
 }
 
 export function widthOf(r) {
@@ -391,6 +425,7 @@ function guidedStep(world, r, ci) {
   r.dx = tx - r.x; r.dz = tz - r.z;
   normalize(r);
   r.speed = TUNE.minSpeed * 2;
+  r.depth = depthOf(r);
   moveTo(world, r, r.x + r.dx * r.speed * DT, r.z + r.dz * r.speed * DT);
   r.low = Math.min(r.low, surfaceAt(world, r.x, r.z, r.idx));
 }
@@ -419,7 +454,7 @@ function pushPathPoint(world, r) {
   const t = world.terrain;
   // Bed depth is measured from undug ground, so passes never stack into a pit.
   const centre = surfaceAt(world, r.x, r.z, r.idx);
-  const width = widthOf(r), depth = TUNE.depth * r.size;
+  const width = widthOf(r), depth = r.depth;
   const bed = Math.min(centre, sampleFilled(t, r.x, r.z)) - depth;
   r.path.push({ x: r.x, z: r.z, water: centre - depth * 0.3, w: width, tick: world.tick });
   world.digs.push({ r, x: r.x, z: r.z, width, depth, bed });
