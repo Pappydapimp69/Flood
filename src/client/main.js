@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, dischargeOf, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -65,6 +65,7 @@ function useIsland(seed, made) {
 const PLAYER_COLOR = '#45d2ff';
 const BOT_COLORS = ['#4f8fd0', '#4fb39a', '#7d84d8', '#3fa8b8', '#6c95e8', '#58a77f', '#9480d8', '#3f93c4', '#6fae8f', '#8496e0', '#4c9aa8'];
 const headGeo = new THREE.SphereGeometry(1, 20, 12);
+const spillGeo = new THREE.RingGeometry(0.82, 1, 32).rotateX(-Math.PI / 2);
 const streakGeo = new THREE.CylinderGeometry(0.15, 1, 1, 8, 1, true).translate(0, 0.5, 0);
 // Where your drop will touch down if you keep this heading: a ring on the start contour.
 const marker = new THREE.Mesh(
@@ -73,6 +74,23 @@ const marker = new THREE.Mesh(
 );
 marker.renderOrder = 2;
 marker.visible = false;
+// Drop guidance, all hidden once you land: a light beam standing on the
+// landing spot (visible from the sky), the line your fall will follow, and an
+// arrow on your drop showing which way it's heading.
+const guideMat = (color, opacity) => new THREE.MeshBasicMaterial({ color, transparent: true, opacity, depthWrite: false });
+const beam = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 1, 24, 1, true).translate(0, 0.5, 0), guideMat('#7ff0ff', 0.28));
+beam.material.side = THREE.DoubleSide;
+const course = new THREE.Line(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(9), 3)),
+  new THREE.LineDashedMaterial({ color: '#eaffff', dashSize: 160, gapSize: 110, transparent: true, opacity: 0.9, depthTest: false }));
+course.renderOrder = 3;
+// A flat arrow lying level, pointing +z before it's turned to the heading.
+const arrowShape = new THREE.Shape([[-0.22, -1], [0.22, -1], [0.22, 0.1], [0.6, 0.1], [0, 1], [-0.6, 0.1], [-0.22, 0.1]].map(([x, y]) => new THREE.Vector2(x, y)));
+const arrow = new THREE.Mesh(new THREE.ShapeGeometry(arrowShape).rotateX(Math.PI / 2), guideMat('#ffe36b', 0.95));
+arrow.material.side = THREE.DoubleSide;
+arrow.renderOrder = 3;
+arrow.material.depthTest = false;
+const guides = [marker, beam, course, arrow];
+for (const g of guides) g.visible = false;
 
 // One render entry per river: ribbon, head and last-tick position for interpolation.
 function makeEntry(r, i) {
@@ -84,8 +102,16 @@ function makeEntry(r, i) {
   }));
   // The streak a falling drop leaves, like the trailer's rain of rivers.
   const streak = new THREE.Mesh(streakGeo, new THREE.MeshBasicMaterial({ color: mine ? '#bff3ff' : '#d8eef5', transparent: true, opacity: 0.55, depthWrite: false }));
+  // The head is a faucet: water keeps spilling out of it in rings of foam
+  // that spread and fade, wider and faster the more it pours.
+  const spill = [0, 1, 2].map(() => {
+    const m = new THREE.Mesh(spillGeo, new THREE.MeshBasicMaterial({ color: '#f4feff', transparent: true, opacity: 0, depthWrite: false }));
+    m.renderOrder = 1;
+    scene.add(m);
+    return m;
+  });
   scene.add(ribbon.mesh, head, streak);
-  return { r, ribbon, head, streak, prev: { x: r.x, z: r.z } };
+  return { r, ribbon, head, streak, spill, prev: { x: r.x, z: r.z } };
 }
 
 const camera = new THREE.PerspectiveCamera(55, 1, 20, 400000);
@@ -145,7 +171,11 @@ let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 
 // rolled: a world already built for this seed (solo rolls it), else built here.
 function beginRace(seed, raceIds, me, rolled) {
-  for (const e of entries) { scene.remove(e.ribbon.mesh, e.head, e.streak); e.ribbon.geo.dispose(); e.head.material.dispose(); e.streak.material.dispose(); }
+  for (const e of entries) {
+    scene.remove(e.ribbon.mesh, e.head, e.streak, ...e.spill);
+    e.ribbon.geo.dispose(); e.head.material.dispose(); e.streak.material.dispose();
+    for (const m of e.spill) m.material.dispose();
+  }
   useIsland(seed, rolled?.terrain);
   world = rolled?.terrain === terrain ? rolled : createWorld(terrain);
   for (const id of raceIds) addRiver(world, id, undefined, { drop: !params.has('nodrop') }); // sorted ids: reproducible spawns
@@ -163,7 +193,7 @@ function beginRace(seed, raceIds, me, rolled) {
   document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
   updateLakes(); // dry basins show as dry from the first frame
-  if (!marker.parent) scene.add(marker);
+  for (const g of guides) if (!g.parent) scene.add(g);
   for (const m of [trees, lava]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); m.dispose(); }
   trees = buildTrees(world, lowPower ? 1500 : 4000);
   lava = buildLava(world);
@@ -489,11 +519,20 @@ function showHint() {
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const ordinal = (n) => `#${n}`;
 
-// While falling, ring the start-contour cell you'd land on holding this heading.
+// While falling: ring the start-contour cell you'd land on holding this
+// heading, stand a beam on it, draw your course there and point your drop.
 let markerAt = 0;
-function showMarker(now) {
-  marker.visible = !!river?.dropping && isRacing(river);
-  if (!marker.visible || now - markerAt < 150) return;
+function showMarker(now, hx, hy, hz) {
+  const on = !!river?.dropping && isRacing(river) && !mapView;
+  for (const g of guides) g.visible = on;
+  if (!on) return;
+  // The arrow follows the drop every frame, just ahead of it.
+  const sz = 220;
+  arrow.position.set(hx + river.dx * 380, hy - 60, hz + river.dz * 380);
+  arrow.scale.set(sz, sz, sz);
+  arrow.rotation.set(0, Math.atan2(river.dx, river.dz), 0);
+  const pulse = 1 + 0.12 * Math.sin(now / 160);
+  if (now - markerAt < 120) { marker.scale.x = marker.scale.z = marker.userData.sc * pulse; return; }
   markerAt = now;
   const left = river.dropping / TICK_HZ;
   const half = W / 2, n = terrain.size;
@@ -501,9 +540,21 @@ function showMarker(now) {
   const pz = Math.max(-half, Math.min(half, river.z + river.dz * TUNE.glideSpeed * left));
   const k = landingCell(world, px, pz);
   const x = ((k % n) / (n - 1) - 0.5) * W, z = (Math.floor(k / n) / (n - 1) - 0.5) * W;
-  marker.position.set(x, surfaceAt(world, x, z) * VERT + 30, z);
-  const sc = 250 + 900 * Math.min(1, left / 10); // shrinks as touchdown nears
-  marker.scale.set(sc, 1, sc);
+  const gy = surfaceAt(world, x, z) * VERT;
+  marker.position.set(x, gy + 30, z);
+  marker.userData.sc = 250 + 900 * Math.min(1, left / 10); // shrinks as touchdown nears
+  marker.scale.set(marker.userData.sc * pulse, 1, marker.userData.sc * pulse);
+  beam.position.set(x, gy, z);
+  beam.scale.set(90, Math.max(800, hy - gy + 600), 90);
+  // Course: from under the drop, along its heading, then to where it lands.
+  const pos = course.geometry.attributes.position;
+  const ux = river.x, uz = river.z;
+  pos.setXYZ(0, ux, surfaceAt(world, ux, uz) * VERT + 40, uz);
+  pos.setXYZ(1, px, surfaceAt(world, px, pz) * VERT + 40, pz);
+  pos.setXYZ(2, x, gy + 40, z);
+  pos.needsUpdate = true;
+  course.geometry.computeBoundingSphere();
+  course.computeLineDistances();
   dbg.marker = { x, z, k };
 }
 
@@ -548,7 +599,20 @@ renderer.setAnimationLoop(() => {
     e.streak.visible = !!r.dropping;
     if (r.dropping) { e.streak.position.set(hx, hy, hz); e.streak.scale.set(28, 1400, 28); }
     if (r.dropping) e.head.scale.set(45 * big, 130 * big, 45 * big); // a falling drop, stretched
-    else e.head.scale.set(70 * r.size * big, 25 * r.size * big, 70 * r.size * big);
+    else e.head.scale.set(55 * r.size * big, 30 * r.size * big, 55 * r.size * big);
+    // Foam rings pour out of the head; a pooled head spills wider, filling its basin.
+    const pouring = !r.dropping && !r.out && !r.finished && !mapView;
+    const rate = Math.min(2.5, dischargeOf(r) / TUNE.discharge); // 1 at start size
+    for (let i = 0; i < e.spill.length; i++) {
+      const m = e.spill[i];
+      m.visible = pouring;
+      if (!pouring) continue;
+      const ph = ((now / 1000) * (0.8 + 0.3 * rate) + i / e.spill.length) % 1;
+      const reach = (r.pooled >= 0 ? 260 : 150) * r.size * (0.4 + 1.2 * ph);
+      m.position.set(hx + r.dx * 40 * ph, hy + 4, hz + r.dz * 40 * ph);
+      m.scale.set(reach, 1, reach);
+      m.material.opacity = 0.75 * (1 - ph);
+    }
     // Threat at a glance: red heads would absorb you, green ones you can absorb.
     if (river && r !== river) {
       const t = threatOf(r);
@@ -562,7 +626,7 @@ renderer.setAnimationLoop(() => {
 
   placeTags();
   pulseLava(lava, now / 1000);
-  showMarker(now);
+  showMarker(now, fx, fy, fz);
   if (mapView) {
     controls.update();
   } else {
@@ -607,17 +671,18 @@ renderer.setAnimationLoop(() => {
   hud.rank.textContent = river ? `${ordinal(place)}/${world.rivers.length} · ${alive} flowing` : `Spectating · ${alive} flowing`;
   const toSea = world.reach[cellIndex(terrain, focus.x, focus.z)];
   hud.dist.textContent = focus !== river ? `Watching ${nameOf(focus)}`
-    : river.dropping ? `Aim for the ring · ← → turn, ↑ ↓ faster / slower · ${Math.ceil(river.dropping / TICK_HZ)} s`
+    : river.dropping ? `Falling · ${Math.ceil(river.dropping / TICK_HZ)} s · ← → turn the yellow arrow · ↑ ↓ faster / slower · you land in the beam`
     : `${(toSea / 1000).toFixed(2)} km to sea`;
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);
-  hud.litres.textContent = fmtL(me.volume);
+  hud.litres.textContent = me.dropping ? fmtL(me.volume) : `pouring ${fmtL(dischargeOf(me) * TICK_HZ + me.inflow * TICK_HZ)}/s`;
   // The water network feeding you: lakes through your outlets, rivers you cut into.
   const feeds = me.via.size;
   let tribs = 0;
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
-  hud.depth.textContent = me.pooled >= 0
+  hud.depth.textContent = me.dropping ? 'the beam marks your landing'
+    : me.pooled >= 0
     ? `filling a basin · ${Math.min(99, Math.floor(100 * world.lakeVol[me.pooled] / world.lakeCap[me.pooled]))}%`
     : `cutting ${me.depth.toFixed(1)} m deep` + (fedBy ? ` · fed by ${fedBy}` : '');
   tugFeedback(now);
