@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateIsland } from '../../src/shared/terrain.js';
-import { createWorld, addRiver, step, riverFingerprint, TICK_HZ } from '../../src/shared/river.js';
+import { createWorld, addRiver, step, riverFingerprint, spawnBand, TICK_HZ, TUNE } from '../../src/shared/river.js';
 
 const SEEDS = [1, 2, 3, 42, 1337];
 const islands = new Map(SEEDS.map((s) => [s, generateIsland(s)]));
@@ -48,11 +48,12 @@ test('steering changes where the river goes', () => {
 });
 
 test('digging stays bounded and only on land', () => {
-  const { w } = run(2, 'wiggle');
+  const { w, r } = run(2, 'wiggle');
   const t = w.terrain;
+  const cap = TUNE.depth * 3 * r.size; // size only grows, so the final size bounds every pass
   let dug = 0;
   for (let i = 0; i < w.carve.length; i++) {
-    assert.ok(w.carve[i] >= 0 && w.carve[i] <= 21, `carve ${w.carve[i]} at ${i}`);
+    assert.ok(w.carve[i] >= 0 && w.carve[i] <= cap, `carve ${w.carve[i]} at ${i} (cap ${cap})`);
     if (w.carve[i] > 0) { dug++; assert.ok(t.filled[i] > 0, 'dug the sea'); }
   }
   assert.ok(dug > 100, `only ${dug} cells dug`);

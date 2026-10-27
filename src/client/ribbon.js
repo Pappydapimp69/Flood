@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { VERT } from './terrainMesh.js';
-import { surfaceAt, TUNE } from '../shared/river.js';
+import { surfaceAt } from '../shared/river.js';
 
 const MAX_POINTS = 8000;
 
@@ -56,7 +56,7 @@ export class Ribbon {
     else if (i === 0) { dx = next.x - x; dz = next.z - z; }
     else { dx = next.x - prev.x; dz = next.z - prev.z; }
     const len = Math.hypot(dx, dz) || 1;
-    const half = TUNE.width * 0.5;
+    const half = (live ? prev.w : path[i].w) * 0.5;
     const px = (-dz / len) * half, pz = (dx / len) * half;
     let ys = this.sideY[i];
     if (!ys || live) {

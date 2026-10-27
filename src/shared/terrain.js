@@ -233,3 +233,35 @@ class MinHeap {
     return top;
   }
 }
+
+// Lakes: connected groups of cells filled deeper than LAKE_MIN_DEPTH (8-way),
+// labelled in index order so ids are stable. volume is in cubic metres.
+export function findLakes(t) {
+  const { size: n, height, filled, cell } = t;
+  const label = new Int32Array(n * n).fill(-1);
+  const lakes = [];
+  const queue = new Int32Array(n * n);
+  for (let s = 0; s < n * n; s++) {
+    if (label[s] >= 0 || filled[s] - height[s] <= LAKE_MIN_DEPTH) continue;
+    const id = lakes.length;
+    let head = 0, tail = 0, volume = 0, sx = 0, sy = 0;
+    queue[tail++] = s;
+    label[s] = id;
+    while (head < tail) {
+      const c = queue[head++];
+      const cx = c % n, cy = (c - cx) / n;
+      volume += (filled[c] - height[c]) * cell * cell;
+      sx += cx; sy += cy;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = cx + dx, y = cy + dy;
+          if (x < 0 || y < 0 || x >= n || y >= n) continue;
+          const k = y * n + x;
+          if (label[k] < 0 && filled[k] - height[k] > LAKE_MIN_DEPTH) { label[k] = id; queue[tail++] = k; }
+        }
+      }
+    }
+    lakes.push({ id, cells: tail, volume, gx: sx / tail, gy: sy / tail });
+  }
+  return { label, lakes };
+}

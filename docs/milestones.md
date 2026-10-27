@@ -62,3 +62,26 @@ entries below for context. Each ends with a log entry here.
 - `world.dist` is static distance-to-sea along the fill tree (ignores digging).
 - Spawn spread is unfair (24 s to 11 min); fix spawn rules before bots/multiplayer.
 - Multi-river ticks read neighbours mid-tick; snapshot before M4 so order doesn't matter.
+
+## M3 — Growth (done)
+
+**Built**
+- Volume in litres. Start 1,000,000 L; +25 L per metre travelled; swallowing a lake adds
+  120,000 L + 9,000 L per lake cell (capped at 400 cells). One-shot: first river in takes it.
+- Size = (volume / start)^¼ (two square roots, no transcendental Math). Channel width/depth scale
+  with size (width capped 420 m). Top speed +25% per unit of size, but turning is divided by size —
+  bigger is faster and stronger, not more agile, so the leader can't simply snowball.
+- Turning now adds a sideways component and renormalises, so turn rate can vary without trig.
+- `findLakes` labels lakes (8-way, index order). A swallowed lake dries to a mudflat visually; the
+  game surface keeps its level so drainage still holds.
+- Fair spawns: high ground inside ±8% of the 75th-percentile flow distance to the sea. Single-player
+  times per seed now sit within ~1.4× of each other (were 3–6×).
+- HUD: litres counter, "+N L" pop when you swallow a lake, finish banner with litres and lakes.
+- Tests: `tests/unit/growth.test.mjs` (lake labels, one-shot lakes, size, spawn band, a run grows);
+  play test checks the litres HUD counts up.
+
+**Carry forward to M4**
+- `world.events` carries lake captures for presentation; add rival events the same way.
+- Rivals' channels already change the surface others feel; capture/merge rules come next.
+- Rival heads in one tick still read each other mid-update — snapshot first.
+- Runs take ~3–8 minutes; revisit pacing once there are opponents.

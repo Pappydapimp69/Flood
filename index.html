@@ -9,7 +9,8 @@
     #app, #app canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
     #hud {
       position: fixed; left: calc(16px + env(safe-area-inset-left, 0px)); top: calc(12px + env(safe-area-inset-top, 0px));
-      font: 600 14px/1.3 system-ui, sans-serif; color: #10303d; text-shadow: 0 1px 0 #fff8; pointer-events: none;
+      font: 600 14px/1.3 system-ui, sans-serif; color: #10303d; pointer-events: none;
+      background: #eaf5fbd9; padding: 8px 12px; border-radius: 10px;
     }
     #hud h1 { margin: 0; font-size: 22px; letter-spacing: 0.12em; }
     #stats { margin-top: 6px; font-size: 16px; }
@@ -23,6 +24,13 @@
     #banner[hidden] { display: none; }
     #help { position: fixed; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: 0; right: 0; text-align: center;
       font: 13px system-ui, sans-serif; color: #10303dcc; pointer-events: none; }
+    #litres::before { content: "💧 "; }
+    #pop { position: fixed; left: 50%; top: 22%; transform: translateX(-50%); font: 800 28px system-ui, sans-serif;
+      color: #e8fbff; text-shadow: 0 2px 6px #0b3a4a; opacity: 0; pointer-events: none; }
+    #pop.show { animation: pop 1.5s ease-out forwards; }
+    @keyframes pop { 0% { opacity: 0; transform: translate(-50%, 12px) scale(0.9); } 15% { opacity: 1; transform: translate(-50%, 0) scale(1.08); }
+      70% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -24px) scale(1); } }
+    @media (prefers-reduced-motion: reduce) { #pop.show { animation: none; opacity: 1; } }
     #fallback { position: fixed; inset: 0; display: grid; place-items: center; font: 16px system-ui; color: #10303d; }
     #fallback[hidden] { display: none; }
   </style>
@@ -32,8 +40,9 @@
 </head>
 <body>
   <div id="app"></div>
-  <div id="hud"><h1>FLOOD</h1><div id="stats"><div id="dist"></div><div id="time"></div></div></div>
+  <div id="hud"><h1>FLOOD</h1><div id="stats"><div id="dist"></div><div id="litres"></div><div id="time"></div></div></div>
   <div id="banner" hidden></div>
+  <div id="pop"></div>
   <div id="help">Steer: ← → or A D · on a phone, hold the left or right side · M: map</div>
   <div id="fallback" hidden></div>
   <script type="module" src="./src/client/main.js"></script>

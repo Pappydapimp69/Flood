@@ -1,14 +1,14 @@
 // River simulation. Authoritative, fixed-tick, shared by client and server.
 // Rules: no transcendental Math; integer steering input; render never writes here.
 
-import { SEA_LEVEL, LAKE_MIN_DEPTH, downhill } from './terrain.js';
+import { SEA_LEVEL, LAKE_MIN_DEPTH, downhill, findLakes } from './terrain.js';
 import { stream } from './rng.js';
 
 export const TICK_HZ = 20;
 export const DT = 1 / TICK_HZ;
 
 export const TUNE = {
-  turnStep: 0.11, // radians per tick at full steer
+  turnStep: 0.11, // radians per tick at full steer, at starting size
   minSpeed: 18, // m/s, water always creeps
   baseSpeed: 45,
   slopeSpeed: 1400, // extra m/s per unit downhill slope
@@ -21,13 +21,27 @@ export const TUNE = {
   pool: 0.3, // metres a blocked head rises per tick, until it spills over
   stallTicks: 100, // no progress toward the sea for this long -> guided flow
   guideTicks: 60, // how long guided flow lasts
-  width: 110, // channel width, metres
-  depth: 7, // channel depth, metres
+  width: 110, // channel width at starting size, metres
+  depth: 7, // channel depth at starting size, metres
+  maxWidth: 420,
+  // Growth. Volume is in litres; size = (volume / start) ^ 1/4.
+  startVolume: 1_000_000,
+  trickle: 25, // litres gained per metre travelled (rain and side streams)
+  lakeBase: 120_000, // litres for swallowing any lake...
+  lakePerCell: 9_000, // ...plus this per lake cell...
+  lakeCellCap: 400, // ...counting at most this many cells
+  // Bigger rivers are faster but turn slower, so the leader can't simply snowball.
+  speedPerSize: 0.25, // max speed multiplier gained per unit of size above 1
 };
 
-// cos/sin of TUNE.turnStep, as literals so no runtime transcendental is needed.
-const TURN_C = 0.9939560979566968;
-const TURN_S = 0.10977830083717481;
+// Size from volume without transcendental Math: two square roots.
+export function sizeOf(volume) {
+  return Math.sqrt(Math.sqrt(volume / TUNE.startVolume));
+}
+
+export function lakeGain(lake) {
+  return TUNE.lakeBase + TUNE.lakePerCell * Math.min(lake.cells, TUNE.lakeCellCap);
+}
 
 // The game surface: filled terrain minus every carved channel.
 export function createWorld(terrain) {
@@ -46,7 +60,13 @@ export function createWorld(terrain) {
     flow[i * 2] = fx * inv;
     flow[i * 2 + 1] = fz * inv;
   }
-  return { terrain, flow, dist: distanceToSea(terrain, downhill), carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), tick: 0, rivers: [], dirty: [] };
+  const { label: lakeOf, lakes } = findLakes(terrain);
+  return {
+    terrain, flow, dist: distanceToSea(terrain, downhill),
+    lakeOf, lakes, lakeTaken: new Int32Array(lakes.length).fill(-1),
+    events: [], // for presentation: { type: 'lake', lake, river, gain, tick }
+    carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), tick: 0, rivers: [], dirty: [],
+  };
 }
 
 // Surface seen by river `self` (-1 = everyone's channels, for rendering).
@@ -63,20 +83,40 @@ export function surfaceAt(world, wx, wz, self = -1) {
   return (a + (b - a) * fx) + ((d + (e - d) * fx) - (a + (b - a) * fx)) * fy;
 }
 
-// Pick a spawn high on the spine, keyed by player id so spawns are stable.
-export function spawnPoint(world, id) {
+// Fair spawns: high ground whose downhill distance to the sea sits in one
+// narrow band, so nobody starts a short hop from the coast. Cached per world.
+export function spawnBand(world) {
+  if (world.band) return world.band;
   const t = world.terrain, n = t.size;
-  const r = stream(t.seed, `spawn:${id}`);
   let peak = 0;
   for (let i = 0; i < n * n; i++) if (t.height[i] > peak) peak = t.height[i];
-  for (let tries = 0; tries < 4000; tries++) {
-    const x = 8 + Math.floor(r() * (n - 16)), y = 8 + Math.floor(r() * (n - 16));
-    const h = t.filled[y * n + x];
-    if (h > peak * 0.55 && h - t.height[y * n + x] < 0.5) {
-      return { x: (x / (n - 1) - 0.5) * t.worldSize, z: (y / (n - 1) - 0.5) * t.worldSize };
-    }
+  const cands = [];
+  for (let i = 0; i < n * n; i++) {
+    const x = i % n, y = (i - x) / n;
+    if (x < 8 || y < 8 || x >= n - 8 || y >= n - 8) continue;
+    if (t.height[i] > peak * 0.45 && t.filled[i] - t.height[i] < 0.5) cands.push(i);
   }
-  return { x: 0, z: 0 };
+  // Band: +-8% around the 75th percentile of distance among high cells, widened
+  // only if too few cells qualify. Long runs, roughly equal for everyone.
+  const ds = cands.map((i) => world.dist[i]).sort((a, b) => a - b);
+  const mid = ds[Math.floor(ds.length * 0.75)];
+  let spread = 0.08, cells;
+  do {
+    const lo = mid * (1 - spread), hi = mid * (1 + spread);
+    cells = cands.filter((i) => world.dist[i] >= lo && world.dist[i] <= hi);
+    world.band = { lo, hi, cells };
+    spread += 0.04;
+  } while (cells.length < 300 && spread < 0.5);
+  return world.band;
+}
+
+// Keyed by player id, so a spawn never shifts when others join.
+export function spawnPoint(world, id) {
+  const t = world.terrain, n = t.size;
+  const { cells } = spawnBand(world);
+  const r = stream(t.seed, `spawn:${id}`);
+  const i = cells[Math.floor(r() * cells.length)];
+  return { x: ((i % n) / (n - 1) - 0.5) * t.worldSize, z: (Math.floor(i / n) / (n - 1) - 0.5) * t.worldSize };
 }
 
 export function addRiver(world, id, at = spawnPoint(world, id)) {
@@ -89,6 +129,9 @@ export function addRiver(world, id, at = spawnPoint(world, id)) {
     x: at.x, z: at.z,
     dx: -g.x / len, dz: -g.z / len,
     speed: TUNE.minSpeed,
+    volume: TUNE.startVolume,
+    size: 1,
+    lakes: 0,
     low: Infinity, // lowest surface reached; water can't climb far above it
     best: Infinity, // best distance-to-sea so far, for stall detection
     stall: 0,
@@ -124,9 +167,12 @@ export function step(world, inputs) {
     if (r.finished) continue;
     const steer = Math.max(-1, Math.min(1, inputs?.get(r.id) | 0));
     if (steer) {
-      const s = -TURN_S * steer; // rotation [[c, s], [-s, c]]; steer -1 turns left
-      const dx = r.dx * TURN_C + r.dz * s, dz = -r.dx * s + r.dz * TURN_C;
+      // Turn by adding a sideways component, then renormalising (angle = atan(a)).
+      // Bigger rivers turn slower. Left of heading (dx, dz) is (dz, -dx).
+      const a = (TUNE.turnStep / r.size) * -steer;
+      const dx = r.dx + r.dz * a, dz = r.dz - r.dx * a;
       r.dx = dx; r.dz = dz;
+      normalize(r);
     }
 
     const me = r.idx;
@@ -165,7 +211,8 @@ export function step(world, inputs) {
     }
 
     const along = -(g.x * r.dx + g.z * r.dz); // downhill slope along the heading
-    const target = Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed, TUNE.baseSpeed + TUNE.slopeSpeed * along));
+    const top = TUNE.maxSpeed * (1 + TUNE.speedPerSize * (r.size - 1));
+    const target = Math.max(TUNE.minSpeed, Math.min(top, TUNE.baseSpeed + TUNE.slopeSpeed * along));
     r.speed += (target - r.speed) * TUNE.speedEase;
 
     let nx = r.x + r.dx * r.speed * DT, nz = r.z + r.dz * r.speed * DT;
@@ -200,8 +247,15 @@ function moveTo(world, r, nx, nz) {
   nx = Math.max(-half, Math.min(half, nx));
   nz = Math.max(-half, Math.min(half, nz));
   const mx = nx - r.x, mz = nz - r.z;
-  r.travelled += Math.sqrt(mx * mx + mz * mz);
+  const moved = Math.sqrt(mx * mx + mz * mz);
+  r.travelled += moved;
   r.x = nx; r.z = nz;
+  grow(r, moved * TUNE.trickle);
+}
+
+function grow(r, litres) {
+  r.volume += litres;
+  r.size = sizeOf(r.volume);
 }
 
 function guidedStep(world, r, ci) {
@@ -217,6 +271,16 @@ function guidedStep(world, r, ci) {
 }
 
 function afterMove(world, r) {
+  // Swallow a lake the moment the head touches it (one-shot, first come).
+  const ci = cellIndex(world.terrain, r.x, r.z);
+  const lake = world.lakeOf[ci];
+  if (lake >= 0 && world.lakeTaken[lake] < 0) {
+    world.lakeTaken[lake] = r.idx;
+    const gain = lakeGain(world.lakes[lake]);
+    grow(r, gain);
+    r.lakes++;
+    world.events.push({ type: 'lake', lake, river: r.idx, gain, tick: world.tick });
+  }
   const last = r.path[r.path.length - 1];
   const lx = r.x - last.x, lz = r.z - last.z;
   if (lx * lx + lz * lz >= (world.terrain.cell * 0.75) ** 2) pushPathPoint(world, r);
@@ -240,10 +304,11 @@ function pushPathPoint(world, r) {
   const t = world.terrain, n = t.size, cell = t.cell;
   // Bed depth is measured from undug ground, so passes never stack into a pit.
   const centre = surfaceAt(world, r.x, r.z, r.idx);
-  const bed = Math.min(centre, sampleFilled(t, r.x, r.z)) - TUNE.depth;
-  r.path.push({ x: r.x, z: r.z, water: centre - TUNE.depth * 0.3, tick: world.tick });
+  const width = Math.min(TUNE.maxWidth, TUNE.width * r.size), depth = TUNE.depth * r.size;
+  const bed = Math.min(centre, sampleFilled(t, r.x, r.z)) - depth;
+  r.path.push({ x: r.x, z: r.z, water: centre - depth * 0.3, w: width, tick: world.tick });
 
-  const rad = TUNE.width / 2, feather = cell * 0.6;
+  const rad = width / 2, feather = cell * 0.6;
   const gx = (r.x / t.worldSize + 0.5) * (n - 1), gy = (r.z / t.worldSize + 0.5) * (n - 1);
   const reach = Math.ceil((rad + feather) / cell);
   const cx = Math.round(gx), cy = Math.round(gy);
@@ -260,7 +325,7 @@ function pushPathPoint(world, r) {
       const w = d <= rad ? 1 : 1 - (d - rad) / feather;
       const want = (ground - bed) * w; // carve down to the bed, less at the banks
       if (want > world.carve[k]) {
-        world.carve[k] = Math.min(want, TUNE.depth * 3);
+        world.carve[k] = Math.min(want, depth * 3);
         world.owner[k] = r.idx;
         world.dirty.push(k);
       }
@@ -300,7 +365,7 @@ export function riverFingerprint(world) {
   const mix = (v) => { h = Math.imul(h ^ (v | 0), 0x01000193); };
   mix(world.tick);
   for (const r of [...world.rivers].sort((a, b) => (a.id < b.id ? -1 : 1))) {
-    mix(Math.round(r.x * 100)); mix(Math.round(r.z * 100)); mix(r.finishTick); mix(r.path.length);
+    mix(Math.round(r.x * 100)); mix(Math.round(r.z * 100)); mix(r.finishTick); mix(r.path.length); mix(Math.round(r.volume));
   }
   return (h >>> 0).toString(16).padStart(8, '0');
 }

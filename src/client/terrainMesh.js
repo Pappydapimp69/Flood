@@ -57,7 +57,7 @@ export function buildTerrainMesh(t) {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'terrain';
-  mesh.userData = { t, base, baseColors: colors.slice() };
+  mesh.userData = { t, base, baseColors: colors.slice(), pristineColors: colors.slice() };
   for (let i = 0; i < n * n; i++) setNormal(mesh, i);
   return mesh;
 }
@@ -93,17 +93,38 @@ export function applyCarve(mesh, carve, dirty) {
     if (k < lo) lo = k;
     if (k > hi) hi = k;
   }
+  // Ranges accumulate across ticks; three clears them after each upload.
   for (const a of [pos, col, geo.attributes.normal]) {
-    a.clearUpdateRanges();
     a.addUpdateRange(lo * a.itemSize, (hi - lo + 1) * a.itemSize);
     a.needsUpdate = true;
   }
+}
+
+const MUD = new THREE.Color('#8f7f5c');
+
+// A swallowed lake dries to a mudflat. The game surface keeps its level (so
+// drainage still holds); only the look changes.
+export function drainLake(mesh, lakeOf, lake) {
+  const { baseColors } = mesh.userData;
+  const col = mesh.geometry.attributes.color;
+  let lo = Infinity, hi = -Infinity;
+  for (let k = 0; k < lakeOf.length; k++) {
+    if (lakeOf[k] !== lake) continue;
+    MUD.toArray(col.array, k * 3);
+    MUD.toArray(baseColors, k * 3);
+    if (k < lo) lo = k;
+    if (k > hi) hi = k;
+  }
+  if (lo > hi) return;
+  col.addUpdateRange(lo * 3, (hi - lo + 1) * 3);
+  col.needsUpdate = true;
 }
 
 export function resetCarve(mesh) {
   const { t, base, baseColors } = mesh.userData, n = t.size;
   const geo = mesh.geometry, pos = geo.attributes.position;
   for (let i = 0; i < n * n; i++) pos.setY(i, base[i] * VERT);
+  baseColors.set(mesh.userData.pristineColors);
   geo.attributes.color.array.set(baseColors);
   for (let i = 0; i < n * n; i++) setNormal(mesh, i);
   for (const a of [pos, geo.attributes.color, geo.attributes.normal]) {

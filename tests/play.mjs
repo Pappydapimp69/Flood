@@ -102,6 +102,20 @@ await check('a short tap still registers (event-time capture)', async () => {
   await page.close();
 });
 
+await check('the water HUD counts up as the river gathers water', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
+  await page.goto(base);
+  await until(page, (s) => s.ready, 'ready');
+  const litres = () => page.evaluate(() => Number(document.getElementById('litres').textContent.replace(/\D/g, '')));
+  const a = await litres();
+  const s0 = await state(page);
+  await until(page, (s) => s.tick > s0.tick + 200, '200 ticks');
+  const b = await litres();
+  if (!(b > a)) throw new Error(`litres ${a} -> ${b}`);
+  if (shotDir) await page.screenshot({ path: `${shotDir}/play-grow.png` });
+  await page.close();
+});
+
 await browser.close();
 server.close();
 if (fails.length) { console.error(`${fails.length} play check(s) failed`); process.exit(1); }

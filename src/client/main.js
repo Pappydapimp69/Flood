@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
 import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, DT, TICK_HZ } from '../shared/river.js';
-import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, VERT } from './terrainMesh.js';
+import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, drainLake, VERT } from './terrainMesh.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
 
@@ -54,7 +54,6 @@ const head = new THREE.Mesh(
   new THREE.SphereGeometry(1, 20, 12),
   new THREE.MeshPhongMaterial({ color: '#e9f7fb', emissive: '#3c7f95', transparent: true, opacity: 0.9 }),
 );
-head.scale.set(70, 25, 70);
 scene.add(head);
 
 const camera = new THREE.PerspectiveCamera(55, 1, 20, 400000);
@@ -80,6 +79,8 @@ const input = createInput(renderer.domElement);
 const hud = {
   dist: document.getElementById('dist'),
   time: document.getElementById('time'),
+  litres: document.getElementById('litres'),
+  pop: document.getElementById('pop'),
   banner: document.getElementById('banner'),
 };
 
@@ -120,6 +121,22 @@ function tick() {
   prev = { x: river.x, z: river.z };
   step(world, new Map([[PLAYER, steer]]));
   applyCarve(terrainMesh, world.carve, world.dirty.splice(0));
+  for (const e of world.events.splice(0)) {
+    if (e.type !== 'lake') continue;
+    drainLake(terrainMesh, world.lakeOf, e.lake);
+    if (e.river === river.idx) showPop(`+${fmtL(e.gain)}`);
+  }
+}
+
+const fmtL = (v) => `${Math.round(v).toLocaleString('en-US')} L`;
+let popTimer;
+function showPop(text) {
+  hud.pop.textContent = text;
+  hud.pop.classList.remove('show');
+  void hud.pop.offsetWidth; // restart the animation
+  hud.pop.classList.add('show');
+  clearTimeout(popTimer);
+  popTimer = setTimeout(() => hud.pop.classList.remove('show'), 1600);
 }
 
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
@@ -138,6 +155,7 @@ renderer.setAnimationLoop(() => {
   const hy = surfaceAt(world, hx, hz, river.idx) * VERT;
 
   head.position.set(hx, hy + 8, hz);
+  head.scale.set(70 * river.size, 25 * river.size, 70 * river.size);
   ribbon.update(world, river, hx, hz);
 
   if (mapView) {
@@ -162,9 +180,10 @@ renderer.setAnimationLoop(() => {
   hud.dist.textContent = `${(toSea / 1000).toFixed(2)} km to sea`;
   const secs = (river.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);
+  hud.litres.textContent = fmtL(river.volume);
   if (river.finished && !finishedShown) {
     finishedShown = true;
-    hud.banner.innerHTML = `<b>You reached the sea</b><span>${fmtTime(secs)} · ${(river.travelled / 1000).toFixed(1)} km</span><small>Tap or press R to flow again</small>`;
+    hud.banner.innerHTML = `<b>You reached the sea</b><span>${fmtTime(secs)} · ${(river.travelled / 1000).toFixed(1)} km · ${fmtL(river.volume)}</span><span>${river.lakes} lake${river.lakes === 1 ? '' : 's'} swallowed</span><small>Tap or press R to flow again</small>`;
     hud.banner.hidden = false;
   }
 
