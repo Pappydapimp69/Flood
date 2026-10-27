@@ -75,14 +75,18 @@ function setNormal(mesh, i) {
 }
 
 // Lower dug cells and tint their beds. dirty: cell indices from the sim.
-export function applyCarve(mesh, carve, dirty) {
+const ROCK = new THREE.Color('#3b3633');
+
+// rock: metres of cooled lava on top of the ground (raised and dark).
+export function applyCarve(mesh, carve, dirty, rock) {
   if (!dirty.length) return;
   const { t, base, baseColors } = mesh.userData, n = t.size;
   const geo = mesh.geometry, pos = geo.attributes.position, col = geo.attributes.color;
   const touched = new Set();
   let lo = Infinity, hi = -Infinity;
   for (const k of dirty) {
-    pos.setY(k, (base[k] - carve[k]) * VERT);
+    pos.setY(k, (base[k] + (rock?.[k] ?? 0) - carve[k]) * VERT);
+    if (rock?.[k]) { ROCK.toArray(baseColors, k * 3); }
     const w = Math.min(1, Math.max(0, carve[k] - 1.5) / 4);
     tmp.fromArray(baseColors, k * 3).lerp(BED, w).toArray(col.array, k * 3);
     for (const o of [0, -1, 1, -n, n]) touched.add(k + o);

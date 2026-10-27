@@ -188,7 +188,7 @@ export function fingerprint(t) {
   return (h >>> 0).toString(16).padStart(8, '0');
 }
 
-class MinHeap {
+export class MinHeap {
   constructor(cap) {
     this.k = new Float64Array(cap);
     this.v = new Int32Array(cap);

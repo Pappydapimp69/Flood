@@ -79,7 +79,7 @@ test('spawns are fair: every spawn sits in one narrow distance-to-sea band', () 
     assert.ok(band.hi / band.lo < 1.25, `seed ${seed} band ${band.lo | 0}-${band.hi | 0}`);
     for (let i = 0; i < 20; i++) {
       const p = spawnPoint(w, `p${i}`);
-      const d = w.dist[cellIndex(w.terrain, p.x, p.z)];
+      const d = w.reach[cellIndex(w.terrain, p.x, p.z)];
       assert.ok(d >= band.lo - 1 && d <= band.hi + 1, `seed ${seed} p${i} at ${d}`);
     }
   }

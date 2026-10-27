@@ -9,7 +9,7 @@ import { encodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 
 export const ROOM = {
   minRivers: 12, // bots fill up to this
-  maxPlayers: 80,
+  maxPlayers: 16, // one island reads best at 12-16 rivers (Brain tension on lobby size)
   lobbyMs: 8000, // wait after the first player joins
   resultsMs: 8000,
   maxTicks: TICK_HZ * 600, // hard cap on a race

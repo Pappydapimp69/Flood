@@ -1,7 +1,7 @@
 // River simulation. Authoritative, fixed-tick, shared by client and server.
 // Rules: no transcendental Math; integer steering input; render never writes here.
 
-import { SEA_LEVEL, LAKE_MIN_DEPTH, downhill, findLakes } from './terrain.js';
+import { SEA_LEVEL, LAKE_MIN_DEPTH, downhill, findLakes, MinHeap } from './terrain.js';
 import { stream } from './rng.js';
 
 export const TICK_HZ = 20;
@@ -54,6 +54,15 @@ export const TUNE = {
   dropAlt: 3000, // metres above the ground at the start
   glideSpeed: 160, // m/s sideways while falling
   glideTurn: 0.035, // heading change per tick at full steer (a held turn is a wide arc)
+  // Lava: a few flows down from the high ground. Water crossing lava boils off
+  // and slows, and the lava it touches cools into a rock ridge that the next
+  // river has to pool behind and spill over.
+  lavaFlows: 2,
+  lavaLength: 70, // cells along the downhill tree
+  steam: 0.006, // share of your water boiled off per tick on lava...
+  steamFloor: 1.15, // ...never below 1.15x the elimination floor
+  lavaSlow: 0.6, // speed multiplier while on lava
+  damHeight: 4, // metres of cooled rock left where your water met lava
   // Bigger rivers are faster but turn slower, so the leader can't simply snowball.
   speedPerSize: 0.25, // max speed multiplier gained per unit of size above 1
   // Contact is a depth tug-of-war: where a head touches a rival's head or live
@@ -98,7 +107,9 @@ export function createWorld(terrain) {
   }
   const { label: lakeOf, lakes } = findLakes(terrain);
   const world = {
-    terrain, flow, dist: distanceToSea(terrain, downhill),
+    terrain, flow,
+    dist: distanceToSea(terrain, downhill), // along the fill's downhill tree (stall guard)
+    reach: descentDistance(terrain), // shortest route water can take (fairness, HUD, bots)
     lakeOf, lakes,
     lakeTaken: new Int32Array(lakes.length).fill(-1), // river draining each lake, -1 if none
     lakeTapTick: new Int32Array(lakes.length).fill(-1), // tick its current tap began
@@ -110,7 +121,11 @@ export function createWorld(terrain) {
     digs: [], // channel digs queued during a tick, applied together at its end
     carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), dugAt: new Int32Array(n * n), tick: 0, rivers: [], dirty: [],
   };
+  world.lava = new Uint8Array(n * n); // 1 where lava flows
+  world.cooled = []; // cells that turned from lava to rock, for presentation
+  world.rock = new Float32Array(n * n); // metres of cooled rock on top of the ground
   world.basins = makeBasins(world);
+  makeLava(world);
   return world;
 }
 
@@ -147,6 +162,34 @@ export function makeBasins(world) {
   return picked;
 }
 
+// Lava flows: from a few high cells, down the fill's downhill tree, three
+// cells wide, stopping before lakes and low ground. Seeded, so all agree.
+export function makeLava(world) {
+  const t = world.terrain, n = t.size;
+  const r = stream(t.seed, 'lava');
+  let peak = 0;
+  for (let i = 0; i < n * n; i++) if (t.height[i] > peak) peak = t.height[i];
+  const spawn = dropZone(world);
+  for (let f = 0; f < TUNE.lavaFlows; f++) {
+    let c = -1;
+    for (let tries = 0; tries < 400 && c < 0; tries++) {
+      const k = Math.floor(r() * n * n);
+      if (t.height[k] > peak * 0.7 && world.lakeOf[k] < 0 && !spawn.has(k)) c = k;
+    }
+    for (let step = 0; c >= 0 && step < TUNE.lavaLength; step++) {
+      if (world.lakeOf[c] >= 0 || t.filled[c] < 150) break;
+      const cx = c % n, cy = (c - cx) / n;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const x = cx + dx, y = cy + dy;
+        if (x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
+        const k = y * n + x;
+        if (world.lakeOf[k] < 0 && !spawn.has(k)) world.lava[k] = 1;
+      }
+      c = downhill(t, c);
+    }
+  }
+}
+
 export function surfaceAt(world, wx, wz, self = -1) {
   const t = world.terrain, n = t.size;
   const gx = (wx / t.worldSize + 0.5) * (n - 1);
@@ -158,7 +201,8 @@ export function surfaceAt(world, wx, wz, self = -1) {
   // A river doesn't feel its own channel, nor a rival's live water (crossing that
   // costs water instead, see resolveContacts); old dry beds are ordinary ground.
   const cv = (k) => (self >= 0 && o[k] >= 0 && (o[k] === self || world.tick - world.dugAt[k] < TUNE.liveTicks) ? 0 : c[k]);
-  const a = f[i] - cv(i), b = f[i + 1] - cv(i + 1), d = f[i + n] - cv(i + n), e = f[i + n + 1] - cv(i + n + 1);
+  const rk = world.rock;
+  const a = f[i] + rk[i] - cv(i), b = f[i + 1] + rk[i + 1] - cv(i + 1), d = f[i + n] + rk[i + n] - cv(i + n), e = f[i + n + 1] + rk[i + n + 1] - cv(i + n + 1);
   return (a + (b - a) * fx) + ((d + (e - d) * fx) - (a + (b - a) * fx)) * fy;
 }
 
@@ -177,18 +221,18 @@ export function spawnBand(world) {
   }
   // Band: +-8% around the 75th percentile of distance among high cells, widened
   // only if too few cells qualify. Long runs, roughly equal for everyone.
-  const ds = cands.map((i) => world.dist[i]).sort((a, b) => a - b);
+  const ds = cands.map((i) => world.reach[i]).sort((a, b) => a - b);
   const mid = ds[Math.floor(ds.length * 0.75)];
   let spread = 0.08, cells;
   do {
     const lo = mid * (1 - spread), hi = mid * (1 + spread);
-    cells = cands.filter((i) => world.dist[i] >= lo && world.dist[i] <= hi);
+    cells = cands.filter((i) => world.reach[i] >= lo && world.reach[i] <= hi);
     world.band = { lo, hi, cells };
     spread += 0.04;
   } while (cells.length < 300 && spread < 0.5);
   // Fallback for crowded lobbies: twice the spread.
   const wlo = mid * (1 - spread * 2), whi = mid * (1 + spread * 2);
-  world.band.wide = cands.filter((i) => world.dist[i] >= wlo && world.dist[i] <= whi);
+  world.band.wide = cands.filter((i) => world.reach[i] >= wlo && world.reach[i] <= whi);
   return world.band;
 }
 
@@ -575,7 +619,7 @@ export function widthOf(r) {
 // Finish order, then racers by distance left, then the absorbed (latest out first).
 export function standings(world) {
   const fin = world.rivers.filter((r) => r.finished).sort((a, b) => a.finishTick - b.finishTick || biggerFirst(a, b));
-  const left = (r) => world.dist[cellIndex(world.terrain, r.x, r.z)];
+  const left = (r) => world.reach[cellIndex(world.terrain, r.x, r.z)];
   const racing = world.rivers.filter(isRacing).sort((a, b) => left(a) - left(b) || byId(a, b));
   const out = world.rivers.filter((r) => r.out).sort((a, b) => b.out.tick - a.out.tick || biggerFirst(a, b));
   return [...fin, ...racing, ...out];
@@ -655,7 +699,16 @@ function guidedStep(world, r, ci) {
 }
 
 function afterMove(world, r) {
-  const lake = world.lakeOf[cellIndex(world.terrain, r.x, r.z)];
+  const here = cellIndex(world.terrain, r.x, r.z);
+  if (world.lava[here]) {
+    // Boiling off: water and speed, but lava alone never knocks a river out.
+    const floor = TUNE.floor * TUNE.startVolume * TUNE.steamFloor;
+    const boil = Math.max(0, Math.min(r.volume * TUNE.steam, r.volume - floor));
+    if (boil > 0) grow(r, -boil);
+    r.speed *= TUNE.lavaSlow;
+    world.events.push({ type: 'steam', river: r.idx, amount: boil, tick: world.tick });
+  }
+  const lake = world.lakeOf[here];
   if (lake >= 0 && world.lakeDry[lake]) startFilling(world, r, lake);
   const last = r.path[r.path.length - 1];
   const lx = r.x - last.x, lz = r.z - last.z;
@@ -708,6 +761,14 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
       const k = y * n + x;
       const ground = t.filled[k];
       if (ground <= SEA_LEVEL) continue;
+      if (world.lava[k]) {
+        // Water meets lava: it cools into rock instead of being dug.
+        world.lava[k] = 0;
+        world.rock[k] = Math.max(world.rock[k], TUNE.damHeight);
+        world.dirty.push(k);
+        world.cooled.push(k);
+        continue;
+      }
       const w = d <= rad ? 1 : 1 - (d - rad) / feather;
       const want = (ground - bed) * w; // carve down to the bed, less at the banks
       if (want > world.carve[k]) {
@@ -723,6 +784,30 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
 
 function sampleFilled(t, wx, wz) {
   return t.filled[cellIndex(t, wx, wz)];
+}
+
+// Shortest distance from each cell to the sea along any route water can flow
+// (each step at most TUNE.climb uphill on the filled surface). A steered river
+// can cut across the fill tree, so fair spawns must be measured by this.
+export function descentDistance(t) {
+  const n = t.size, f = t.filled;
+  const dist = new Float64Array(n * n).fill(Infinity);
+  const heap = new MinHeap(n * 4);
+  for (let i = 0; i < n * n; i++) if (f[i] <= SEA_LEVEL) { dist[i] = 0; heap.push(0, i); }
+  while (heap.size) {
+    const a = heap.pop(), da = dist[a];
+    const ax = a % n, ay = (a - ax) / n;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dy) continue;
+      const x = ax + dx, y = ay + dy;
+      if (x < 0 || y < 0 || x >= n || y >= n) continue;
+      const b = y * n + x;
+      if (f[b] <= SEA_LEVEL || f[a] > f[b] + TUNE.climb) continue; // water can't flow b -> a
+      const d = da + t.cell * (dx && dy ? 1.4142135623730951 : 1);
+      if (d < dist[b]) { dist[b] = d; heap.push(d, b); }
+    }
+  }
+  return Float32Array.from(dist, (d) => (Number.isFinite(d) ? d : 0));
 }
 
 // Remaining downhill distance to the sea from every cell (static, ignores carving).

@@ -31,7 +31,7 @@ export function botSteer(world, bot) {
   bot.next = world.tick + bot.think;
 
   const t = world.terrain;
-  const here = world.dist[cellIndex(t, r.x, r.z)];
+  const here = world.reach[cellIndex(t, r.x, r.z)];
   const rivals = world.rivers.filter((o) => o !== r && isRacing(o));
   const scores = new Map();
   for (const a of OFFSETS) {
@@ -44,11 +44,12 @@ export function botSteer(world, bot) {
       const x = r.x + dx * L, z = r.z + dz * L;
       const k = cellIndex(t, x, z);
       const w = 1 - L / 2000; // nearer samples matter more
-      score += ((here - world.dist[k]) / L) * 2 * w; // progress toward the sea
+      score += ((here - world.reach[k]) / L) * 2 * w; // progress toward the sea
       if (surfaceAt(world, x, z, r.idx) > r.low + TUNE.climb + 8) score -= 2 * w; // uphill wall
       const lake = world.lakeOf[k];
       if (lake >= 0 && world.lakeTaken[lake] < 0 && world.lakeLeft[lake] > 0) score += (0.6 + bot.skill) * w;
-      // A dry basin costs water and time; small ones are worth it only to a big river.
+      if (world.lava[k]) score -= 3 * w; // lava boils water off
+            // A dry basin costs water and time; small ones are worth it only to a big river.
       if (lake >= 0 && world.lakeDry[lake]) score -= (1.6 - 0.5 * Math.min(2, r.size - 1)) * w;
       const o = world.owner[k];
       if (o >= 0 && o !== r.idx && world.carve[k] > TUNE.contactDepth && isLive(world, k)) {

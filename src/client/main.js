@@ -9,6 +9,7 @@ import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
 import { connect } from './net.js';
 import { createAudio } from './audio.js';
+import { buildTrees, clearTrees, buildLava, coolLava, pulseLava } from './scenery.js';
 
 // Test/debug surface. Tests poll this instead of waiting on wall-clock time.
 const dbg = (window.__flood = { ready: false, error: null, frames: 0, steers: [], prints: new Map() });
@@ -130,6 +131,7 @@ const hud = {
 const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
 
 // A race: the world plus what draws it. `river` is null when spectating.
+let trees, lava; // scenery for the current race
 let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, endShown, mode, raceOver, finalShown;
 // Online: frames from the server, consumed in order; ids give each char's river.
 let net, ids = [], frames = [], nextFrame = 0, endTable = null;
@@ -153,6 +155,10 @@ function beginRace(seed, raceIds, me) {
   document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
   updateLakes(); // dry basins show as dry from the first frame
+  for (const m of [trees, lava]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); m.dispose(); }
+  trees = buildTrees(world, lowPower ? 1500 : 4000);
+  lava = buildLava(world);
+  scene.add(trees, lava);
   if (river?.dropping) highlightZone(terrainMesh, dropZone(world), true);
   hud.banner.hidden = true;
   hud.feed.textContent = '';
@@ -342,6 +348,7 @@ const tug = { gain: new Map(), loss: new Map(), lastTick: -1, shownAt: 0 };
 
 // Every half second: a pop for water you siphoned, a red edge and a warning
 // while someone is siphoning you.
+let steamed = 0;
 function tugFeedback(now) {
   const draining = river && isRacing(river) && world.tick - tug.lastTick < 6 && tug.loss.size > 0;
   hud.drain.classList.toggle('on', !!draining);
@@ -352,6 +359,7 @@ function tugFeedback(now) {
     const [who] = top(tug.loss);
     hud.drainText.textContent = `${nameOf(world.rivers[who])} is cutting deeper — it's draining you`;
   }
+  if (steamed > 0) { showPop(`Lava! Boiling off ${fmtL(steamed)}`); steamed = 0; return; }
   if (tug.gain.size) {
     const total = [...tug.gain.values()].reduce((a, b) => a + b, 0);
     const [who] = top(tug.gain);
@@ -378,7 +386,11 @@ function updateLakes() {
 function advance(inputs) {
   for (const e of entries) { e.prev = { x: e.r.x, z: e.r.z }; e.prevAlt = e.r.alt; }
   step(world, inputs);
-  applyCarve(terrainMesh, world.carve, world.dirty.splice(0));
+  const dirty = world.dirty.splice(0);
+  applyCarve(terrainMesh, world.carve, dirty, world.rock);
+  clearTrees(trees, dirty, world.carve);
+  const cooled = world.cooled.splice(0);
+  if (cooled.length) { coolLava(lava, cooled); clearTrees(trees, cooled, world.rock); }
   if (world.tick % 10 === 0) updateLakes();
   for (const e of world.events.splice(0)) {
     if (e.type === 'land') {
@@ -395,6 +407,8 @@ function advance(inputs) {
       if (e.how === 'cut' && to === river) showPop(`You cut ${nameOf(from)} off its lake`);
       if (e.how === 'cut' && from === river) showPop(`${nameOf(to)} cut you off your lake!`);
       if (e.how === 'cut') feed(`${nameOf(to)} cut ${nameOf(from)} off a lake`);
+    } else if (e.type === 'steam') {
+      if (river && e.river === river.idx) steamed += e.amount;
     } else if (e.type === 'siphon' && river) {
       // Tally the tug-of-war; the render loop turns it into feedback.
       if (e.to === river.idx) tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount);
@@ -509,6 +523,7 @@ renderer.setAnimationLoop(() => {
   }
 
   placeTags();
+  pulseLava(lava, now / 1000);
   if (mapView) {
     controls.update();
   } else {
@@ -544,7 +559,7 @@ renderer.setAnimationLoop(() => {
   const me = river ?? focus;
   const place = table.indexOf(me) + 1;
   hud.rank.textContent = river ? `${ordinal(place)}/${world.rivers.length} · ${alive} flowing` : `Spectating · ${alive} flowing`;
-  const toSea = world.dist[cellIndex(terrain, focus.x, focus.z)];
+  const toSea = world.reach[cellIndex(terrain, focus.x, focus.z)];
   hud.dist.textContent = focus !== river ? `Watching ${nameOf(focus)}`
     : river.dropping ? `Steer your landing · ${Math.ceil(river.dropping / TICK_HZ)} s`
     : `${(toSea / 1000).toFixed(2)} km to sea`;
