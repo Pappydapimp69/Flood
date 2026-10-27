@@ -109,6 +109,8 @@ export class Ribbon {
     this.geo.setDrawRange(0, (live ? count : count - 1) * 6);
     this.uniforms.uTime.value = time;
     this.uniforms.uTick.value = world.tick;
+    // The whole trail stays live while the river pours; drained, it dries.
+    this.uniforms.uLive.value = river.out ? TUNE.liveTicks : 1e9;
   }
 
   writePoint(world, river, i, x, z, water, born, live = false) {

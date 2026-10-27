@@ -74,7 +74,7 @@ export const TUNE = {
   siphonDeadband: 0.05,
   floor: 0.4, // below this share of the starting volume a river dries up and is out
   contactDepth: 1,
-  liveTicks: 300, // only channel dug in the last 15 s is live water; older is a dry bed
+  liveTicks: 300, // a drained river's channel stays live this long, then it's a dry bed
   graceTicks: 100,
   gracePerRiver: 2,
   spawnGap: 1200,
@@ -188,7 +188,7 @@ export function surfaceAt(world, wx, wz, self = -1) {
   const i = y0 * n + x0, f = t.filled, c = world.carve, o = world.owner;
   // A river doesn't feel its own channel, nor a rival's live water (crossing that
   // costs water instead, see resolveContacts); old dry beds are ordinary ground.
-  const cv = (k) => (self >= 0 && o[k] >= 0 && (o[k] === self || world.tick - world.dugAt[k] < TUNE.liveTicks) ? 0 : c[k]);
+  const cv = (k) => (self >= 0 && o[k] >= 0 && (o[k] === self || isLive(world, k)) ? 0 : c[k]);
   const rk = world.rock;
   const a = f[i] + rk[i] - cv(i), b = f[i + 1] + rk[i + 1] - cv(i + 1), d = f[i + n] + rk[i + n] - cv(i + n), e = f[i + n + 1] + rk[i + n + 1] - cv(i + n + 1);
   return (a + (b - a) * fx) + ((d + (e - d) * fx) - (a + (b - a) * fx)) * fy;
@@ -698,7 +698,12 @@ export function dischargeOf(r) {
 }
 
 export function isLive(world, k) {
-  return world.tick - world.dugAt[k] < TUNE.liveTicks;
+  // A trail is live for as long as its river pours (finished ones included);
+  // once a river is drained out its channel dries after liveTicks.
+  const o = world.owner[k];
+  if (o < 0) return false;
+  const r = world.rivers[o];
+  return !r.out || world.tick - Math.max(world.dugAt[k], r.out.tick) < TUNE.liveTicks;
 }
 
 // Cutting depth from mass (size) and speed: 0.7x when crawling, up to 1.42x at

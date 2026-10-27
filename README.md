@@ -19,7 +19,7 @@ Steer with ← → (or A D); ↑ ↓ (W S) hurry or slow your fall. On a phone, 
 - Every start is the same height and the same route length from the sea.
 - More water is more mass: faster, harder to turn, deeper channels. Where rivers touch, the deeper
   one drains the shallower. Below 40% of your starting water, you're out.
-- Bright, flowing water is live and dangerous; grey channels are dry beds.
+- Every trail stays live water and keeps eroding as long as its river pours; a drained river's bed goes grey.
 
 ## Run it
 ```
