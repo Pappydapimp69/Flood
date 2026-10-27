@@ -30,17 +30,22 @@ function colorAt(h, slope, lakeDepth, out) {
   return out.lerp(C.snow, ss(1600, 1780, h) * (1 - ss(0.7, 1.1, slope)));
 }
 
+const BED = new THREE.Color('#7a6a55');
+
 export function buildTerrainMesh(t) {
   const n = t.size, W = t.worldSize;
   const geo = new THREE.PlaneGeometry(W, W, n - 1, n - 1);
   geo.rotateX(-Math.PI / 2); // row 0 = north (-z), matching the grid
   const pos = geo.attributes.position;
   const colors = new Float32Array(n * n * 3);
+  // base: displayed height before any channel is dug (lakes show their surface).
+  const base = new Float32Array(n * n);
   for (let y = 0; y < n; y++) {
     for (let x = 0; x < n; x++) {
       const i = y * n + x;
       const lakeDepth = t.filled[i] - t.height[i];
       const h = lakeDepth > LAKE_MIN_DEPTH ? t.filled[i] : t.height[i];
+      base[i] = h;
       pos.setY(i, h * VERT);
       const hx = t.height[y * n + Math.min(n - 1, x + 1)] - t.height[y * n + Math.max(0, x - 1)];
       const hy = t.height[Math.min(n - 1, y + 1) * n + x] - t.height[Math.max(0, y - 1) * n + x];
@@ -49,11 +54,62 @@ export function buildTerrainMesh(t) {
     }
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  geo.computeVertexNormals();
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'terrain';
+  mesh.userData = { t, base, baseColors: colors.slice() };
+  for (let i = 0; i < n * n; i++) setNormal(mesh, i);
   return mesh;
+}
+
+// Normal from central differences of the displayed heights.
+function setNormal(mesh, i) {
+  const { t } = mesh.userData, n = t.size;
+  const pos = mesh.geometry.attributes.position, nor = mesh.geometry.attributes.normal;
+  const x = i % n, y = (i - x) / n;
+  const l = pos.getY(y * n + Math.max(0, x - 1)), r = pos.getY(y * n + Math.min(n - 1, x + 1));
+  const u = pos.getY(Math.max(0, y - 1) * n + x), d = pos.getY(Math.min(n - 1, y + 1) * n + x);
+  const nx = (l - r) / (2 * t.cell), nz = (u - d) / (2 * t.cell);
+  const len = Math.hypot(nx, 1, nz);
+  nor.setXYZ(i, nx / len, 1 / len, nz / len);
+}
+
+// Lower dug cells and tint their beds. dirty: cell indices from the sim.
+export function applyCarve(mesh, carve, dirty) {
+  if (!dirty.length) return;
+  const { t, base, baseColors } = mesh.userData, n = t.size;
+  const geo = mesh.geometry, pos = geo.attributes.position, col = geo.attributes.color;
+  const touched = new Set();
+  let lo = Infinity, hi = -Infinity;
+  for (const k of dirty) {
+    pos.setY(k, (base[k] - carve[k]) * VERT);
+    const w = Math.min(1, Math.max(0, carve[k] - 1.5) / 4);
+    tmp.fromArray(baseColors, k * 3).lerp(BED, w).toArray(col.array, k * 3);
+    for (const o of [0, -1, 1, -n, n]) touched.add(k + o);
+  }
+  for (const k of touched) {
+    if (k < 0 || k >= n * n) continue;
+    setNormal(mesh, k);
+    if (k < lo) lo = k;
+    if (k > hi) hi = k;
+  }
+  for (const a of [pos, col, geo.attributes.normal]) {
+    a.clearUpdateRanges();
+    a.addUpdateRange(lo * a.itemSize, (hi - lo + 1) * a.itemSize);
+    a.needsUpdate = true;
+  }
+}
+
+export function resetCarve(mesh) {
+  const { t, base, baseColors } = mesh.userData, n = t.size;
+  const geo = mesh.geometry, pos = geo.attributes.position;
+  for (let i = 0; i < n * n; i++) pos.setY(i, base[i] * VERT);
+  geo.attributes.color.array.set(baseColors);
+  for (let i = 0; i < n * n; i++) setNormal(mesh, i);
+  for (const a of [pos, geo.attributes.color, geo.attributes.normal]) {
+    a.clearUpdateRanges();
+    a.needsUpdate = true;
+  }
 }
 
 // Seabed beyond the map edge, so the square border never shows through the sea.

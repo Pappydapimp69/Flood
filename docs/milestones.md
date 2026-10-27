@@ -36,3 +36,29 @@ entries below for context. Each ends with a log entry here.
 - Grid row 0 is north (−z). `+z` is south.
 - Headless rAF is slow and uneven: tests poll `window.__flood`, never wall-clock.
 - Open: ~6k lake cells per map is still a lot of flat water; tune when lakes become gameplay.
+
+## M2 — One river (done)
+
+**Built**
+- `src/shared/river.js`: fixed 20 Hz sim. The head turns with integer steer (−1/0/1), steep ground
+  pulls it downhill, lakes and flats pull it toward the outlet, and it can't climb more than 1.5 m
+  above the lowest level it reached. Each path point digs a flat-bottomed channel.
+- A river ignores its own channel (per-cell owner) but will feel rivals' channels — the hook for
+  "cut you off" in M4.
+- Stall guard: no progress toward the sea for 5 s → follow the fill's downhill tree for 3 s.
+- Client: water ribbon, chase camera that keeps the sightline above ground, wider FOV in portrait,
+  "km to sea" + timer HUD, finish banner, restart, `M` for map view.
+- Input: arrows/A-D, or hold the left/right half of the screen. Presses are captured at event time.
+- Tests: `tests/unit/river.test.mjs` (every seed × steering policy reaches the sea, determinism,
+  steering matters, digging bounded); `tests/play.mjs` (flows/digs, keyboard, touch, short taps).
+
+**Decisions**
+- Continuous head over a bilinear surface, with grid fallbacks, rather than cell-to-cell movement:
+  smoother steering, and the fill tree still guarantees an exit.
+- Speeds are game-scale (up to 200 m/s); the HUD shows distance and time, not speed.
+
+**Carry forward to M3**
+- Rivers have fixed `TUNE.width`/`depth`; M3 makes them grow with volume.
+- `world.dist` is static distance-to-sea along the fill tree (ignores digging).
+- Spawn spread is unfair (24 s to 11 min); fix spawn rules before bots/multiplayer.
+- Multi-river ticks read neighbours mid-tick; snapshot before M4 so order doesn't matter.
