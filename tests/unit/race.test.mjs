@@ -159,3 +159,25 @@ test('drop: 30 s of fall, steerable anywhere, touchdown on the start contour wit
   assert.equal(landingCell(w, w.rivers[2].x, w.rivers[2].z) >= 0, true);
   assert.equal(w.events.filter((e) => e.type === 'land').length, 3);
 });
+
+test('drop: every drop stays over the landing ring and touches down where it is', async () => {
+  const { landingCell } = await import('../../src/shared/river.js');
+  const { createBot, botSteer } = await import('../../src/shared/bot.js');
+  const w = createWorld(islands.get(1));
+  for (let i = 0; i < 12; i++) addRiver(w, `b${String(i).padStart(2, '0')}`, undefined, { drop: true });
+  const bots = w.rivers.map((r) => createBot(w, r));
+  const n = w.terrain.size, W = w.terrain.worldSize;
+  const offRing = (r) => { const c = landingCell(w, r.x, r.z); return Math.hypot(r.x - ((c % n) / (n - 1) - 0.5) * W, r.z - (Math.floor(c / n) / (n - 1) - 0.5) * W); };
+  let worst = 0;
+  for (let k = 0; k < TUNE.dropTicks; k++) {
+    const before = w.rivers.map((r) => ({ x: r.x, z: r.z, dropping: r.dropping }));
+    step(w, new Map(bots.map((b, i) => [b.river.id, i % 3 ? botSteer(w, b) : { s: 1, f: 1 }])));
+    w.rivers.forEach((r, i) => {
+      if (!before[i].dropping) return;
+      if (r.dropping) assert.ok(offRing(r) <= TUNE.zoneSlack + 1e-6, `${r.id} strayed ${offRing(r)} m off the ring`);
+      else worst = Math.max(worst, Math.hypot(r.x - before[i].x, r.z - before[i].z));
+    });
+  }
+  assert.ok(w.rivers.every((r) => !r.dropping));
+  assert.ok(worst <= TUNE.zoneSlack + TUNE.glideSpeed, `touchdown jumped ${worst.toFixed(0)} m`);
+});

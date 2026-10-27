@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, dischargeOf, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -89,7 +89,21 @@ const arrow = new THREE.Mesh(new THREE.ShapeGeometry(arrowShape).rotateX(Math.PI
 arrow.material.side = THREE.DoubleSide;
 arrow.renderOrder = 3;
 arrow.material.depthTest = false;
-const guides = [marker, beam, course, arrow];
+// The landing area itself: every start cell glows, a band round the summit.
+const zoneDots = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMaterial({
+  color: '#8ff6ff', size: 140, sizeAttenuation: true, transparent: true, opacity: 0.85, depthWrite: false,
+}));
+zoneDots.renderOrder = 2;
+function buildZoneDots() {
+  const n = terrain.size, cells = [...dropZone(world)], pos = new Float32Array(cells.length * 3);
+  cells.forEach((k, i) => {
+    const x = ((k % n) / (n - 1) - 0.5) * W, z = (Math.floor(k / n) / (n - 1) - 0.5) * W;
+    pos.set([x, surfaceAt(world, x, z) * VERT + 25, z], i * 3);
+  });
+  zoneDots.geometry.dispose();
+  zoneDots.geometry = new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+}
+const guides = [marker, beam, course, arrow, zoneDots];
 for (const g of guides) g.visible = false;
 
 // One render entry per river: ribbon, head and last-tick position for interpolation.
@@ -194,6 +208,7 @@ function beginRace(seed, raceIds, me, rolled) {
   resetCarve(terrainMesh);
   updateLakes(); // dry basins show as dry from the first frame
   for (const g of guides) if (!g.parent) scene.add(g);
+  buildZoneDots();
   for (const m of [trees, lava]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); m.dispose(); }
   trees = buildTrees(world, lowPower ? 1500 : 4000);
   lava = buildLava(world);
@@ -535,9 +550,12 @@ function showMarker(now, hx, hy, hz) {
   if (now - markerAt < 120) { marker.scale.x = marker.scale.z = marker.userData.sc * pulse; return; }
   markerAt = now;
   const left = river.dropping / TICK_HZ;
-  const half = W / 2, n = terrain.size;
-  const px = Math.max(-half, Math.min(half, river.x + river.dx * TUNE.glideSpeed * left));
-  const pz = Math.max(-half, Math.min(half, river.z + river.dz * TUNE.glideSpeed * left));
+  const n = terrain.size;
+  // Fly the rest of the fall on this heading, held inside the landing ring as the sim does.
+  let q = { x: river.x, z: river.z };
+  const stepM = (TUNE.glideSpeed * left) / 30;
+  for (let i = 0; i < 30; i++) q = keepInZone(world, q.x + river.dx * stepM, q.z + river.dz * stepM);
+  const px = q.x, pz = q.z;
   const k = landingCell(world, px, pz);
   const x = ((k % n) / (n - 1) - 0.5) * W, z = (Math.floor(k / n) / (n - 1) - 0.5) * W;
   const gy = surfaceAt(world, x, z) * VERT;
@@ -671,7 +689,7 @@ renderer.setAnimationLoop(() => {
   hud.rank.textContent = river ? `${ordinal(place)}/${world.rivers.length} · ${alive} flowing` : `Spectating · ${alive} flowing`;
   const toSea = world.reach[cellIndex(terrain, focus.x, focus.z)];
   hud.dist.textContent = focus !== river ? `Watching ${nameOf(focus)}`
-    : river.dropping ? `Falling · ${Math.ceil(river.dropping / TICK_HZ)} s · ← → turn the yellow arrow · ↑ ↓ faster / slower · you land in the beam`
+    : river.dropping ? `Falling · ${Math.ceil(river.dropping / TICK_HZ)} s · ← → steer · ↑ ↓ speed · land on the glowing ring`
     : `${(toSea / 1000).toFixed(2)} km to sea`;
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);

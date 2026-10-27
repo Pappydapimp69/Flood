@@ -55,6 +55,7 @@ export const TUNE = {
   dropTicks: 600,
   dropAlt: 6000, // metres above the ground at the start
   glideSpeed: 140, // m/s sideways while falling (x0.5 slowed, x1.5 hurried)
+  zoneSlack: 300, // metres a falling drop may stray from the landing ring
   glideTurn: 0.1, // radians per tick while falling: a full circle in about 3 s
   startElevation: 0.75, // share of the highest peak
   startTolerance: 0.02,
@@ -333,12 +334,23 @@ function glide(world, r, steer, fwd) {
     normalize(r);
   }
   const v = TUNE.glideSpeed * (1 + 0.5 * fwd);
-  const half = world.terrain.worldSize / 2;
-  r.x = Math.max(-half, Math.min(half, r.x + r.dx * v * DT));
-  r.z = Math.max(-half, Math.min(half, r.z + r.dz * v * DT));
+  const p = keepInZone(world, r.x + r.dx * v * DT, r.z + r.dz * v * DT);
+  r.x = p.x;
+  r.z = p.z;
   r.dropping--;
   r.alt = (TUNE.dropAlt * r.dropping) / TUNE.dropTicks;
   if (r.dropping <= 0) land(world, r);
+}
+
+// A falling drop stays over the landing ring: never more than zoneSlack from
+// its start ground, so every player lands on equal ground and touchdown is
+// right where the drop is.
+export function keepInZone(world, x, z) {
+  const t = world.terrain, n = t.size, k = landingCell(world, x, z);
+  const cx = ((k % n) / (n - 1) - 0.5) * t.worldSize, cz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+  const dx = x - cx, dz = z - cz, d = Math.sqrt(dx * dx + dz * dz);
+  if (d <= TUNE.zoneSlack) return { x, z };
+  return { x: cx + (dx * TUNE.zoneSlack) / d, z: cz + (dz * TUNE.zoneSlack) / d };
 }
 
 export function dropZone(world) {
