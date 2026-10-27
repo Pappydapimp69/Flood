@@ -534,6 +534,46 @@ function showHint() {
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const ordinal = (n) => `#${n}`;
 
+// Which way is downhill? The game never steers, so when your heading is off
+// the fall line a green chevron on the ground and an arrow on screen say
+// which way to turn. Fall line over ~300 m, so small bumps don't flicker it.
+const downEl = document.getElementById('downhill');
+const chevron = new THREE.Mesh(new THREE.ShapeGeometry(new THREE.Shape([[-0.8, -0.2], [0, 0.6], [0.8, -0.2], [0.8, -0.65], [0, 0.15], [-0.8, -0.65]].map(([x, y]) => new THREE.Vector2(x, y)))).rotateX(Math.PI / 2),
+  new THREE.MeshBasicMaterial({ color: '#9cff7a', transparent: true, opacity: 0.85, depthTest: false, depthWrite: false, side: THREE.DoubleSide }));
+chevron.renderOrder = 3;
+chevron.visible = false;
+scene.add(chevron);
+let downAt = 0, downTurn = 0;
+function showDownhill(now) {
+  const me = river;
+  const on = !!me && isRacing(me) && !me.dropping && me.pooled < 0 && !mapView;
+  chevron.visible = on && downTurn !== 0;
+  if (!on) { downEl.hidden = true; return; }
+  if (now - downAt > 200) {
+    downAt = now;
+    const R = 300, h = (x, z) => surfaceAt(world, x, z, me.idx);
+    const gx = h(me.x + R, me.z) - h(me.x - R, me.z), gz = h(me.x, me.z + R) - h(me.x, me.z - R);
+    const len = Math.hypot(gx, gz);
+    if (len < 0.5) { downTurn = 0; } // flat: nothing to say
+    else {
+      const fx = -gx / len, fz = -gz / len;
+      const dot = me.dx * fx + me.dz * fz, cross = me.dx * fz - me.dz * fx;
+      // Steering left (-1) turns the heading toward negative cross.
+      downTurn = dot > 0.9 ? 0 : cross < 0 ? -1 : 1;
+      chevron.userData.dir = [fx, fz];
+    }
+    downEl.hidden = downTurn === 0;
+    downEl.textContent = downTurn < 0 ? '◀ downhill' : downTurn > 0 ? 'downhill ▶' : '';
+  }
+  if (downTurn) {
+    const [fx, fz] = chevron.userData.dir, sc = 150 * me.size;
+    const x = me.x + fx * 260 * me.size, z = me.z + fz * 260 * me.size;
+    chevron.position.set(x, surfaceAt(world, x, z) * VERT + 30, z);
+    chevron.scale.set(sc, sc, sc);
+    chevron.rotation.set(0, Math.atan2(fx, fz), 0);
+  }
+}
+
 // While falling: ring the start-contour cell you'd land on holding this
 // heading, stand a beam on it, draw your course there and point your drop.
 let markerAt = 0;
@@ -645,6 +685,7 @@ renderer.setAnimationLoop(() => {
   placeTags();
   pulseLava(lava, now / 1000);
   showMarker(now, fx, fy, fz);
+  showDownhill(now);
   if (mapView) {
     controls.update();
   } else {

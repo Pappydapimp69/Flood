@@ -83,6 +83,9 @@
     @keyframes breathe { from { opacity: 0.45; } to { opacity: 1; } }
     @media (prefers-reduced-motion: reduce) { #splash b { animation: none; } }
     #splash[hidden] { display: none; }
+    #downhill { position: fixed; left: 50%; bottom: calc(110px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%);
+      font: 800 26px system-ui, sans-serif; color: #b9ff9c; text-shadow: 0 2px 8px #0b3a4a; pointer-events: none; }
+    #downhill[hidden] { display: none; }
     #fallback { position: fixed; inset: 0; display: grid; place-items: center; font: 16px system-ui; color: #10303d; }
     #fallback[hidden] { display: none; }
   </style>
@@ -100,6 +103,7 @@
   <div id="feed"></div>
   <div id="help">Steer: ← → or A D · on a phone, hold the left or right side · M: map</div>
   <div id="status" hidden></div>
+  <div id="downhill" hidden></div>
   <div id="hint" hidden>← → steer · ↑ ↓ while falling · join lakes to grow · touch smaller <b class="g">▼</b> rivers to absorb them, avoid bigger <b class="r">▲</b> ones · every trail is live water; grey beds belong to drained rivers</div>
   <button id="mute" aria-label="Sound on or off"></button>
   <div id="splash" hidden>

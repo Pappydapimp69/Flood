@@ -55,11 +55,12 @@ export const TUNE = {
   dropTicks: 600,
   dropAlt: 6000, // metres above the ground at the start
   glideSpeed: 140, // m/s sideways while falling (x0.5 slowed, x1.5 hurried)
+  settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
   zoneSlack: 300, // metres a falling drop may stray from the landing ring
   glideTurn: 0.1, // radians per tick while falling: a full circle in about 3 s
-  startElevation: 0.75, // share of the highest peak
-  startTolerance: 0.02,
-  fairReach: 0.04, // starts sit within 4% of the same route length to the sea // +- share of the peak
+  startElevation: 0.6, // share of the highest peak
+  startTolerance: 0.006, // starts within ±0.6% of the peak's height of each other
+  fairReach: 0.025, // and within ±2.5% of the same route length to the sea // +- share of the peak
   // Lava: a few flows down from the high ground. Water crossing lava boils off
   // and slows, and the lava it touches cools into a rock ridge.
   lavaFlows: 2,
@@ -78,7 +79,7 @@ export const TUNE = {
   liveTicks: 300, // a drained river's channel stays live this long, then it's a dry bed
   graceTicks: 100,
   gracePerRiver: 2,
-  spawnGap: 1200,
+  spawnGap: 1000,
 };
 
 // Size from volume without transcendental Math: two square roots.
@@ -222,18 +223,18 @@ export function spawnBand(world) {
       }
     }
     tol *= 1.5;
-  } while (cells.length < 200 && tol < peak * 0.2);
+  } while (cells.length < 120 && tol < peak * 0.02);
   cells.sort((a, b) => a - b);
   // Fair paths: of those, keep the ones as far from the sea as the median, by
-  // the shortest route water can take, widening until most of the ring is in.
+  // the shortest route water can take. No widening: a ring too thin to seat
+  // everyone gets its island rerolled instead (rollIsland).
   const reach = world.reach;
   const sorted = cells.map((c) => reach[c]).sort((a, b) => a - b);
   const mid = sorted[sorted.length >> 1];
-  let fair = [];
-  for (let band = TUNE.fairReach; fair.length < cells.length * 0.6 && band < 0.5; band *= 1.25) {
-    fair = cells.filter((c) => Math.abs(reach[c] - mid) <= mid * band);
-  }
-  world.band = { target, cells: fair, wide: fair, reach: mid, top };
+  const fair = cells.filter((c) => Math.abs(reach[c] - mid) <= mid * TUNE.fairReach);
+  // ring: the whole contour round the summit, which falling drops glide along;
+  // cells: its fair spots, where they touch down.
+  world.band = { target, cells: fair, wide: fair, ring: cells, reach: mid, top };
   return world.band;
 }
 
@@ -337,16 +338,24 @@ function glide(world, r, steer, fwd) {
   const p = keepInZone(world, r.x + r.dx * v * DT, r.z + r.dz * v * DT);
   r.x = p.x;
   r.z = p.z;
+  // The last seconds ease the drop onto the fair spot it will touch down on.
+  if (r.dropping <= TUNE.settleTicks) {
+    const t = world.terrain, n = t.size, k = landingCell(world, r.x, r.z);
+    const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+    r.x += (kx - r.x) / r.dropping;
+    r.z += (kz - r.z) / r.dropping;
+  }
   r.dropping--;
   r.alt = (TUNE.dropAlt * r.dropping) / TUNE.dropTicks;
   if (r.dropping <= 0) land(world, r);
 }
 
 // A falling drop stays over the landing ring: never more than zoneSlack from
-// its start ground, so every player lands on equal ground and touchdown is
-// right where the drop is.
+// the summit contour, so it can glide all the way round but never out to a
+// coast, and touches down on the fair spot nearest where it is.
 export function keepInZone(world, x, z) {
-  const t = world.terrain, n = t.size, k = landingCell(world, x, z);
+  if (!world.ringZone) world.ringZone = new Set(spawnBand(world).ring);
+  const t = world.terrain, n = t.size, k = landingCell(world, x, z, world.ringZone);
   const cx = ((k % n) / (n - 1) - 0.5) * t.worldSize, cz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
   const dx = x - cx, dz = z - cz, d = Math.sqrt(dx * dx + dz * dz);
   if (d <= TUNE.zoneSlack) return { x, z };
@@ -360,8 +369,8 @@ export function dropZone(world) {
 
 // Where a drop above (x, z) touches down: the nearest start-contour cell.
 // Searched in square rings, ties broken by index, so every client agrees.
-export function landingCell(world, x, z) {
-  const t = world.terrain, n = t.size, zone = dropZone(world);
+export function landingCell(world, x, z, zone = dropZone(world)) {
+  const t = world.terrain, n = t.size;
   const c = cellIndex(t, x, z);
   if (zone.has(c)) return c;
   const cx = c % n, cy = (c - cx) / n;
