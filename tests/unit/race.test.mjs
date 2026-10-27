@@ -87,28 +87,6 @@ test('contact: equal depths move nothing', () => {
   assert.ok(!a.out && !b.out);
 });
 
-test('cutting deeper across a tapper\'s channel steals its lake', () => {
-  const w = createWorld(islands.get(42));
-  const lake = w.lakes.reduce((a, b) => (b.cells > a.cells ? b : a));
-  const n = w.terrain.size, k0 = w.lakeOf.indexOf(lake.id);
-  const at = { x: ((k0 % n) / (n - 1) - 0.5) * w.terrain.worldSize, z: (Math.floor(k0 / n) / (n - 1) - 0.5) * w.terrain.worldSize };
-  const tapper = addRiver(w, 'a', at);
-  const cutter = addRiver(w, 'b', { x: at.x + 4000, z: at.z });
-  const grace = TUNE.graceTicks + TUNE.gracePerRiver * w.rivers.length;
-  for (let k = 0; k < grace + 60; k++) step(w, new Map());
-  assert.equal(w.lakeTaken[lake.id], tapper.idx, 'tapper lost the lake early');
-  // A channel cell the tapper dug after tapping, then a much deeper cutter on it.
-  const t0 = w.lakeTapTick[lake.id];
-  const k = w.owner.findIndex((o, i) => o === tapper.idx && w.dugAt[i] >= t0 && w.carve[i] > 2 && i !== k0);
-  assert.ok(k >= 0, 'no channel dug after the tap');
-  Object.assign(cutter, { x: ((k % n) / (n - 1) - 0.5) * w.terrain.worldSize, z: (Math.floor(k / n) / (n - 1) - 0.5) * w.terrain.worldSize, dx: 0, dz: 0, speed: 0 });
-  cutter.volume = TUNE.startVolume * 81; cutter.size = 3;
-  // At zero speed the cutter only creeps (under 1 m) in its first tick, so it stays on the cell.
-  step(w, new Map());
-  assert.equal(w.lakeTaken[lake.id], cutter.idx, 'deeper cutter did not take the lake');
-  assert.ok(w.events.some((e) => e.type === 'tapcut' && e.how === 'cut' && e.to === cutter.idx));
-});
-
 test('a live rival channel costs water to cross but never traps', () => {
   const { w, a } = duel();
   // Live rival water is not felt as terrain; the same cells read as ground for its owner too.
@@ -132,15 +110,14 @@ test('spawns keep their distance', () => {
   assert.ok(close <= 2, `${close} spawn pairs closer than ${TUNE.spawnGap} m`);
 });
 
-test('races end, standings are complete and ordered', () => {
+test('standings are complete and ordered: finishers, then racers, then the drained', () => {
   for (const seed of islands.keys()) {
     const w = race(seed);
     const st = standings(w);
     assert.equal(st.length, 12);
     assert.ok(st[0].finished, `seed ${seed}: nobody reached the sea`);
-    assert.ok(!w.rivers.some(isRacing), `seed ${seed}: race never ended`);
-    const firstOut = st.findIndex((r) => r.out);
-    if (firstOut >= 0) assert.ok(st.slice(firstOut).every((r) => r.out), 'finisher ranked below an absorbed river');
+    const kinds = st.map((r) => (r.finished ? 0 : r.out ? 2 : 1));
+    assert.deepEqual(kinds, [...kinds].sort((a, b) => a - b), `seed ${seed}: ${kinds}`);
   }
 });
 
@@ -156,24 +133,26 @@ test('bots place better than rivers that never steer', () => {
   assert.ok(bot / botN < passive / passiveN, `bots avg place ${(bot / botN).toFixed(2)} vs passive ${(passive / passiveN).toFixed(2)}`);
 });
 
-test('drop: fall for the drop time, glide only inside the fair zone, land with grace from touchdown', async () => {
-  const { dropZone } = await import('../../src/shared/river.js');
+test('drop: 30 s of fall, steerable anywhere, touchdown on the start contour with grace from then', async () => {
+  const { dropZone, landingCell } = await import('../../src/shared/river.js');
   const w = createWorld(islands.get(2));
-  const ids2 = ['a', 'b', 'c'];
-  for (const id of ids2) addRiver(w, id, undefined, { drop: true });
+  for (const id of ['a', 'b', 'c']) addRiver(w, id, undefined, { drop: true });
   const zone = dropZone(w);
-  const n = w.terrain.size;
-  const cellOf = (r) => Math.round((r.z / w.terrain.worldSize + 0.5) * (n - 1)) * n + Math.round((r.x / w.terrain.worldSize + 0.5) * (n - 1));
+  const start = w.rivers.map((r) => ({ x: r.x, z: r.z }));
   for (let k = 0; k < TUNE.dropTicks; k++) {
-    step(w, new Map([['a', -1], ['b', 1]]));
-    for (const r of w.rivers) {
-      assert.equal(r.path.length > 0, r.dropping === 0, 'a channel before landing');
-      if (r.dropping) assert.ok(zone.has(cellOf(r)), `${r.id} glided out of the zone`);
-    }
+    step(w, new Map([['a', { s: k < 40 ? -1 : 0, f: 1 }], ['b', { s: 1, f: -1 }]]));
+    for (const r of w.rivers) assert.equal(r.path.length > 0, r.dropping === 0, 'a channel before landing');
   }
+  assert.equal(TUNE.dropTicks, 600);
+  const n = w.terrain.size;
   for (const r of w.rivers) {
     assert.equal(r.dropping, 0);
     assert.equal(r.born, TUNE.dropTicks - 1, 'grace should count from touchdown');
+    const k = Math.round((r.z / w.terrain.worldSize + 0.5) * (n - 1)) * n + Math.round((r.x / w.terrain.worldSize + 0.5) * (n - 1));
+    assert.ok(zone.has(k), `${r.id} landed off the start contour`);
   }
+  // A turn then a hurried straight glide carries a far across the map.
+  assert.ok(Math.hypot(w.rivers[0].x - start[0].x, w.rivers[0].z - start[0].z) > 3000);
+  assert.equal(landingCell(w, w.rivers[2].x, w.rivers[2].z) >= 0, true);
   assert.equal(w.events.filter((e) => e.type === 'land').length, 3);
 });

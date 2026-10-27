@@ -1,72 +1,59 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateIsland } from '../../src/shared/terrain.js';
-import { createWorld, addRiver, step, lakeGain, TUNE } from '../../src/shared/river.js';
+import { createWorld, addRiver, step, dropZone, dischargeOf, TUNE } from '../../src/shared/river.js';
 
 const t1 = generateIsland(1);
+const cellPos = (w, k) => {
+  const n = w.terrain.size;
+  return { x: ((k % n) / (n - 1) - 0.5) * w.terrain.worldSize, z: (Math.floor(k / n) / (n - 1) - 0.5) * w.terrain.worldSize };
+};
+const inBasin = (w) => cellPos(w, w.lakeOf.indexOf(w.basins[0]));
 
-function intoBasin(w) {
-  const lake = w.basins[0];
-  const n = t1.size, k = w.lakeOf.indexOf(lake);
-  return { lake, at: { x: ((k % n) / (n - 1) - 0.5) * t1.worldSize, z: (Math.floor(k / n) / (n - 1) - 0.5) * t1.worldSize } };
-}
-
-test('a few dry basins, the same on every run, none on a spawn', () => {
+test('a few dry basins, the same on every run, off the start contour', () => {
   const a = createWorld(t1), b = createWorld(t1);
   assert.deepEqual(a.basins, b.basins);
   assert.ok(a.basins.length >= 1 && a.basins.length <= TUNE.basins);
+  const zone = dropZone(a);
   for (const l of a.basins) {
-    assert.equal(a.lakeDry[l], 1);
-    assert.equal(a.lakeLeft[l], 0, 'a dry basin has nothing to tap');
-    assert.ok(a.lakeOutlet[l] >= 0 && a.lakeOf[a.lakeOutlet[l]] !== l, 'outlet is outside the basin');
+    assert.equal(a.lakeVol[l], 0);
+    for (let k = 0; k < a.lakeOf.length; k++) if (a.lakeOf[k] === l) assert.ok(!zone.has(k));
   }
 });
 
-test('running into a dry basin: stop, pay water, fill, spill at the outlet', () => {
+test('a dry basin: the head pools and the basin rises by the river\'s discharge', () => {
   const w = createWorld(t1);
-  const { lake, at } = intoBasin(w);
-  const r = addRiver(w, 'a', at);
+  const lake = w.basins[0];
+  const r = addRiver(w, 'a', inBasin(w));
   step(w, new Map());
-  assert.ok(r.filling, 'did not start filling');
-  const v0 = r.volume, x0 = r.x, z0 = r.z;
+  assert.equal(r.pooled, lake);
+  const x = r.x, z = r.z, v0 = w.lakeVol[lake];
   step(w, new Map());
-  assert.equal(r.x, x0, 'head moved while filling');
-  assert.equal(r.z, z0);
-  assert.ok(r.volume < v0, 'filling cost nothing');
-  let k = 0;
-  while (r.filling && k++ < TUNE.fillMaxTicks + 5) step(w, new Map());
-  assert.equal(r.filling, null, 'never spilled');
-  assert.ok(k <= TUNE.fillMaxTicks + 1, 'filling ran past its guaranteed exit');
-  assert.equal(w.lakeDry[lake], 0);
-  assert.ok(w.lakeLeft[lake] > 0, 'no reservoir left');
-  assert.ok(Math.abs(w.lakeLeft[lake] - w.basinFill[lake] * TUNE.reservoirKeep) < 1);
-  assert.ok(w.basinFill[lake] <= lakeGain(w.lakes[lake]) + 1);
-  assert.notEqual(w.lakeOf[headCell(w, r)], lake, 'head is still inside the basin');
+  assert.equal(r.x, x, 'head moved while pooled');
+  assert.equal(r.z, z);
+  assert.ok(Math.abs(w.lakeVol[lake] - v0 - dischargeOf(r)) < 1, 'rise is not the discharge');
 });
 
-test('filling never pushes a river below its safety margin over the floor', () => {
-  const w = createWorld(t1);
-  const { at } = intoBasin(w);
-  const r = addRiver(w, 'a', at);
-  r.volume = TUNE.floor * TUNE.startVolume * 1.3;
-  for (let k = 0; k < TUNE.fillMaxTicks + 5; k++) step(w, new Map());
-  assert.ok(!r.out, 'filling drained the river out');
-  assert.ok(r.volume >= TUNE.floor * TUNE.startVolume * TUNE.basinFloorMargin - 1);
+test('two rivers fill a basin about twice as fast, then both flow on', () => {
+  const ticksToFill = (n) => {
+    const w = createWorld(t1);
+    const at = inBasin(w);
+    const rs = Array.from({ length: n }, (_, i) => addRiver(w, `r${i}`, at));
+    let k = 0;
+    while (rs.some((r) => r.pooled >= 0 || k === 0) && k < TUNE.maxPoolTicks + 5) { step(w, new Map()); k++; }
+    assert.ok(rs.every((r) => r.pooled < 0), 'still pooled');
+    assert.ok(w.lakeVol[w.basins[0]] >= w.lakeCap[w.basins[0]] * TUNE.fullAt);
+    assert.ok(w.events.filter((e) => e.type === 'spill').length === n);
+    return k;
+  };
+  const one = ticksToFill(1), two = ticksToFill(2);
+  assert.ok(two < one * 0.65, `one river ${one} ticks, two ${two}`);
 });
 
-test('the reservoir a filler leaves can be tapped by someone else', () => {
+test('pooling has a guaranteed exit', () => {
   const w = createWorld(t1);
-  const { lake, at } = intoBasin(w);
-  addRiver(w, 'a', at);
-  while (!w.events.some((e) => e.type === 'spill')) step(w, new Map());
-  const b = addRiver(w, 'b', at);
-  step(w, new Map());
-  assert.equal(w.lakeTaken[lake], b.idx);
-  assert.ok(b.inflow > 0);
+  const r = addRiver(w, 'a', inBasin(w));
+  r.volume = 1; r.size = 0.04; // a trickle that could never fill it
+  for (let k = 0; k <= TUNE.maxPoolTicks + 2; k++) step(w, new Map());
+  assert.equal(r.pooled, -1);
 });
-
-function headCell(w, r) {
-  const n = w.terrain.size;
-  const x = Math.round((r.x / w.terrain.worldSize + 0.5) * (n - 1)), y = Math.round((r.z / w.terrain.worldSize + 0.5) * (n - 1));
-  return y * n + x;
-}

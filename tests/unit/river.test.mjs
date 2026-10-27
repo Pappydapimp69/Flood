@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateIsland } from '../../src/shared/terrain.js';
-import { createWorld, addRiver, step, riverFingerprint, spawnBand, TICK_HZ, TUNE } from '../../src/shared/river.js';
+import { createWorld, addRiver, step, riverFingerprint, surfaceAt, TICK_HZ, TUNE } from '../../src/shared/river.js';
 
 const SEEDS = [1, 2, 3, 42, 1337];
 const islands = new Map(SEEDS.map((s) => [s, generateIsland(s)]));
@@ -21,17 +21,27 @@ function run(seed, policy, id = 'p1') {
   return { w, r };
 }
 
-// The game's promise: whatever the player does, the water reaches the sea.
-test('every seed and steering policy reaches the sea', () => {
+// No auto-steering: without input the heading never turns, whatever the ground does.
+test('the game never steers: no input, no change of heading', () => {
   for (const seed of SEEDS) {
-    for (const p of Object.keys(policies)) {
-      const { r } = run(seed, p);
-      assert.ok(r.finished, `seed ${seed} policy ${p} never reached the sea (travelled ${r.travelled | 0} m)`);
-      // Holding one direction forever circles, which is what the stall guard is
-      // for; normal play should rarely need it.
-      const cap = p === 'left' || p === 'right' ? 0.4 : 0.2;
-      assert.ok(r.guidedTicks / r.finishTick < cap, `seed ${seed} ${p}: guided ${r.guidedTicks}/${r.finishTick} ticks`);
-    }
+    const w = createWorld(islands.get(seed));
+    const r = addRiver(w, 'p1');
+    const dx = r.dx, dz = r.dz;
+    for (let t = 0; t < TICK_HZ * 60 && !r.finished; t++) step(w, new Map());
+    assert.equal(r.dx, dx, `seed ${seed}: heading x changed`);
+    assert.equal(r.dz, dz, `seed ${seed}: heading z changed`);
+  }
+});
+
+test('water never climbs: the head stays within the climb and pond allowance of its lowest point', () => {
+  const w = createWorld(islands.get(2));
+  const r = addRiver(w, 'p1');
+  let lowest = Infinity;
+  for (let t = 0; t < TICK_HZ * 120 && !r.finished; t++) {
+    step(w, new Map([['p1', (t >> 6) & 1 ? 1 : -1]]));
+    const h = surfaceAt(w, r.x, r.z, r.idx);
+    lowest = Math.min(lowest, h);
+    assert.ok(h <= lowest + TUNE.climb + TUNE.pondMax + 0.5, `climbed to ${h - lowest} m above its lowest point`);
   }
 });
 
