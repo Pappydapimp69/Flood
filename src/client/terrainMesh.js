@@ -142,6 +142,19 @@ function lakeCellsOf(mesh, lakeOf, lake) {
   return ud.lakeCells.get(lake) ?? [];
 }
 
+// Show (or clear) the landing zone while you fall: a cyan wash over its cells.
+const ZONE = new THREE.Color('#5fe0ff');
+export function highlightZone(mesh, cells, on) {
+  const { baseColors } = mesh.userData;
+  const col = mesh.geometry.attributes.color;
+  for (const k of cells) {
+    if (on) tmp.fromArray(baseColors, k * 3).lerp(ZONE, 0.35).toArray(col.array, k * 3);
+    else for (let c = 0; c < 3; c++) col.array[k * 3 + c] = baseColors[k * 3 + c];
+  }
+  col.clearUpdateRanges();
+  col.needsUpdate = true;
+}
+
 export function resetCarve(mesh) {
   const { t, base, baseColors } = mesh.userData, n = t.size;
   const geo = mesh.geometry, pos = geo.attributes.position;

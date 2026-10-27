@@ -26,6 +26,7 @@ export function createBot(world, river, skill) {
 export function botSteer(world, bot) {
   const r = bot.river;
   if (!isRacing(r)) return 0;
+  if (r.dropping) return botGlide(world, bot);
   if (world.tick < bot.next) return bot.steer;
   bot.next = world.tick + bot.think;
 
@@ -76,4 +77,19 @@ export function botSteer(world, bot) {
   for (const [a, sc] of scores) if (sc > best) { best = sc; choice = a; }
   bot.steer = choice > 0 ? -1 : choice < 0 ? 1 : 0;
   return bot.steer;
+}
+
+// Falling: drift away from the nearest other drop, so bots land spread out.
+function botGlide(world, bot) {
+  const r = bot.river;
+  let near = null, best = Infinity;
+  for (const o of world.rivers) {
+    if (o === r || !isRacing(o)) continue;
+    const d = (o.x - r.x) ** 2 + (o.z - r.z) ** 2;
+    if (d < best) { best = d; near = o; }
+  }
+  if (!near || best > 3000 * 3000) return 0;
+  // Which side of our heading is it on? Turn the other way.
+  const side = (near.x - r.x) * r.dz - (near.z - r.z) * r.dx; // > 0: on the left
+  return side > 0 ? 1 : -1;
 }

@@ -155,3 +155,25 @@ test('bots place better than rivers that never steer', () => {
   }
   assert.ok(bot / botN < passive / passiveN, `bots avg place ${(bot / botN).toFixed(2)} vs passive ${(passive / passiveN).toFixed(2)}`);
 });
+
+test('drop: fall for the drop time, glide only inside the fair zone, land with grace from touchdown', async () => {
+  const { dropZone } = await import('../../src/shared/river.js');
+  const w = createWorld(islands.get(2));
+  const ids2 = ['a', 'b', 'c'];
+  for (const id of ids2) addRiver(w, id, undefined, { drop: true });
+  const zone = dropZone(w);
+  const n = w.terrain.size;
+  const cellOf = (r) => Math.round((r.z / w.terrain.worldSize + 0.5) * (n - 1)) * n + Math.round((r.x / w.terrain.worldSize + 0.5) * (n - 1));
+  for (let k = 0; k < TUNE.dropTicks; k++) {
+    step(w, new Map([['a', -1], ['b', 1]]));
+    for (const r of w.rivers) {
+      assert.equal(r.path.length > 0, r.dropping === 0, 'a channel before landing');
+      if (r.dropping) assert.ok(zone.has(cellOf(r)), `${r.id} glided out of the zone`);
+    }
+  }
+  for (const r of w.rivers) {
+    assert.equal(r.dropping, 0);
+    assert.equal(r.born, TUNE.dropTicks - 1, 'grace should count from touchdown');
+  }
+  assert.equal(w.events.filter((e) => e.type === 'land').length, 3);
+});

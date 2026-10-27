@@ -6,6 +6,7 @@ lakes to grow, cut rivals off, and be the first to reach the sea.
 ## Play
 Steer with ← → (or A D). On a phone, hold the left or right side of the screen. With a controller: stick or D-pad steers, A selects / races again, Y opens the map, X toggles sound. `M` toggles the map on a keyboard.
 
+- Every race starts with a drop from the sky: steer to pick your landing inside the glowing zone.
 - Flow downhill to the sea; first one there wins (the race ends 90 s later).
 - Tap lakes to grow: a lake you touch drains into you over the next half minute through your
   channel. A rival cutting deeper across that channel steals the flow. Bigger rivers are faster

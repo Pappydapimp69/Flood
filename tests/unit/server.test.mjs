@@ -32,7 +32,7 @@ function client(port, hello = {}) {
 // Re-run a client's view of the race from start + frames, like the browser does.
 function replay(start, frames) {
   const w = createWorld(generateIsland(start.seed));
-  for (const id of start.ids) addRiver(w, id);
+  for (const id of start.ids) addRiver(w, id, undefined, { drop: true }); // as the room does
   const prints = new Map();
   for (const f of frames) {
     step(w, decodeFrame(start.ids, f));

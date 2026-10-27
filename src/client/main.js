@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
-import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, lakeGain, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, lakeGain, dropZone, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
-import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, setLakeLevel, VERT } from './terrainMesh.js';
+import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
 import { connect } from './net.js';
@@ -64,6 +64,7 @@ function useIsland(seed) {
 const PLAYER_COLOR = '#45d2ff';
 const BOT_COLORS = ['#4f8fd0', '#4fb39a', '#7d84d8', '#3fa8b8', '#6c95e8', '#58a77f', '#9480d8', '#3f93c4', '#6fae8f', '#8496e0', '#4c9aa8'];
 const headGeo = new THREE.SphereGeometry(1, 20, 12);
+const streakGeo = new THREE.CylinderGeometry(0.15, 1, 1, 8, 1, true).translate(0, 0.5, 0);
 
 // One render entry per river: ribbon, head and last-tick position for interpolation.
 function makeEntry(r, i) {
@@ -73,8 +74,10 @@ function makeEntry(r, i) {
   const head = new THREE.Mesh(headGeo, new THREE.MeshPhongMaterial({
     color: mine ? '#f2fcff' : '#dfeff5', emissive: mine ? '#2aa6d6' : '#2e5d6e', transparent: true, opacity: 0.92,
   }));
-  scene.add(ribbon.mesh, head);
-  return { r, ribbon, head, prev: { x: r.x, z: r.z } };
+  // The streak a falling drop leaves, like the trailer's rain of rivers.
+  const streak = new THREE.Mesh(streakGeo, new THREE.MeshBasicMaterial({ color: mine ? '#bff3ff' : '#d8eef5', transparent: true, opacity: 0.55, depthWrite: false }));
+  scene.add(ribbon.mesh, head, streak);
+  return { r, ribbon, head, streak, prev: { x: r.x, z: r.z } };
 }
 
 const camera = new THREE.PerspectiveCamera(55, 1, 20, 400000);
@@ -132,10 +135,10 @@ let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, 
 let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 
 function beginRace(seed, raceIds, me) {
-  for (const e of entries) { scene.remove(e.ribbon.mesh, e.head); e.ribbon.geo.dispose(); e.head.material.dispose(); }
+  for (const e of entries) { scene.remove(e.ribbon.mesh, e.head, e.streak); e.ribbon.geo.dispose(); e.head.material.dispose(); e.streak.material.dispose(); }
   useIsland(seed);
   world = createWorld(terrain);
-  for (const id of raceIds) addRiver(world, id); // sorted ids: reproducible spawns
+  for (const id of raceIds) addRiver(world, id, undefined, { drop: !params.has('nodrop') }); // sorted ids: reproducible spawns
   river = world.rivers.find((r) => r.id === me) ?? null;
   focus = river ?? world.rivers[0];
   entries = world.rivers.map(makeEntry);
@@ -150,6 +153,7 @@ function beginRace(seed, raceIds, me) {
   document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
   updateLakes(); // dry basins show as dry from the first frame
+  if (river?.dropping) highlightZone(terrainMesh, dropZone(world), true);
   hud.banner.hidden = true;
   hud.feed.textContent = '';
   const y = surfaceAt(world, focus.x, focus.z) * VERT;
@@ -372,12 +376,14 @@ function updateLakes() {
 }
 
 function advance(inputs) {
-  for (const e of entries) e.prev = { x: e.r.x, z: e.r.z };
+  for (const e of entries) { e.prev = { x: e.r.x, z: e.r.z }; e.prevAlt = e.r.alt; }
   step(world, inputs);
   applyCarve(terrainMesh, world.carve, world.dirty.splice(0));
   if (world.tick % 10 === 0) updateLakes();
   for (const e of world.events.splice(0)) {
-    if (e.type === 'pool') {
+    if (e.type === 'land') {
+      if (river && e.river === river.idx) { highlightZone(terrainMesh, dropZone(world), false); audio.lake(); }
+    } else if (e.type === 'pool') {
       if (river && e.river === river.idx) showPop('Dry basin — filling it before you can spill on');
     } else if (e.type === 'spill') {
       if (river && e.river === river.idx) showPop(`Breached! ${fmtL(e.left)} left behind as a reservoir`);
@@ -482,11 +488,15 @@ renderer.setAnimationLoop(() => {
   for (const e of entries) {
     const r = e.r;
     const hx = e.prev.x + (r.x - e.prev.x) * alpha, hz = e.prev.z + (r.z - e.prev.z) * alpha;
-    const hy = surfaceAt(world, hx, hz, r.idx) * VERT;
+    // A falling drop sits its altitude above the ground (true metres, not exaggerated).
+    const hy = surfaceAt(world, hx, hz, r.idx) * VERT + (r.dropping ? (r.alt - (r.alt - (e.prevAlt ?? r.alt)) * (1 - alpha)) : 0);
     e.head.visible = !r.out;
     e.head.position.set(hx, hy + 8, hz);
     const big = mapView ? 6 : 1; // heads read as markers on the map
-    e.head.scale.set(70 * r.size * big, 25 * r.size * big, 70 * r.size * big);
+    e.streak.visible = !!r.dropping;
+    if (r.dropping) { e.streak.position.set(hx, hy, hz); e.streak.scale.set(28, 1400, 28); }
+    if (r.dropping) e.head.scale.set(45 * big, 130 * big, 45 * big); // a falling drop, stretched
+    else e.head.scale.set(70 * r.size * big, 25 * r.size * big, 70 * r.size * big);
     // Threat at a glance: red heads would absorb you, green ones you can absorb.
     if (river && r !== river) {
       const t = threatOf(r);
@@ -535,7 +545,9 @@ renderer.setAnimationLoop(() => {
   const place = table.indexOf(me) + 1;
   hud.rank.textContent = river ? `${ordinal(place)}/${world.rivers.length} · ${alive} flowing` : `Spectating · ${alive} flowing`;
   const toSea = world.dist[cellIndex(terrain, focus.x, focus.z)];
-  hud.dist.textContent = focus !== river ? `Watching ${nameOf(focus)}` : `${(toSea / 1000).toFixed(2)} km to sea`;
+  hud.dist.textContent = focus !== river ? `Watching ${nameOf(focus)}`
+    : river.dropping ? `Steer your landing · ${Math.ceil(river.dropping / TICK_HZ)} s`
+    : `${(toSea / 1000).toFixed(2)} km to sea`;
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);
   hud.litres.textContent = fmtL(me.volume);

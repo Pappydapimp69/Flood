@@ -7,7 +7,9 @@ const { chromium } = createRequire(import.meta.url)('playwright');
 const shotDir = process.argv[2];
 
 const server = await serve(0);
-const base = `http://127.0.0.1:${server.address().port}/?seed=1`;
+const root = `http://127.0.0.1:${server.address().port}/`;
+// Most checks skip the opening sky drop (?nodrop); the drop has its own check.
+const base = `${root}?seed=1&nodrop`;
 const browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'] });
 
 const state = (page) => page.evaluate(() => {
@@ -196,6 +198,28 @@ await check('dry basin: the HUD shows filling, then the head spills on', async (
     await page.waitForTimeout(50);
   }
   throw new Error('never spilled');
+});
+
+await check('sky drop: fall with a countdown, steer the landing inside the zone, then flow', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
+  await page.goto(`${root}?seed=1&nohint`);
+  await until(page, (s) => s.ready, 'ready');
+  const d0 = await page.evaluate(() => ({ dropping: __flood.river.dropping, alt: __flood.river.alt, hud: document.getElementById('dist').textContent, x: __flood.river.x, z: __flood.river.z }));
+  if (!(d0.dropping > 0 && d0.alt > 0)) throw new Error(`not falling at the start: ${JSON.stringify(d0)}`);
+  if (!d0.hud.startsWith('Steer your landing')) throw new Error(`HUD: ${d0.hud}`);
+  await page.keyboard.down('ArrowLeft');
+  if (shotDir) { await page.waitForTimeout(800); await page.screenshot({ path: `${shotDir}/play-drop.png` }); }
+  await until(page, (s) => s.tick > 125, 'landed');
+  await page.keyboard.up('ArrowLeft');
+  const d1 = await page.evaluate(() => {
+    const r = __flood.river, w = __flood.world, n = w.terrain.size;
+    const k = Math.round((r.z / w.terrain.worldSize + 0.5) * (n - 1)) * n + Math.round((r.x / w.terrain.worldSize + 0.5) * (n - 1));
+    return { dropping: r.dropping, path: r.path.length, inZone: w.band.wide.includes(k) || r.path.length > 3, moved: Math.hypot(r.path[0].x, r.path[0].z) };
+  });
+  if (d1.dropping || !d1.path) throw new Error(`did not land: ${JSON.stringify(d1)}`);
+  const landed = await page.evaluate(() => ({ x: __flood.river.path[0].x, z: __flood.river.path[0].z }));
+  if (Math.hypot(landed.x - d0.x, landed.z - d0.z) < 100) throw new Error('steering during the fall did not move the landing');
+  await page.close();
 });
 
 // A fake standard-mapping gamepad the test can drive; installed before the page loads.

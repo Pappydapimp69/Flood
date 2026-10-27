@@ -48,6 +48,12 @@ export const TUNE = {
   fillRate: 0.004, // share of starting water poured in per tick, times your size
   fillMaxTicks: 240, // guaranteed exit: after 12 s you spill whatever is in
   reservoirKeep: 0.8, // share of the poured water left for others to tap
+  // The drop: every river starts as a drop falling from the sky over its fair
+  // spawn, and can glide to choose where it lands, inside the wide fair band.
+  dropTicks: 120, // 6 s of fall
+  dropAlt: 3000, // metres above the ground at the start
+  glideSpeed: 160, // m/s sideways while falling
+  glideTurn: 0.035, // heading change per tick at full steer (a held turn is a wide arc)
   // Bigger rivers are faster but turn slower, so the leader can't simply snowball.
   speedPerSize: 0.25, // max speed multiplier gained per unit of size above 1
   // Contact is a depth tug-of-war: where a head touches a rival's head or live
@@ -192,7 +198,7 @@ export function spawnPoint(world, id) {
   const t = world.terrain, n = t.size;
   const band = spawnBand(world);
   const r = stream(t.seed, `spawn:${id}`);
-  const others = world.rivers.map((o) => o.path[0]);
+  const others = world.rivers.map((o) => o.spawn);
   let best = null, bestGap = -1;
   for (let tries = 0; tries < 120; tries++) {
     // Half the tries in the fair band, then a wider one if it is crowded.
@@ -207,7 +213,9 @@ export function spawnPoint(world, id) {
   return best;
 }
 
-export function addRiver(world, id, at = spawnPoint(world, id)) {
+// opts.drop: start as a falling drop (the game); without it the river starts on
+// the ground at once (tests and tools).
+export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
   const idx = world.rivers.length;
   const g = gradient(world, at.x, at.z, idx);
   const len = Math.sqrt(g.x * g.x + g.z * g.z) || 1;
@@ -215,6 +223,7 @@ export function addRiver(world, id, at = spawnPoint(world, id)) {
     id,
     idx,
     x: at.x, z: at.z,
+    spawn: { x: at.x, z: at.z }, // where it was placed (drops may land elsewhere)
     dx: -g.x / len, dz: -g.z / len,
     speed: TUNE.minSpeed,
     volume: TUNE.startVolume,
@@ -233,12 +242,60 @@ export function addRiver(world, id, at = spawnPoint(world, id)) {
     finishTick: -1,
     out: null, // { by, tick } once drained below the floor by a rival
     born: world.tick,
+    dropping: opts.drop ? TUNE.dropTicks : 0, // ticks of fall left
+    alt: opts.drop ? TUNE.dropAlt : 0, // metres above the ground while falling
     path: [],
   };
-  pushPathPoint(world, river);
   world.rivers.push(river);
-  applyDigs(world);
+  if (!river.dropping) {
+    pushPathPoint(world, river);
+    applyDigs(world);
+  } else {
+    // Glide around the island's middle at first: the fair zone is a ring at an
+    // even distance from the sea, so this runs along it rather than off it.
+    const cl = Math.sqrt(at.x * at.x + at.z * at.z) || 1;
+    river.dx = -at.z / cl; river.dz = at.x / cl;
+  }
   return river;
+}
+
+// While falling: steer a glide, but only over the wide fair band, so a landing
+// is never closer to the sea than the fair spread allows.
+function glide(world, r, steer) {
+  if (steer) {
+    const a = TUNE.glideTurn * -steer;
+    const dx = r.dx + r.dz * a, dz = r.dz - r.dx * a;
+    r.dx = dx; r.dz = dz;
+    normalize(r);
+  }
+  const nx = r.x + r.dx * TUNE.glideSpeed * DT, nz = r.z + r.dz * TUNE.glideSpeed * DT;
+  const zone = dropZone(world), t = world.terrain;
+  // At the zone's edge, slide along it instead of stopping dead.
+  if (zone.has(cellIndex(t, nx, nz))) { r.x = nx; r.z = nz; }
+  else if (zone.has(cellIndex(t, nx, r.z))) r.x = nx;
+  else if (zone.has(cellIndex(t, r.x, nz))) r.z = nz;
+  r.dropping--;
+  r.alt = (TUNE.dropAlt * r.dropping) / TUNE.dropTicks;
+  if (r.dropping <= 0) land(world, r);
+}
+
+export function dropZone(world) {
+  if (!world.dropZone) world.dropZone = new Set(spawnBand(world).wide);
+  return world.dropZone;
+}
+
+// Touchdown: the river starts here, flowing downhill, with its spawn grace from now.
+function land(world, r) {
+  r.dropping = 0;
+  r.alt = 0;
+  const g = gradient(world, r.x, r.z, r.idx);
+  const len = Math.sqrt(g.x * g.x + g.z * g.z);
+  if (len > 1e-9) { r.dx = -g.x / len; r.dz = -g.z / len; }
+  r.born = world.tick;
+  r.low = Infinity;
+  r.speed = TUNE.minSpeed;
+  pushPathPoint(world, r);
+  world.events.push({ type: 'land', river: r.idx, tick: world.tick });
 }
 
 export const isRacing = (r) => !r.finished && !r.out;
@@ -277,6 +334,7 @@ export function step(world, inputs) {
 }
 
 function moveRiver(world, r, inputs) {
+  if (r.dropping) return glide(world, r, Math.max(-1, Math.min(1, inputs?.get(r.id) | 0)));
   if (r.filling) return fillBasin(world, r);
   {
     const steer = Math.max(-1, Math.min(1, inputs?.get(r.id) | 0));
@@ -362,7 +420,7 @@ const biggerFirst = (a, b) => b.volume - a.volume || byId(a, b);
 
 function resolveContacts(world) {
   const grace = TUNE.graceTicks + TUNE.gracePerRiver * world.rivers.length;
-  const rs = world.rivers.filter((r) => isRacing(r) && world.tick - r.born >= grace);
+  const rs = world.rivers.filter((r) => isRacing(r) && !r.dropping && world.tick - r.born >= grace);
   if (rs.length < 2) return;
   cutTaps(world, rs);
   const { carve, owner } = world;
@@ -427,7 +485,7 @@ function resolveContacts(world) {
 function resolveLakes(world) {
   const claims = new Map();
   for (const r of world.rivers) {
-    if (!isRacing(r)) continue;
+    if (!isRacing(r) || r.dropping) continue;
     const lake = world.lakeOf[cellIndex(world.terrain, r.x, r.z)];
     if (lake < 0 || world.lakeTaken[lake] >= 0 || world.lakeLeft[lake] <= 0) continue;
     const prev = claims.get(lake);

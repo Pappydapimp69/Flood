@@ -92,7 +92,7 @@ export class Room {
     this.names = Object.fromEntries(humans.map((s) => [s.id, s.name || s.id]));
     this.seed = this.fixedSeed ?? 1 + (randomBytes(4).readUInt32LE(0) % 1_000_000);
     this.world = createWorld(generateIsland(this.seed));
-    for (const id of this.ids) addRiver(this.world, id);
+    for (const id of this.ids) addRiver(this.world, id, undefined, { drop: true });
     this.bots = this.world.rivers.filter((r) => botIds.includes(r.id)).map((r) => createBot(this.world, r));
     this.byId = new Map(humans.map((s) => [s.id, s]));
     this.log = [];

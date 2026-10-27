@@ -234,3 +234,18 @@ biggest at 60 s won 0/10 (no snowball).
   tick-to-tick heading, ignores changes under ~12°, turns slowly, follows position tightly, and
   rises fast / sinks slowly. Under constant left-right steering its yaw travel fell from 687° to
   52° in 20 s, and direction reversals from 24 to 8.
+
+## M10 — Sky drop and gamepad (done)
+
+**Built**
+- Every race opens with a 6 s drop: each river falls from 3 km over its fair spawn as a streaked
+  drop, and steering glides it (160 m/s, a held turn is a wide arc) to choose where it lands —
+  only inside the wide fair band, sliding along its edge. Drops start gliding around the island
+  so they run along the band. In the sim: authoritative, fingerprinted, the same online.
+- Landing starts the river (flowing downhill) and its spawn grace; no contacts, lakes or basins
+  while falling. Bots glide away from the nearest other drop.
+- Client: the landing zone glows cyan while you fall, HUD "Steer your landing · N s", drop and
+  streak visuals, a splash sound on touchdown. `?nodrop` skips it.
+- Gamepad support shipped earlier in this cycle (stick/D-pad, A, X, Y; menu navigation).
+- Tests: drop timing, glide stays in the zone, grace from touchdown; play test for the
+  countdown, steering the landing and flowing after.

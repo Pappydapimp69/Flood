@@ -96,6 +96,7 @@ export class Ribbon {
   // Write vertices for path points [from, path.length) and the live head.
   update(world, river, headX, headZ, time) {
     const path = river.path;
+    if (!path.length) { this.geo.setDrawRange(0, 0); return; } // still falling
     const count = Math.min(path.length, MAX_POINTS);
     const from = Math.max(0, this.written - 1);
     for (let i = from; i < count; i++) this.writePoint(world, river, i, path[i].x, path[i].z, path[i].water, path[i].tick);
