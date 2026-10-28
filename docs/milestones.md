@@ -264,3 +264,10 @@ biggest at 60 s won 0/10 (no snowball).
   gives the 100 m grid rocky relief it can't carry in geometry.
 - Dense clustered pine stands (two-tier pines) and scattered round broadleaf trees; boulders over rocky,
   steep and high ground. All instanced; removed where channels are dug.
+
+## M16 — The drop and the map, like the trailer (done)
+- Every river has its own colour; falling, it is a comet with a tail pointing back along its fall.
+- Opening shot (4.5 s, any key or click skips): from low on the island looking up at the summit as the
+  named comets rain in; the HUD and guides stay hidden until it ends.
+- Rival names in the trailer's spirit (riverboi, mizu_chan, LaCascade, torrent99, ...), shown over the
+  comets while falling. Landing throws a splash. The map shows each river's course in its colour.

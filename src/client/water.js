@@ -296,6 +296,20 @@ export function updateSpray(pts, x, y, z, dx, dz, size, speed01, dt, on) {
   pts.geometry.attributes.position.needsUpdate = true;
 }
 
+// A splash: throw n droplets out in every direction at once (landing, joining).
+export function burstSpray(pts, x, y, z, size, n = 60) {
+  const { vel, life } = pts.userData;
+  const pos = pts.geometry.attributes.position.array;
+  for (let e = 0; e < n; e++) {
+    const i = pts.userData.next;
+    pts.userData.next = (i + 1) % SPRAY;
+    const a = Math.random() * 6.283, sp = (80 + Math.random() * 160) * size;
+    pos[i * 3] = x; pos[i * 3 + 1] = y + 10; pos[i * 3 + 2] = z;
+    vel[i * 3] = Math.cos(a) * sp; vel[i * 3 + 1] = (150 + Math.random() * 200) * Math.sqrt(size); vel[i * 3 + 2] = Math.sin(a) * sp;
+    life[i] = 0.8 + Math.random() * 0.6;
+  }
+}
+
 export function tickWater(meshes, time) {
   for (const m of meshes) if (m?.material?.uniforms?.uTime) m.material.uniforms.uTime.value = time;
 }
