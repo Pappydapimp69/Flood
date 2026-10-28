@@ -4,15 +4,18 @@ import { SEA_LEVEL, LAKE_MIN_DEPTH } from '../shared/terrain.js';
 // Render-only vertical exaggeration; game logic always uses true metres.
 export const VERT = 2.4;
 
+// Biome colours, after the trailer: olive grass with dry yellow patches, dark
+// forest floor, grey-brown rock and scree high up and on steep ground, pale
+// sand at the coast. The shader below adds slope rock and fine detail.
 const C = {
   deep: new THREE.Color('#1d4d5e'),
   shallow: new THREE.Color('#6fa59a'),
-  sand: new THREE.Color('#d9c79b'),
-  maquis: new THREE.Color('#6b8a3e'),
-  forest: new THREE.Color('#3e5c2a'),
-  rock: new THREE.Color('#8b8173'),
-  snow: new THREE.Color('#f1f1ee'),
-  lake: new THREE.Color('#4f93a8'),
+  sand: new THREE.Color('#cdbb8a'),
+  maquis: new THREE.Color('#77843f'),
+  forest: new THREE.Color('#4a5a2c'),
+  rock: new THREE.Color('#8a8172'),
+  snow: new THREE.Color('#d8d6cf'),
+  lake: new THREE.Color('#3f8f9f'),
 };
 
 const tmp = new THREE.Color();
@@ -54,12 +57,72 @@ export function buildTerrainMesh(t) {
     }
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  const mat = terrainMaterial();
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'terrain';
   mesh.userData = { t, base, pristineBase: base.slice(), baseColors: colors.slice(), pristineColors: colors.slice() };
   for (let i = 0; i < n * n; i++) setNormal(mesh, i);
   return mesh;
+}
+
+// Lambert with procedural detail: steep ground turns to banded rock, the
+// grass breaks into dry yellow and dark patches, and fine scree/grit noise
+// shows close up and fades out with distance so it never shimmers.
+function terrainMaterial() {
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  mat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNorm;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNorm = normalize(mat3(modelMatrix) * objectNormal);');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        varying vec3 vWPos;
+        varying vec3 vWNorm;
+        float th(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float tn(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(th(i), th(i + vec2(1, 0)), u.x), mix(th(i + vec2(0, 1)), th(i + vec2(1, 1)), u.x), u.y); }`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        {
+          float dist = length(cameraPosition - vWPos);
+          float near = 1.0 - smoothstep(1500.0, 6000.0, dist);
+          float slope = 1.0 - clamp(vWNorm.y, 0.0, 1.0);
+          float macro = tn(vWPos.xz * 0.0012) * 0.6 + tn(vWPos.xz * 0.004) * 0.4;
+          float wet = step(0.02, diffuseColor.b - diffuseColor.r); // lake and sea beds keep their colour
+          // Rock on steep ground, banded along the height.
+          float band = 0.5 + 0.5 * sin(vWPos.y * 0.09 + tn(vWPos.xz * 0.01) * 6.0);
+          vec3 rock = mix(vec3(0.42, 0.39, 0.35), vec3(0.62, 0.58, 0.52), band * 0.6 + macro * 0.4);
+          float rockMix = smoothstep(0.32, 0.62, slope + (macro - 0.5) * 0.25) * (1.0 - wet);
+          // Grass patches: dry yellow and dark green.
+          vec3 g = diffuseColor.rgb;
+          float green = g.g - max(g.r, g.b);
+          vec3 dry = vec3(0.72, 0.66, 0.36), dark = g * 0.72;
+          float patchy = smoothstep(0.55, 0.75, macro) * step(0.04, green);
+          g = mix(g, dry, patchy * 0.45);
+          g = mix(g, dark, smoothstep(0.35, 0.15, macro) * step(0.04, green) * 0.6);
+          vec3 col = mix(g, rock, rockMix);
+          // Close-up grit and scree.
+          float grit = tn(vWPos.xz * 0.06) * 0.5 + tn(vWPos.xz * 0.17) * 0.5;
+          col *= mix(1.0, 0.74 + 0.5 * grit, near);
+          diffuseColor.rgb = col;
+        }`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        {
+          // Rocky relief the 100 m grid can't carry: bump the lighting normal by
+          // noise, strong on steep rock, gentle on grass, gone in the distance.
+          float dist = length(cameraPosition - vWPos);
+          float near = 1.0 - smoothstep(2500.0, 9000.0, dist);
+          float slope = 1.0 - clamp(vWNorm.y, 0.0, 1.0);
+          float k = (0.35 + 1.4 * smoothstep(0.25, 0.6, slope)) * near;
+          vec2 p = vWPos.xz;
+          float e = 9.0;
+          #define BH(q) (tn((q) * 0.012) * 0.55 + tn((q) * 0.035) * 0.3 + tn((q) * 0.09) * 0.15)
+          float gx = BH(p + vec2(e, 0.0)) - BH(p - vec2(e, 0.0));
+          float gz = BH(p + vec2(0.0, e)) - BH(p - vec2(0.0, e));
+          vec3 wn = normalize(vWNorm + vec3(-gx, 0.0, -gz) * k * 5.0);
+          normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz);
+        }`);
+  };
+  return mat;
 }
 
 // Normal from central differences of the displayed heights.

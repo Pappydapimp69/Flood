@@ -10,7 +10,7 @@ import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
 import { connect } from './net.js';
 import { createAudio } from './audio.js';
-import { buildTrees, clearTrees, buildLava, coolLava, pulseLava } from './scenery.js';
+import { buildTrees, buildRocks, clearTrees, buildLava, coolLava, pulseLava } from './scenery.js';
 
 // Test/debug surface. Tests poll this instead of waiting on wall-clock time.
 const dbg = (window.__flood = { ready: false, error: null, frames: 0, steers: [], prints: new Map() });
@@ -175,7 +175,7 @@ const hud = {
 const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
 
 // A race: the world plus what draws it. `river` is null when spectating.
-let trees, lava; // scenery for the current race
+let trees, rocks, lava; // scenery for the current race
 let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, endShown, mode, raceOver, finalShown;
 // Online: frames from the server, consumed in order; ids give each char's river.
 let net, ids = [], frames = [], nextFrame = 0, endTable = null;
@@ -206,8 +206,13 @@ function beginRace(seed, raceIds, me, rolled) {
   updateLakes(); // dry basins show as dry from the first frame
   for (const g of guides) if (!g.parent) scene.add(g);
   buildZoneDots();
-  for (const m of [trees, lava]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); m.dispose(); }
-  trees = buildTrees(world, lowPower ? 1500 : 4000);
+  for (const m of [trees, rocks, lava]) if (m) {
+    scene.remove(m);
+    m.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); o.dispose?.(); });
+  }
+  trees = buildTrees(world, lowPower ? 2500 : 7000);
+  rocks = buildRocks(world, lowPower ? 1200 : 3500);
+  scene.add(rocks);
   lava = buildLava(world);
   scene.add(trees, lava);
   if (river?.dropping) highlightZone(terrainMesh, dropZone(world), true);
@@ -449,6 +454,7 @@ function advance(inputs) {
   const dirty = world.dirty.splice(0);
   applyCarve(terrainMesh, world.carve, dirty, world.rock);
   clearTrees(trees, dirty, world.carve);
+  clearTrees(rocks, dirty, world.carve);
   const cooled = world.cooled.splice(0);
   if (cooled.length) { coolLava(lava, cooled); clearTrees(trees, cooled, world.rock); }
   if (world.tick % 10 === 0) updateLakes();

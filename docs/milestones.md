@@ -257,3 +257,10 @@ biggest at 60 s won 0/10 (no snowball).
 - Lakes are their own water surface at brim level with shore foam; tiny filled hollows under 1 m stay land.
 - The sea reads its depth from the terrain: turquoise shallows, navy deep, surf lines rolling into the coast.
 - Chase camera sits low and close behind the surge (pulls back as the river grows), as in the trailer.
+
+## M15 — Terrain that looks like the trailer (done)
+- Terrain shader (Lambert + onBeforeCompile): banded grey-brown rock on steep ground, olive grass broken
+  by dry yellow and dark patches, close-up grit that fades with distance, and noise-bumped lighting that
+  gives the 100 m grid rocky relief it can't carry in geometry.
+- Dense clustered pine stands (two-tier pines) and scattered round broadleaf trees; boulders over rocky,
+  steep and high ground. All instanced; removed where channels are dug.

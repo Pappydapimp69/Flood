@@ -9,56 +9,131 @@ const cellPos = (t, k) => {
   return [((k % n) / (n - 1) - 0.5) * t.worldSize, (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize];
 };
 
-// Trees on a jittered grid (plain random scatter clumps), drawn as two
-// instanced meshes. Kept off water, lava, steep rock and high ground, and
-// thinned at the edges of the forest band.
+// Two-tier pine: a narrow cone on a wider one, one non-indexed geometry.
+function pineGeometry() {
+  const a = new THREE.ConeGeometry(1, 0.62, 7).translate(0, 0.38, 0).toNonIndexed();
+  const b = new THREE.ConeGeometry(0.72, 0.55, 7).translate(0, 0.72, 0).toNonIndexed();
+  const trunk = new THREE.CylinderGeometry(0.1, 0.14, 0.2, 5).translate(0, 0.1, 0).toNonIndexed();
+  const geo = new THREE.BufferGeometry();
+  for (const name of ['position', 'normal']) {
+    const parts = [a, b, trunk].map((g) => g.attributes[name].array);
+    const out = new Float32Array(parts.reduce((n, p) => n + p.length, 0));
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
+    geo.setAttribute(name, new THREE.BufferAttribute(out, 3));
+  }
+  return geo;
+}
+
+// Forest density from smooth noise: dense stands and open glades, like the
+// trailer's dark pine woods, thinning with height and steepness.
+function forestAt(t, x, y) {
+  const f = (s, o) => hash2(Math.floor(x / s), Math.floor(y / s), t.seed + o);
+  // Bilinear-smoothed coarse noise (two scales) for clustering.
+  const smooth = (s, o) => {
+    const gx = x / s, gy = y / s, ix = Math.floor(gx), iy = Math.floor(gy), fx = gx - ix, fy = gy - iy;
+    const v = (a, b) => hash2(ix + a, iy + b, t.seed + o);
+    const u = fx * fx * (3 - 2 * fx), w = fy * fy * (3 - 2 * fy);
+    return (v(0, 0) * (1 - u) + v(1, 0) * u) * (1 - w) + (v(0, 1) * (1 - u) + v(1, 1) * u) * w;
+  };
+  void f;
+  return smooth(14, 31) * 0.65 + smooth(5, 37) * 0.35;
+}
+
+// Trees: dense pine stands where the forest noise is high, scattered round
+// broadleaf trees lower down, none on water, lava, steep rock or high peaks.
 export function buildTrees(world, max) {
   const t = world.terrain, n = t.size;
-  const spots = [];
-  const step = 2;
-  for (let y = 2; y < n - 2; y += step) for (let x = 2; x < n - 2; x += step) {
-    const jx = Math.min(n - 3, x + Math.floor(hash2(x, y, t.seed + 5) * step));
-    const jy = Math.min(n - 3, y + Math.floor(hash2(y, x, t.seed + 9) * step));
-    const k = jy * n + jx, h = t.height[k];
-    if (h < 25 || h > 1250 || world.lakeOf[k] >= 0 || world.lava[k]) continue;
+  const pines = [], broad = [];
+  for (let y = 2; y < n - 2; y++) for (let x = 2; x < n - 2; x++) {
+    const k = y * n + x, h = t.height[k];
+    if (h < 20 || h > 1350 || world.lakeOf[k] >= 0 || world.lava[k] || t.filled[k] - h > 0.5) continue;
     const slope = Math.hypot(t.height[k + 1] - t.height[k - 1], t.height[k + n] - t.height[k - n]) / (2 * t.cell);
-    if (slope > 0.55) continue;
-    const forest = h < 250 ? (h - 25) / 225 : h > 1000 ? (1250 - h) / 250 : 1;
-    if (hash2(jx, jy, t.seed + 13) > 0.55 * forest) continue;
-    spots.push(k);
+    if (slope > 0.5) continue;
+    const dens = forestAt(t, x, y) * (h > 1000 ? (1350 - h) / 350 : 1);
+    const r = hash2(x, y, t.seed + 13);
+    if (dens > 0.56 && r < (dens - 0.5) * 2.2) pines.push(k);
+    else if (h < 700 && r < 0.035) broad.push(k);
   }
-  // Even thinning down to the budget, keeping the jitter's spread.
+  const thin = (list, cap) => (list.length > cap ? list.filter((_, i) => (i * cap) % list.length < cap) : list);
+  const pk = thin(pines, Math.round(max * 0.85)), bk = thin(broad, Math.round(max * 0.15));
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
+  const place = (mesh, list, scale, tint) => {
+    const byCell = new Map();
+    list.forEach((k, i) => {
+      const [x, z] = cellPos(t, k);
+      const size = 0.7 + hash2(k, 7, t.seed) * 0.6;
+      p.set(x + (hash2(k, 1, t.seed) - 0.5) * t.cell, t.height[k] * VERT - 3, z + (hash2(k, 2, t.seed) - 0.5) * t.cell);
+      s.set(scale[0] * size, scale[1] * size, scale[0] * size);
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash2(k, 5, t.seed) * 6.283);
+      mesh.setMatrixAt(i, m.compose(p, q, s));
+      tint(c, k);
+      mesh.setColorAt(i, c);
+      byCell.set(k, i);
+    });
+    mesh.userData.byCell = byCell;
+    return mesh;
+  };
+  const pine = place(new THREE.InstancedMesh(pineGeometry(), new THREE.MeshLambertMaterial({ color: '#ffffff' }), Math.max(1, pk.length)), pk, [55, 170],
+    (col, k) => col.setHSL(0.3 + hash2(k, 3, t.seed) * 0.05, 0.38, 0.13 + hash2(k, 4, t.seed) * 0.07));
+  const leaf = place(new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1).translate(0, 1.1, 0), new THREE.MeshLambertMaterial({ color: '#ffffff' }), Math.max(1, bk.length)), bk, [60, 52],
+    (col, k) => col.setHSL(0.22 + hash2(k, 3, t.seed) * 0.06, 0.4, 0.2 + hash2(k, 4, t.seed) * 0.08));
+  pine.count = pk.length; leaf.count = bk.length;
+  pine.add(leaf);
+  pine.name = 'trees';
+  pine.userData.parts = [pine, leaf];
+  return pine;
+}
+
+// Boulders: low-poly rocks scattered over rocky and steep ground and the
+// high slopes, bigger and denser up high, as on the trailer's scree.
+export function buildRocks(world, max) {
+  const t = world.terrain, n = t.size, spots = [];
+  for (let y = 2; y < n - 2; y++) for (let x = 2; x < n - 2; x++) {
+    const k = y * n + x, h = t.height[k];
+    if (h < 60 || world.lakeOf[k] >= 0 || world.lava[k] || t.filled[k] - h > 0.5) continue;
+    const slope = Math.hypot(t.height[k + 1] - t.height[k - 1], t.height[k + n] - t.height[k - n]) / (2 * t.cell);
+    const want = Math.min(1, slope * 1.4 + Math.max(0, h - 700) / 900);
+    if (hash2(x, y, t.seed + 71) < want * 0.35) spots.push(k);
+  }
   const keep = spots.length > max ? spots.filter((_, i) => (i * max) % spots.length < max) : spots;
-  const cone = new THREE.ConeGeometry(1, 1, 6).translate(0, 0.5, 0);
-  const mesh = new THREE.InstancedMesh(cone, new THREE.MeshLambertMaterial({ color: '#2f5524' }), keep.length);
-  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  const geo = new THREE.DodecahedronGeometry(1, 0);
+  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ color: '#ffffff', flatShading: true }), Math.max(1, keep.length));
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color(), e = new THREE.Euler();
   const byCell = new Map();
   keep.forEach((k, i) => {
     const [x, z] = cellPos(t, k);
-    const size = 0.7 + hash2(k, 7, t.seed) * 0.6;
-    p.set(x + (hash2(k, 1, t.seed) - 0.5) * t.cell, t.height[k] * VERT - 4, z + (hash2(k, 2, t.seed) - 0.5) * t.cell);
-    s.set(45 * size, 140 * size, 45 * size);
-    mesh.setMatrixAt(i, m.compose(p, q, s));
-    mesh.setColorAt(i, new THREE.Color().setHSL(0.27 + hash2(k, 3, t.seed) * 0.06, 0.45, 0.2 + hash2(k, 4, t.seed) * 0.1));
+    const size = 6 + Math.pow(hash2(k, 8, t.seed), 3) * 38;
+    p.set(x + (hash2(k, 1, t.seed) - 0.5) * t.cell, t.height[k] * VERT + size * 0.2, z + (hash2(k, 2, t.seed) - 0.5) * t.cell);
+    e.set(hash2(k, 3, t.seed) * 3, hash2(k, 4, t.seed) * 6, hash2(k, 5, t.seed) * 3);
+    s.set(size * (0.8 + hash2(k, 6, t.seed) * 0.6), size * (0.5 + hash2(k, 9, t.seed) * 0.4), size * (0.8 + hash2(k, 10, t.seed) * 0.6));
+    mesh.setMatrixAt(i, m.compose(p, q.setFromEuler(e), s));
+    const g = 0.26 + hash2(k, 11, t.seed) * 0.16;
+    mesh.setColorAt(i, c.setRGB(g * 1.05, g, g * 0.9));
     byCell.set(k, i);
   });
-  mesh.name = 'trees';
-  mesh.userData.byCell = byCell;
+  mesh.count = keep.length;
+  mesh.name = 'rocks';
+  mesh.userData = { byCell, parts: null };
+  mesh.userData.parts = [mesh];
   return mesh;
 }
 
-// Trees in a dug channel or on cooled lava are gone.
-export function clearTrees(mesh, cells, carve) {
-  const byCell = mesh.userData.byCell, m = new THREE.Matrix4();
-  let changed = false;
-  for (const k of cells) {
-    const i = byCell.get(k);
-    if (i === undefined || carve[k] < 2) continue;
-    mesh.setMatrixAt(i, m.makeScale(0, 0, 0));
-    byCell.delete(k);
-    changed = true;
+// Trees (and boulders) in a dug channel or on cooled lava are gone.
+export function clearTrees(group, cells, carve) {
+  const m = new THREE.Matrix4().makeScale(0, 0, 0);
+  for (const mesh of group.userData.parts ?? [group]) {
+    const byCell = mesh.userData.byCell;
+    let changed = false;
+    for (const k of cells) {
+      const i = byCell.get(k);
+      if (i === undefined || carve[k] < 2) continue;
+      mesh.setMatrixAt(i, m);
+      byCell.delete(k);
+      changed = true;
+    }
+    if (changed) mesh.instanceMatrix.needsUpdate = true;
   }
-  if (changed) mesh.instanceMatrix.needsUpdate = true;
 }
 
 // Lava: a glowing quad per lava cell, pulsing; cooled cells go dark.
