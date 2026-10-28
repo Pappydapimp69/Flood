@@ -198,17 +198,20 @@ await check('dry basin: the HUD shows it filling, and the head keeps flowing acr
   await page.close();
 });
 
-await check('sky drop: fall with a countdown and a landing ring, aim and hurry, land on the contour', async () => {
+await check('sky drop: fall with a countdown and a landing ring, steer and hurry, land on the contour', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   await page.goto(`${root}?seed=1&nohint`);
   await until(page, (s) => s.ready, 'ready');
-  const d0 = await page.evaluate(() => ({ dropping: __flood.river.dropping, alt: __flood.river.alt, hud: document.getElementById('dist').textContent, x: __flood.river.x, z: __flood.river.z }));
+  const d0 = await page.evaluate(() => ({ dropping: __flood.river.dropping, alt: __flood.river.alt, hud: document.getElementById('dist').textContent, x: __flood.river.x, z: __flood.river.z, dx: __flood.river.dx, dz: __flood.river.dz }));
   if (!(d0.dropping > 0 && d0.alt > 0)) throw new Error(`not falling at the start: ${JSON.stringify(d0)}`);
   if (!d0.hud.startsWith('Falling')) throw new Error(`HUD: ${d0.hud}`);
   await page.keyboard.down('ArrowLeft');
   await page.keyboard.down('ArrowUp');
   await until(page, (s) => s.tick > 60, 'gliding');
   await page.keyboard.up('ArrowLeft');
+  // Steering turned the drop (where it lands is held to the summit ring).
+  const h1 = await page.evaluate(() => ({ dx: __flood.river.dx, dz: __flood.river.dz }));
+  if (h1.dx * d0.dx + h1.dz * d0.dz > 0.9) throw new Error('steering during the fall did not turn the drop');
   const m = await page.evaluate(() => __flood.marker);
   if (!m) throw new Error('no landing ring');
   if (shotDir) await page.screenshot({ path: `${shotDir}/play-drop.png` });
@@ -223,7 +226,6 @@ await check('sky drop: fall with a countdown and a landing ring, aim and hurry, 
   });
   if (d1.dropping || !d1.path) throw new Error(`did not land: ${JSON.stringify(d1)}`);
   if (!d1.inZone) throw new Error(`landed off the start contour: ${JSON.stringify(d1)}`);
-  if (Math.hypot(d1.x - d0.x, d1.z - d0.z) < 100) throw new Error('steering during the fall did not move the landing');
   await page.close();
 });
 

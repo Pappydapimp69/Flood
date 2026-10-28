@@ -58,3 +58,24 @@ test('momentum carries across level water instead of dropping to a crawl', () =>
   for (let k = 0; k < 10 && r.inLake === lake.id; k++) step(w, new Map());
   assert.ok(r.speed > 150, `speed fell to ${r.speed | 0} on the lake`);
 });
+
+test('lakes are not traps: a river skates across and leaves over the bank it reaches, still fast', async () => {
+  const { rollIsland, cellIndex } = await import('../../src/shared/river.js');
+  let ok = 0, n = 0;
+  const { world: base } = rollIsland(11, 12);
+  const t = base.terrain, N = t.size;
+  for (const lake of base.lakes.filter((l) => l.cells > 40).sort((a, b) => b.cells - a.cells).slice(0, 5)) {
+    const cx = (lake.gx / (N - 1) - 0.5) * t.worldSize, cz = (lake.gy / (N - 1) - 0.5) * t.worldSize;
+    if (base.lakeOf[cellIndex(t, cx, cz)] !== lake.id) continue;
+    for (const [ux, uz] of [[1, 0], [0, 1], [-1, 0], [0, -1]]) {
+      const w = createWorld(t);
+      const r = addRiver(w, 'a', { x: cx - ux * 150, z: cz - uz * 150 });
+      r.dx = ux; r.dz = uz; r.speed = 180;
+      let exit = 0;
+      for (let k = 0; k < 800 && !exit; k++) { step(w, new Map()); if (w.lakeOf[cellIndex(t, r.x, r.z)] < 0) exit = r.speed; }
+      n++;
+      if (exit > 100) ok++;
+    }
+  }
+  assert.ok(n >= 8 && ok / n >= 0.9, `${ok}/${n} crossings left the lake still fast`);
+});

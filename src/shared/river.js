@@ -42,6 +42,7 @@ export const TUNE = {
   outletK: 1500, // litres per tick an outlet carries per metre of water over its lip, at size 1
   erodeK: 0.0028, // metres of outlet erosion per 1000 L that flow through it, times size
   outletMax: 12, // metres
+  overflow: 2, // metres a river's water stands over a lake's brim where it runs (times size)
   levelGlide: 0.997, // on level water or flats, speed fades only this much per tick: momentum carries
   joinShare: 0.06, // share of a lake's water you take at once when you join it
   fullAt: 0.999, // a lake this full is level ground you flow across
@@ -521,7 +522,11 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   // route it stays on it until it has run clearly lower than where it was
   // blocked, or the player steers. (Choosing afresh each tick, it would step
   // back toward the rise and rock in place.)
-  const tt = world.terrain, cHere = cellIndex(tt, r.x, r.z), onLake = world.lakeOf[cHere] >= 0 && world.lakeVol[world.lakeOf[cHere]] > 0;
+  const tt = world.terrain, cHere = cellIndex(tt, r.x, r.z), onLake = world.lakeOf[cHere] >= 0;
+  // A river flowing into a lake makes it overflow where it runs: its water
+  // stands over the brim, so it skates across and leaves over whatever bank
+  // it reaches, unless that bank stands higher than the overflow.
+  if (onLake) r.low = Math.max(r.low, world.lakeBrim[world.lakeOf[cHere]] + TUNE.overflow * r.size);
   if (r.route !== null && (steer || here < r.route - TUNE.routeDrop)) r.route = null;
   // Going nowhere (moving, but back and forth, as across a valley floor when
   // aimed up it): take the fill route out too.
@@ -577,7 +582,9 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     const d = routeDir();
     if (d) {
       r.route = here;
-      v = Math.max(TUNE.minSpeed, Math.min(r.speed, TUNE.baseSpeed * mass));
+      // On a lake it slides along the shore at full speed; on land a blocked
+      // head slows to find its way out.
+      v = onLake ? Math.max(TUNE.baseSpeed * mass, r.speed) : Math.max(TUNE.minSpeed, Math.min(r.speed, TUNE.baseSpeed * mass));
       r.speed = v;
       nx = r.x + d.x * v * DT; nz = r.z + d.z * v * DT;
     } else {
@@ -772,7 +779,7 @@ function erodeTrails(world) {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const k = (cy + dy) * n + cx + dx;
         if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL || world.erodedAt[k] === sweep) continue;
-        if (world.lakeOf[k] >= 0 && world.lakeVol[world.lakeOf[k]] > 0) continue;
+        if (world.lakeOf[k] >= 0) continue;
         world.erodedAt[k] = sweep;
         const was = world.carve[k];
         // Deep canyons cut slower, but never stop.
@@ -925,7 +932,7 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
       const k = y * n + x;
       const ground = t.filled[k];
       if (ground <= SEA_LEVEL) continue;
-      if (world.lakeOf[k] >= 0 && world.lakeVol[world.lakeOf[k]] > 0) continue; // rivers run over lakes, not through their beds
+      if (world.lakeOf[k] >= 0) continue; // rivers run over lakes and basins, not through their beds
       if (world.lava[k]) {
         // Water meets lava: it cools into rock instead of being dug.
         world.lava[k] = 0;
