@@ -9,11 +9,10 @@ Steer with ← → (or A D); ↑ ↓ (W S) hurry or slow your fall. On a phone, 
 - Every race is a new island. It starts with a 30 s drop from the sky: steer toward the ring to
   pick your landing. Every start sits at the same height.
 - Flow downhill to the sea; first one there wins (the race ends 90 s later). The game never steers.
-- Lakes are reservoirs. Rivers flowing in fill them; join one and your mass jumps at once, then it
-  keeps feeding you through the outlet you cut, which erodes deeper the more it carries. A lake only
-  drops when more flows out than in.
-- Empty basins fill from every river running into them; you wait in the rising water until it's
-  full, then flow across it like level ground.
+- Every lake is full. Your river's water stands over the brim where it runs, so you skate across
+  without losing momentum and leave over the bank you reach. Join one and your mass jumps at
+  once, then it keeps feeding you through the outlet you cut, which erodes deeper the more it
+  carries.
 - Water is one network. Cut through a rival's live channel deeper than it runs and its water
   keeps flowing into you until that channel goes dry; if they cut yours, yours flows into them.
 - Every start is the same height and the same route length from the sea.

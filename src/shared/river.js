@@ -16,7 +16,8 @@ export const TUNE = {
   speedEase: 0.12, // share of the way to target speed per tick, at starting size
   climb: 1.5, // metres any head can rise over before it is blocked, before its head height
   headPerSize: 2, // metres the water stands at the head per unit of size: what it can push over
-  headLook: 150, // metres ahead a rise is judged against the head // metres the head may sit above the lowest point it has reached
+  headLook: 150,
+  climbSpeed: 40, // m/s: below this a head aimed uphill can't run up the slope // metres ahead a rise is judged against the head // metres the head may sit above the lowest point it has reached
   pool: 0.3, // metres a blocked head's water rises per tick...
   pondMax: 3, // ...but only this far: water fills a dent, it doesn't climb a hill
   slideMin: 0.15,
@@ -56,7 +57,7 @@ export const TUNE = {
   routeDrop: 1.5, // metres a head following the fill route must fall before it goes back to its heading // path points nearest the head that don't erode // ticks to sweep a whole trail once (a slice of it each tick)
   // Dry basins: a few lakes start empty and must be filled by the rivers that
   // run into them before anyone can flow across.
-  basins: 5,
+  basins: 0, // no dry basins: every lake on the map is full
   basinMinCells: 15,
   basinMaxCells: 260,
   // The drop: every river falls for 30 s from high above the island, steering
@@ -558,9 +559,10 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   } else if (!onLake && gl >= TUNE.flatSlope) {
     const fx = -g.x / gl, fz = -g.z / gl, wf = Math.min(1, gl / TUNE.fallSlope);
     const up = mx * fx + mz * fz; // > 0: aimed downhill
-    // Aimed uphill, a rise the head stands taller than is no obstacle: it goes
-    // where it's aimed. Only a rise above the head drops the uphill part.
-    const over = up < 0 && -up * gl * TUNE.headLook > headOf(r);
+    // Aimed uphill, a rise the head stands taller than is no obstacle while the
+    // water still has the speed to run up it: it goes where it's aimed. A rise
+    // above the head, or running out of speed, drops the uphill part.
+    const over = up < 0 && (-up * gl * TUNE.headLook > headOf(r) || r.speed < TUNE.climbSpeed);
     let bx = mx, bz = mz;
     if (over) { bx -= up * fx; bz -= up * fz; } // drop the uphill part
     if (up >= 0 || over) {
@@ -706,9 +708,9 @@ function resolveContacts(world) {
 //   only leaves over a lip below the lake's surface, faster the higher the
 //   surface stands over it, and never below it: lakes drain downhill, never
 //   up. A lip cut on a bank above the lake carries nothing;
-// - a lake only falls when its outlets carry more than comes in, and only as
-//   low as its lowest lip; while a head is pooled in it, nothing leaves, and a
-//   river doesn't drain the lake its own head is in;
+// - every lake is always full: what its outlets carry is made up from the land
+//   around it, so it never drops (a river doesn't draw on the lake its own
+//   head is in);
 // - what flows through an outlet erodes it, so more flow means more erosion,
 //   more water for that river, more mass, faster, deeper.
 function hydrology(world) {
@@ -745,8 +747,9 @@ function hydrology(world) {
       // Spill what's over the brim, and what the outlets carry over their lips.
       out = Math.min(vol[lake], Math.max(vol[lake] - cap[lake], want[lake]));
     }
-    vol[lake] -= out;
-    if (vol[lake] > cap[lake]) vol[lake] = cap[lake]; // brim-full with nowhere to go: the rest runs off
+    // A lake is always full: the land around it keeps it topped up, so what
+    // the rivers draw off never lowers it (and anything over the brim runs off).
+    vol[lake] = cap[lake];
     world.lakeOut[lake] = out;
     if (out > 0) shares.set(lake, out / want[lake]);
   }

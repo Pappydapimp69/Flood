@@ -25,7 +25,7 @@ function flowFrom(world, r, hx, hz) {
     const k = cellIndex(world.terrain, x, z), lake = world.lakeOf[k];
     if (gl >= TUNE.flatSlope && !(lake >= 0 && world.lakeVol[lake] > 0)) {
       const wf = Math.min(1, gl / TUNE.fallSlope), fx = -gx / gl, fz = -gz / gl, up = hx * fx + hz * fz;
-      const over = up < 0 && -up * gl * TUNE.headLook > headOf(r);
+      const over = up < 0 && (-up * gl * TUNE.headLook > headOf(r) || r.speed < TUNE.climbSpeed);
       if (over) { mx -= up * fx; mz -= up * fz; }
       if (up >= 0 || over) {
         mx += fx * wf * (over ? TUNE.fallUphill : TUNE.fallDrift);

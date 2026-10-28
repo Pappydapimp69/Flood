@@ -60,8 +60,7 @@ test('leaving a lake: mass jumps at once, an outlet opens, water keeps coming an
   assert.ok(o.e > e0, 'the outlet did not erode');
 });
 
-test('a lake drains downhill only: never below its lowest lip, and not at all over a high bank', async () => {
-  const { lakeLevel } = await import('../../src/shared/river.js');
+test('lakes stay full; water leaves only over a lip below the surface, never over a high bank', async () => {
   const w = createWorld(t42);
   const { lake, inside, outCell, pos } = bigLake(w);
   const r = addRiver(w, 'a', inside);
@@ -69,15 +68,14 @@ test('a lake drains downhill only: never below its lowest lip, and not at all ov
   Object.assign(r, pos(outCell));
   for (let k = 0; k < 6; k++) step(w, new Map());
   assert.ok(w.lakeVol[lake.id] >= w.lakeCap[lake.id] * 0.9, 'drained with a fresh outlet');
-  // Cut the spill outlet deep and make the river heavy: outflow beats inflow and the level drops,
-  // but only down to the outlet's lip.
+  // Cut the spill outlet deep and make the river heavy: lots flows out, but
+  // the lake stays full (the land around it tops it up).
   const o = r.via.get(lake.id);
   o.e = 8;
   r.volume = TUNE.startVolume * 16; r.size = 2;
-  for (let k = 0; k < 600; k++) { step(w, new Map()); o.e = 8; }
-  const lip = t42.filled[o.cell] - o.e;
-  assert.ok(w.lakeVol[lake.id] < w.lakeCap[lake.id] * 0.99, 'a cut outlet did not lower the lake');
-  assert.ok(lakeLevel(w, lake.id) >= lip - 0.05, `level ${lakeLevel(w, lake.id)} fell below the lip ${lip}`);
+  for (let k = 0; k < 300; k++) step(w, new Map());
+  assert.ok(w.lakeOut[lake.id] > 0, 'a cut outlet carried nothing');
+  assert.equal(w.lakeVol[lake.id], w.lakeCap[lake.id], 'the lake dropped');
   // An outlet on a bank above the lake carries nothing, however heavy the river.
   const w2 = createWorld(t42);
   const b = addRiver(w2, 'b', inside);
@@ -96,7 +94,7 @@ test('a lake drains downhill only: never below its lowest lip, and not at all ov
   const v0 = w2.lakeVol[lake.id];
   step(w2, new Map());
   assert.equal(w2.lakeOut[lake.id], 0, 'water left over a lip above the lake');
-  assert.ok(w2.lakeVol[lake.id] >= v0, 'the lake drained uphill');
+  assert.equal(w2.lakeVol[lake.id], v0, 'the lake changed');
 });
 
 test('every start is at the same elevation', () => {

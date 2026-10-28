@@ -177,24 +177,21 @@ await check('tug-of-war: a deeper rival on you shows the drain warning and takes
   await page.close();
 });
 
-await check('dry basin: the HUD shows it filling, and the head keeps flowing across', async () => {
+await check('lakes are full and a river skates across without stopping', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   await page.goto(base + '&nohint');
   await until(page, (s) => s.ready && s.tick > 5, 'race');
-  await page.evaluate(() => {
-    const w = __flood.world, me = __flood.river, n = w.terrain.size, k = w.lakeOf.indexOf(w.basins[0]);
+  const full = await page.evaluate(() => {
+    const w = __flood.world, me = __flood.river, n = w.terrain.size;
+    const lake = w.lakes.reduce((a, b) => (b.cells > a.cells ? b : a)), k = w.lakeOf.indexOf(lake.id);
     me.x = ((k % n) / (n - 1) - 0.5) * w.terrain.worldSize; me.z = (Math.floor(k / n) / (n - 1) - 0.5) * w.terrain.worldSize;
+    return w.lakes.every((l) => w.lakeVol[l.id] === w.lakeCap[l.id]);
   });
-  let saw = '';
-  for (let i = 0; i < 200 && !saw.startsWith('pouring into a basin'); i++) {
-    saw = await page.evaluate(() => document.getElementById('depth').textContent);
-    await page.waitForTimeout(50);
-  }
-  if (!saw.startsWith('pouring into a basin')) throw new Error(`HUD never showed the basin filling: ${saw}`);
-  if (shotDir) await page.screenshot({ path: `${shotDir}/play-basin.png` });
+  if (!full) throw new Error('a lake is not full');
   const t0 = await state(page);
   const t1 = await until(page, (s) => s.tick > t0.tick + 20, '20 ticks');
-  if (!(t1.travelled > t0.travelled + 20)) throw new Error(`head stopped in the basin: ${t0.travelled} -> ${t1.travelled}`);
+  if (!(t1.travelled > t0.travelled + 20)) throw new Error(`head stopped on the lake: ${t0.travelled} -> ${t1.travelled}`);
+  if (shotDir) await page.screenshot({ path: `${shotDir}/play-lake.png` });
   await page.close();
 });
 
