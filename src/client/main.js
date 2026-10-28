@@ -459,7 +459,7 @@ function advance(inputs) {
     if (e.type === 'land') {
       if (river && e.river === river.idx) { highlightZone(terrainMesh, dropZone(world), false); audio.lake(); }
     } else if (e.type === 'pool') {
-      if (river && e.river === river.idx) showPop('Basin! Your water fills it — spill out once it is full');
+      if (river && e.river === river.idx) showPop('Basin — your water pours in as you flow across');
     } else if (e.type === 'spill') {
       if (river && e.river === river.idx) showPop('Full — spilling on, and the lake keeps feeding you');
       feed(`${nameOf(world.rivers[e.river])} filled a basin`);
@@ -668,7 +668,8 @@ renderer.setAnimationLoop(() => {
       m.visible = pouring;
       if (!pouring) continue;
       const ph = ((now / 1000) * (0.8 + 0.3 * rate) + i / e.spill.length) % 1;
-      const reach = (r.pooled >= 0 ? 260 : 150) * r.size * (0.4 + 1.2 * ph);
+      const filling = r.inLake >= 0 && world.lakeVol[r.inLake] < world.lakeCap[r.inLake] * TUNE.fullAt;
+      const reach = (filling ? 260 : 150) * r.size * (0.4 + 1.2 * ph);
       m.position.set(hx + r.dx * 40 * ph, hy + 4, hz + r.dz * 40 * ph);
       m.scale.set(reach, 1, reach);
       m.material.opacity = 0.75 * (1 - ph);
@@ -742,9 +743,10 @@ renderer.setAnimationLoop(() => {
   let tribs = 0;
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
+  const basin = me.inLake >= 0 && world.lakeVol[me.inLake] < world.lakeCap[me.inLake] * TUNE.fullAt ? me.inLake : -1;
   hud.depth.textContent = me.dropping ? 'the beam marks your landing'
-    : me.pooled >= 0
-    ? `filling a basin · ${Math.min(99, Math.floor(100 * world.lakeVol[me.pooled] / world.lakeCap[me.pooled]))}%`
+    : basin >= 0
+    ? `pouring into a basin · ${Math.min(99, Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin]))}% full`
     : `cutting ${me.depth.toFixed(1)} m deep` + (fedBy ? ` · fed by ${fedBy}` : '');
   tugFeedback(now);
   if (river && !isRacing(river) && !endShown) {

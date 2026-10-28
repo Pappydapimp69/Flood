@@ -1,43 +1,43 @@
 Flood - Downhill
-C minor · 4/4 · ♩=118 · mood heroic · chamber · complexity 4 · 54 bars · seed 23
-draft 2 of 6 kept · critic score 18.19
-parts: Flute, Oboe, Strings, Horn (pad), Cello, Timpani
+C dorian · 4/4 · ♩=100 · mood heroic · strings · complexity 3 · 49 bars · seed 47
+draft 1 of 6 kept · critic score 18.87
+parts: Violin I, Violin II, Viola, Cello, Timpani
 form: Intro | A | B | A | C | A | Coda
 
-[Intro] bars 1-1 · C minor · mp · texture pulse
-    V7
+[Intro] bars 1-2 · C dorian · mp · texture pulse
+    i | IV
 
-[A] bars 2-9 · C minor · mf · texture pulse · free counterpoint
-    i VI6 | i III | V7/iv V7/V | V7    → half (bar 5)
-    melody: motif, fragment, sequence, cadence:half
-    i VIM65 | III6 | iv V7 | i    → authentic (bar 9)
-    melody: motif, augment, invert, cadence:authentic
+[A] bars 3-10 · C dorian · mf · texture pulse
+    i | vi°6 i | bIII ii | IV    → open (modal) (bar 6)
+    melody: motif, diminish, invert, cadence:half
+    i | IV vi° | IV | i    → modal (bar 10)
+    melody: motif, augment, vary, cadence:authentic
 
-[B] bars 10-17 · Eb major · mf · texture arpeggio · free counterpoint
-    I V7/vi | vi7 IV6 | I64 V7 | I    → authentic (bar 13)
-    melody: motif, repeat, repeat, cadence:authentic
-    iv | V65/iv | iv | V7    → half (bar 17)
-    melody: motif, fragment, invert, cadence:half
+[B] bars 11-22 · C dorian · mf · texture arpeggio · free counterpoint
+    IV | i6 | vi°6 bIII | vi°6 i | ii | IV    → open (modal) (bar 16)
+    melody: motif, augment, repeat, invert, sequence, cadence:half
+    i | v65 i | bIII IV7 | i6 bIII | vi°6 | IV    → open (modal) (bar 22)
+    melody: motif, fragment, sequence, sequence, vary, cadence:half
 
-[A] bars 18-25 · C minor · f · texture pad · imitation +1 beat(s)
-    i VI6 | i III6 | V7/iv V65/V | V7    → half (bar 21)
-    melody: motif, fragment, sequence, cadence:half
-    i VIM65 | III6 | iv V7 | i    → authentic (bar 25)
-    melody: motif, augment, invert, cadence:authentic
+[A] bars 23-30 · C dorian · f · texture pad · imitation +2 beat(s)
+    i | vi°6 i | bIII ii | IV    → open (modal) (bar 26)
+    melody: motif, diminish, invert, cadence:half
+    i | IV vi° | IV | i    → modal (bar 30)
+    melody: motif, augment, vary, cadence:authentic
 
-[C] bars 26-41 · F minor · ff · texture arpeggio · climax · imitation +1 beat(s)
-    i VI6 | V7/VI | VI6 III | VI6 V7/VI | VI6 | i | V7/V V | i    → authentic (bar 33)
-    melody: motif, sequence, repeat, retrograde, vary, fragment, fragment, cadence:authentic
-    VI | V65/VI | VI | IIIM65 | VI6 | V65/VI | VIM7 V65/V | V7    → half (bar 41)
-    melody: motif, repeat, repeat, repeat, vary, sequence, invert, cadence:half
+[C] bars 31-38 · C dorian · ff · texture arpeggio · climax · imitation +1 beat(s)
+    IV | i6 | ii7 | IV    → open (modal) (bar 34)
+    melody: motif, invert, retrograde, cadence:half
+    i7 | IV7 | v vi° | IV    → open (modal) (bar 38)
+    melody: motif, retrograde, sequence, cadence:half
 
-[A] bars 42-51 · C minor · f · texture arpeggio · imitation +1 beat(s)
-    i VI6 | i III6 | V7/iv V65/V | V7    → half (bar 45)
-    melody: motif, fragment, sequence, cadence:half
-    i VI6 | ii°6 | V | VI | i64 V7 | i    → deceptive (bar 49), authentic (bar 51)
-    melody: motif, fragment, vary, cadence:deceptive, invert, cadence:authentic
+[A] bars 39-46 · C dorian · f · texture arpeggio · imitation +2 beat(s)
+    i | vi°6 i | bIII ii | IV    → open (modal) (bar 42)
+    melody: motif, diminish, invert, cadence:half
+    i | IV vi° | IV | i    → modal (bar 46)
+    melody: motif, augment, vary, cadence:authentic
 
-[Coda] bars 52-54 · C minor · mf · texture pad
-    i | iiø65 V7 | i
+[Coda] bars 47-49 · C dorian · mf · texture pad
+    i | IV | i
 
-critic: parallels 0, unresolved leaps 0, range 20, climax count 1, climax at 70%, strong beat support 87%, stepwise 56%, repeated runs 1, counter clashes 0, ends on tonic True
+critic: parallels 0, unresolved leaps 0, range 16, climax count 1, climax at 74%, strong beat support 98%, stepwise 51%, repeated runs 4, counter clashes 0, ends on tonic True, mode colour note 10%

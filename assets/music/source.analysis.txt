@@ -1,31 +1,31 @@
 Flood - Source
-C dorian · 6/8 · ♩=76 · mood mysterious · strings · complexity 3 · 28 bars · seed 11
-draft 2 of 6 kept · critic score 18.27
-parts: Violin I, Violin II, Viola, Cello
+C lydian · 3/4 · ♩=72 · mood lyrical · piano · complexity 2 · 49 bars · seed 31
+draft 5 of 6 kept · critic score 19.87
+parts: Piano (melody), Cello, Piano (accompaniment), Strings (pad), Piano (bass)
 form: Intro | A | B | A | Coda
 
-[Intro] bars 1-2 · C dorian · pp · texture pad
-    i | IV
+[Intro] bars 1-2 · C lydian · p · texture arpeggio
+    I | II
 
-[A] bars 3-10 · C dorian · p · texture pad
-    i | vi°6 | ii | IV    → open (modal) (bar 6)
-    melody: motif, sequence, repeat, cadence:half
-    i | vi°6 bIII | ii IV | i    → modal (bar 10)
-    melody: motif, diminish, vary, cadence:authentic
+[A] bars 3-18 · C lydian · mp · texture arpeggio
+    I | iii6 vi6 | iii | vi6 | iii | vi I6 | #iv° | II    → open (modal) (bar 10)
+    melody: motif, vary, vary, vary, sequence, fragment, invert, cadence:half
+    I | vi6 | I | vi6 iii | vi6 iii | #iv° | II | I    → modal (bar 18)
+    melody: motif, vary, fragment, augment, diminish, sequence, invert, cadence:authentic
 
-[B] bars 11-18 · C dorian · mf · texture arpeggio · climax · imitation +1 beat(s)
-    viø7 | i | vi°6 ii | IV    → open (modal) (bar 14)
-    melody: motif, repeat, vary, cadence:half
-    i bIII | vi°6 | i7 ii7 | IV    → open (modal) (bar 18)
-    melody: motif, repeat, vary, cadence:half
+[B] bars 19-30 · C lydian · f · texture pad · climax · imitation +1 beat(s)
+    #iv° I | vi6 | iii vi | iii6 | #iv° | II    → open (modal) (bar 24)
+    melody: motif, repeat, repeat, repeat, repeat, cadence:half
+    I vi6 | iii vi | I | vi6 | #iv°6 | II    → open (modal) (bar 30)
+    melody: motif, vary, retrograde, sequence, diminish, cadence:half
 
-[A] bars 19-26 · C dorian · mp · texture pulse · imitation +1 beat(s)
-    i | vi°6 | ii | IV    → open (modal) (bar 22)
-    melody: motif, sequence, repeat, cadence:half
-    i | vi°6 bIII | ii IV | i    → modal (bar 26)
-    melody: motif, diminish, vary, cadence:authentic
+[A] bars 31-46 · C lydian · mf · texture pulse · imitation +1 beat(s)
+    I | iii6 vi6 | iii | vi6 | iii | vi I6 | #iv° | II    → open (modal) (bar 38)
+    melody: motif, vary, vary, vary, sequence, fragment, invert, cadence:half
+    I | vi6 | I | vi6 iii | vi6 iii | #iv° | II | I    → modal (bar 46)
+    melody: motif, vary, fragment, augment, diminish, sequence, invert, cadence:authentic
 
-[Coda] bars 27-28 · C dorian · p · texture pad
-    IV | i
+[Coda] bars 47-49 · C lydian · mp · texture pad
+    I | II | I
 
-critic: parallels 0, unresolved leaps 3, range 20, climax count 1, climax at 62%, strong beat support 96%, stepwise 55%, repeated runs 0, counter clashes 0, ends on tonic True, mode colour note 11%
+critic: parallels 1, unresolved leaps 0, range 13, climax count 1, climax at 53%, strong beat support 98%, stepwise 68%, repeated runs 0, counter clashes 0, ends on tonic True, mode colour note 15%

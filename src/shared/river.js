@@ -42,7 +42,7 @@ export const TUNE = {
   outletK: 1500, // litres per tick an outlet carries per metre of water over its lip, at size 1
   erodeK: 0.0028, // metres of outlet erosion per 1000 L that flow through it, times size
   outletMax: 12, // metres
-  poolBelow: 0.5, // only a basin under half full holds a head; fuller lakes are level water you cross
+  levelGlide: 0.997, // on level water or flats, speed fades only this much per tick: momentum carries
   joinShare: 0.06, // share of a lake's water you take at once when you join it
   fullAt: 0.999, // a lake this full is level ground you flow across
   maxPoolTicks: 200, // guaranteed exit: after 10 s pooled, the basin tops up and spills
@@ -553,7 +553,11 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   }
   const mass = 1 + TUNE.speedPerSize * (r.size - 1);
   const along = onLake ? 0 : -(g.x * mx + g.z * mz); // downhill slope along the way the water goes; a lake is level
-  const target = Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, TUNE.baseSpeed * mass + TUNE.slopeSpeed * along));
+  // Level water (a lake, a flat) doesn't push or brake: what you carry in
+  // carries on, fading slowly, never below the base speed.
+  const level = onLake || gl < TUNE.flatSlope;
+  const target = level ? Math.max(TUNE.baseSpeed * mass, Math.min(TUNE.maxSpeed * mass, r.speed * TUNE.levelGlide))
+    : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, TUNE.baseSpeed * mass + TUNE.slopeSpeed * along));
   r.speed += (target - r.speed) * (TUNE.speedEase / r.size); // momentum: heavy water changes speed slowly
   r.depth = depthOf(r);
 
@@ -858,16 +862,15 @@ function afterMove(world, r) {
     r.speed *= TUNE.lavaSlow;
     world.events.push({ type: 'steam', river: r.idx, amount: boil, tick: world.tick });
   }
-  // Lakes: entering one pours your water in (and pools you if it isn't full);
-  // leaving one cuts your outlet from it, and its water starts flowing to you.
+  // Lakes: entering one pours your water in; a basin below full fills from
+  // every river running into it, but nobody waits for it: the head flows on
+  // across at its momentum. Leaving one cuts your outlet from it, and its
+  // water starts flowing to you.
   const lake = world.lakeOf[here];
   if (lake !== r.inLake) {
     if (r.inLake >= 0) joinLake(world, r, r.inLake, here);
     r.inLake = lake;
-    // Back in a lake you already drain: you run through it to your own outlet.
-    if (lake >= 0 && !r.via.has(lake) && world.lakeVol[lake] < world.lakeCap[lake] * TUNE.poolBelow) {
-      r.pooled = lake;
-      r.pooledTicks = 0;
+    if (lake >= 0 && !r.via.has(lake) && world.lakeVol[lake] < world.lakeCap[lake] * TUNE.fullAt) {
       world.events.push({ type: 'pool', lake, river: r.idx, tick: world.tick });
     }
   }

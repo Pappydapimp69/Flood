@@ -177,7 +177,7 @@ await check('tug-of-war: a deeper rival on you shows the drain warning and takes
   await page.close();
 });
 
-await check('dry basin: the HUD shows filling, then the head spills on once it is full', async () => {
+await check('dry basin: the HUD shows it filling, and the head keeps flowing across', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   await page.goto(base + '&nohint');
   await until(page, (s) => s.ready && s.tick > 5, 'race');
@@ -186,19 +186,16 @@ await check('dry basin: the HUD shows filling, then the head spills on once it i
     me.x = ((k % n) / (n - 1) - 0.5) * w.terrain.worldSize; me.z = (Math.floor(k / n) / (n - 1) - 0.5) * w.terrain.worldSize;
   });
   let saw = '';
-  for (let i = 0; i < 200 && !saw.startsWith('filling'); i++) {
+  for (let i = 0; i < 200 && !saw.startsWith('pouring into a basin'); i++) {
     saw = await page.evaluate(() => document.getElementById('depth').textContent);
     await page.waitForTimeout(50);
   }
-  if (!saw.startsWith('filling a basin')) throw new Error(`HUD never showed filling: ${saw}`);
+  if (!saw.startsWith('pouring into a basin')) throw new Error(`HUD never showed the basin filling: ${saw}`);
   if (shotDir) await page.screenshot({ path: `${shotDir}/play-basin.png` });
-  // Top it up rather than wait out the fill: a full basin lets the head go.
-  await page.evaluate(() => { const w = __flood.world, b = __flood.river.pooled; if (b >= 0) w.lakeVol[b] = w.lakeCap[b]; });
-  for (let i = 0; i < 400; i++) {
-    if (await page.evaluate(() => __flood.river.pooled < 0)) { await page.close(); return; }
-    await page.waitForTimeout(50);
-  }
-  throw new Error('never spilled');
+  const t0 = await state(page);
+  const t1 = await until(page, (s) => s.tick > t0.tick + 20, '20 ticks');
+  if (!(t1.travelled > t0.travelled + 20)) throw new Error(`head stopped in the basin: ${t0.travelled} -> ${t1.travelled}`);
+  await page.close();
 });
 
 await check('sky drop: fall with a countdown and a landing ring, aim and hurry, land on the contour', async () => {
