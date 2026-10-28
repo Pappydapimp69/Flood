@@ -14,7 +14,9 @@ export const TUNE = {
   slopeSpeed: 1400, // extra m/s per unit downhill slope
   maxSpeed: 200,
   speedEase: 0.12, // share of the way to target speed per tick, at starting size
-  climb: 1.5, // metres the head may sit above the lowest point it has reached
+  climb: 1.5, // metres any head can rise over before it is blocked, before its head height
+  headPerSize: 2, // metres the water stands at the head per unit of size: what it can push over
+  headLook: 150, // metres ahead a rise is judged against the head // metres the head may sit above the lowest point it has reached
   pool: 0.3, // metres a blocked head's water rises per tick...
   pondMax: 3, // ...but only this far: water fills a dent, it doesn't climb a hill
   slideMin: 0.15,
@@ -491,8 +493,9 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   if (r.dropping) return glide(world, r, steer, fwd);
   if (steer) {
     // Turn by adding a sideways component, then renormalising (angle = atan(a)).
-    // Heavier rivers turn slower. Left of heading (dx, dz) is (dz, -dx).
-    const a = (TUNE.turnStep / r.size) * -steer;
+    // A bigger river answers the stick as well as a small one: more water is
+    // more control, not less. Left of heading (dx, dz) is (dz, -dx).
+    const a = TUNE.turnStep * -steer;
     const dx = r.dx + r.dz * a, dz = r.dz - r.dx * a;
     r.dx = dx; r.dz = dz;
     normalize(r);
@@ -527,7 +530,13 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   // stands over the brim, so it skates across and leaves over whatever bank
   // it reaches, unless that bank stands higher than the overflow.
   if (onLake) r.low = Math.max(r.low, world.lakeBrim[world.lakeOf[cHere]] + TUNE.overflow * r.size);
-  if (r.route !== null && (steer || here < r.route - TUNE.routeDrop)) r.route = null;
+  // Off the route again once it has run clearly lower and the heading no longer
+  // points back up the slope (or the player steers): otherwise a heading aimed
+  // uphill would climb, block and fall back forever.
+  if (r.route !== null) {
+    const aimUp = gl > 1e-6 ? (g.x * r.dx + g.z * r.dz) / gl : 0; // > 0: heading points uphill
+    if (steer || (here < r.route - TUNE.routeDrop && aimUp < 0.2)) r.route = null;
+  }
   // Going nowhere (moving, but back and forth, as across a valley floor when
   // aimed up it): take the fill route out too.
   if (world.tick - r.netAt >= TUNE.stallTicks) {
@@ -549,10 +558,15 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   } else if (!onLake && gl >= TUNE.flatSlope) {
     const fx = -g.x / gl, fz = -g.z / gl, wf = Math.min(1, gl / TUNE.fallSlope);
     const up = mx * fx + mz * fz; // > 0: aimed downhill
+    // Aimed uphill, a rise the head stands taller than is no obstacle: it goes
+    // where it's aimed. Only a rise above the head drops the uphill part.
+    const over = up < 0 && -up * gl * TUNE.headLook > headOf(r);
     let bx = mx, bz = mz;
-    if (up < 0) { bx -= up * fx; bz -= up * fz; } // drop the uphill part
-    bx += fx * wf * (up < 0 ? TUNE.fallUphill : TUNE.fallDrift);
-    bz += fz * wf * (up < 0 ? TUNE.fallUphill : TUNE.fallDrift);
+    if (over) { bx -= up * fx; bz -= up * fz; } // drop the uphill part
+    if (up >= 0 || over) {
+      bx += fx * wf * (over ? TUNE.fallUphill : TUNE.fallDrift);
+      bz += fz * wf * (over ? TUNE.fallUphill : TUNE.fallDrift);
+    }
     const bl = Math.sqrt(bx * bx + bz * bz);
     if (bl > 1e-6) { mx = bx / bl; mz = bz / bl; }
   }
@@ -566,7 +580,9 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   r.speed += (target - r.speed) * (TUNE.speedEase / r.size); // momentum: heavy water changes speed slowly
   r.depth = depthOf(r);
 
-  const ceiling = r.low + TUNE.climb;
+  // More water stands taller at the head: rises that would stop a small river
+  // don't stop a big one.
+  const ceiling = r.low + TUNE.climb + headOf(r);
   let v = r.speed;
   let nx = r.x + mx * v * DT, nz = r.z + mz * v * DT;
   if (r.route === null && surfaceAt(world, nx, nz, me) > ceiling && gl > 1e-6) {
@@ -814,6 +830,12 @@ export function isLive(world, k) {
 
 // Cutting depth from mass (size) and speed: 0.7x when crawling, up to 1.42x at
 // top speed. Linear, so it stays deterministic everywhere.
+// How tall the water stands at the head, metres: it grows with volume (as
+// size, the fourth root), so a bigger river pushes over rises a small one can't.
+export function headOf(r) {
+  return TUNE.headPerSize * r.size;
+}
+
 export function depthOf(r) {
   return TUNE.depth * r.size * (0.7 + 0.6 * Math.min(1.2, r.speed / TUNE.maxSpeed));
 }

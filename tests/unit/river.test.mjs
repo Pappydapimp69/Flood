@@ -136,3 +136,48 @@ test('aimed across a slope the water goes where it is aimed, aimed uphill it nev
   assert.ok((mx * r.dx + mz * r.dz) / d > 0.8, 'did not go where it was aimed');
   assert.ok(surfaceAt(w, r.x, r.z, r.idx) <= h0 + TUNE.climb, 'climbed');
 });
+
+test('more water stands taller: a big river pushes over rises a small one is turned by, and steers as sharply', async () => {
+  const { headOf } = await import('../../src/shared/river.js');
+  // A gentle open slope: a rise over 150 m taller than a small head (2 m)
+  // but well under a big one's (6 m).
+  const w0 = createWorld(islands.get(2));
+  const t = w0.terrain, n = t.size, H = 100;
+  let at = null, fall = null;
+  for (let k = n * 120 + 120; k < n * (n - 120) && !at; k += 7) {
+    const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+    if (t.filled[k] < 50 || w0.lakeOf[k] >= 0) continue;
+    const gx = (surfaceAt(w0, x + H, z) - surfaceAt(w0, x - H, z)) / (2 * H), gz = (surfaceAt(w0, x, z + H) - surfaceAt(w0, x, z - H)) / (2 * H);
+    const gl = Math.hypot(gx, gz);
+    if (gl * 150 < 3 || gl * 150 > 4.5) continue;
+    // and the same slope for 400 m up, so the climb is a fair test
+    const ux = -gx / gl, uz = -gz / gl;
+    const rise = (d) => surfaceAt(w0, x - ux * d, z - uz * d) - surfaceAt(w0, x, z);
+    if (Math.abs(rise(400) - gl * 400) > 2) continue;
+    at = { x, z }; fall = { x: ux, z: uz };
+  }
+  assert.ok(at, 'no gentle slope found');
+  const climb = (size) => {
+    const w = createWorld(islands.get(2));
+    const r = addRiver(w, 'a', at);
+    r.volume = TUNE.startVolume * size ** 4; r.size = size;
+    r.dx = -fall.x; r.dz = -fall.z; // straight back up the slope it came down
+    const h0 = surfaceAt(w, r.x, r.z, r.idx);
+    let top = h0;
+    for (let k = 0; k < 40; k++) { step(w, new Map()); top = Math.max(top, surfaceAt(w, r.x, r.z, r.idx)); }
+    return top - h0;
+  };
+  assert.ok(headOf({ size: 3 }) === 3 * headOf({ size: 1 }));
+  const small = climb(1), big = climb(3);
+  assert.ok(big > small + 2, `small river rose ${small.toFixed(1)} m, big ${big.toFixed(1)} m`);
+  // Same stick, same turn, whatever the size.
+  const turn = (size) => {
+    const w = createWorld(islands.get(2));
+    const r = addRiver(w, 'a', at);
+    r.size = size;
+    const d0 = { x: r.dx, z: r.dz };
+    step(w, new Map([['a', -1]]));
+    return Math.acos(Math.max(-1, Math.min(1, d0.x * r.dx + d0.z * r.dz)));
+  };
+  assert.ok(Math.abs(turn(3) - turn(1)) < 1e-9, 'a big river turned slower');
+});

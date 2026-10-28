@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -747,7 +747,7 @@ renderer.setAnimationLoop(() => {
   hud.depth.textContent = me.dropping ? 'the beam marks your landing'
     : basin >= 0
     ? `pouring into a basin · ${Math.min(99, Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin]))}% full`
-    : `cutting ${me.depth.toFixed(1)} m deep` + (fedBy ? ` · fed by ${fedBy}` : '');
+    : `head ${headOf(me).toFixed(1)} m · cutting ${me.depth.toFixed(1)} m deep` + (fedBy ? ` · fed by ${fedBy}` : '');
   tugFeedback(now);
   if (river && !isRacing(river) && !endShown) {
     endShown = true;
