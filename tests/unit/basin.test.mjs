@@ -55,3 +55,19 @@ test('lakes are not traps: a river skates across and leaves over the bank it rea
   }
   assert.ok(n >= 8 && ok / n >= 0.9, `${ok}/${n} crossings left the lake still fast`);
 });
+
+test('no digging or erosion under standing water: only the banks erode', async () => {
+  const { rollIsland, underWater } = await import('../../src/shared/river.js');
+  const { createBot, botSteer } = await import('../../src/shared/bot.js');
+  const { world: w } = rollIsland(11, 12);
+  for (let i = 0; i < 12; i++) addRiver(w, `p${String(i).padStart(2, '0')}`, undefined, { drop: true });
+  const bots = w.rivers.map((r) => createBot(w, r));
+  for (let k = 0; k < 20 * 120; k++) step(w, new Map(bots.map((b) => [b.river.id, botSteer(w, b)])));
+  let dug = 0;
+  for (let k = 0; k < w.carve.length; k++) {
+    if (w.carve[k] <= 0) continue;
+    dug++;
+    assert.ok(!underWater(w, k), `cell ${k} under water was dug ${w.carve[k]} m`);
+  }
+  assert.ok(dug > 500, `only ${dug} cells dug at all`);
+});

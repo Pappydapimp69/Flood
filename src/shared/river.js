@@ -45,6 +45,7 @@ export const TUNE = {
   outletK: 1500, // litres per tick an outlet carries per metre of water over its lip, at size 1
   erodeK: 0.0028, // metres of outlet erosion per 1000 L that flow through it, times size
   outletMax: 12, // metres
+  shallowWater: 0.3, // metres of standing water that count as under water (no digging)
   overflow: 2, // metres a river's water stands over a lake's brim where it runs (times size)
   levelGlide: 0.997, // on level water or flats, speed fades only this much per tick: momentum carries
   joinShare: 0.06, // share of a lake's water you take at once when you join it
@@ -144,6 +145,14 @@ function lakeLevels(t, lakeOf, lakes) {
     if (t.height[k] < lakeBed[l]) lakeBed[l] = t.height[k];
   }
   return { lakeBrim, lakeBed };
+}
+
+// Under standing water: a lake, or the shallow fringe around one (or any filled
+// hollow) under the lake-depth threshold. Rivers don't dig or erode there; only
+// the dry banks do.
+export function underWater(world, k) {
+  const t = world.terrain;
+  return world.lakeOf[k] >= 0 || t.filled[k] - t.height[k] > TUNE.shallowWater;
 }
 
 export function lakeLevel(world, lake) {
@@ -798,7 +807,7 @@ function erodeTrails(world) {
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const k = (cy + dy) * n + cx + dx;
         if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL || world.erodedAt[k] === sweep) continue;
-        if (world.lakeOf[k] >= 0) continue;
+        if (underWater(world, k)) continue;
         world.erodedAt[k] = sweep;
         const was = world.carve[k];
         // Deep canyons cut slower, but never stop.
@@ -957,7 +966,7 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
       const k = y * n + x;
       const ground = t.filled[k];
       if (ground <= SEA_LEVEL) continue;
-      if (world.lakeOf[k] >= 0) continue; // rivers run over lakes and basins, not through their beds
+      if (underWater(world, k)) continue; // rivers run over lakes, not through their beds: only banks erode
       if (world.lava[k]) {
         // Water meets lava: it cools into rock instead of being dug.
         world.lava[k] = 0;
