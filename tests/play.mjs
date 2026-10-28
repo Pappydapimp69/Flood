@@ -201,7 +201,7 @@ await check('sky drop: fall with a countdown and a landing ring, steer and hurry
   await until(page, (s) => s.ready, 'ready');
   const d0 = await page.evaluate(() => ({ dropping: __flood.river.dropping, alt: __flood.river.alt, hud: document.getElementById('dist').textContent, x: __flood.river.x, z: __flood.river.z, dx: __flood.river.dx, dz: __flood.river.dz }));
   if (!(d0.dropping > 0 && d0.alt > 0)) throw new Error(`not falling at the start: ${JSON.stringify(d0)}`);
-  if (!d0.hud.startsWith('Falling')) throw new Error(`HUD: ${d0.hud}`);
+  if (!/^falling/i.test(d0.hud)) throw new Error(`HUD: ${d0.hud}`);
   await page.keyboard.down('ArrowLeft');
   await page.keyboard.down('ArrowUp');
   await until(page, (s) => s.tick > 60, 'gliding');

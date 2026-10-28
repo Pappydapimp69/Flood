@@ -24,6 +24,12 @@ jobs:
           cp index.html _site/
           cp -r src/client src/shared _site/src/
           cp -r vendor assets _site/
+          # Version every relative import and the entry script with the commit, so a
+          # browser never mixes a new module with a stale cached one; stamp the build id.
+          v=${GITHUB_SHA::7}
+          find _site/src -name '*.js' -print0 | xargs -0 sed -i -E "s#(from |import\()'(\.\.?/[^']+\.js)'#\1'\2?v=$v'#g"
+          sed -i -E "s#src=\"\./src/client/main\.js\"#src=\"./src/client/main.js?v=$v\"#" _site/index.html
+          sed -i "s#__BUILD__#$v#" _site/src/client/main.js
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5
         with:

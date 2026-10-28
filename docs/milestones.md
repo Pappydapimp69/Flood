@@ -271,3 +271,11 @@ biggest at 60 s won 0/10 (no snowball).
   named comets rain in; the HUD and guides stay hidden until it ends.
 - Rival names in the trailer's spirit (riverboi, mizu_chan, LaCascade, torrent99, ...), shown over the
   comets while falling. Landing throws a splash. The map shows each river's course in its colour.
+
+## M17 — HUD, captions and the finish, like the trailer (done)
+- HUD top right, white on a heavy shadow: big rank (#4/12, yellow at the front, pink further back),
+  km to sea, litres; details (pour rate, head, depth, feeds) in one small line.
+- The trailer's lines as one-time captions at the moment they describe: BE THE FIRST TO THE SEA on
+  landing, SWALLOW LAKES TO GROW STRONGER on the first lake, PLAN YOUR ROUTE WELL OR RIVALS CUT YOU OFF
+  when a deeper rival first comes close. Reaching the sea shows your place huge (#1 in gold) before results.
+- Deploys version every relative import with the commit (no mixed stale modules) and show a build id.

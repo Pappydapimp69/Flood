@@ -16,6 +16,9 @@ import { buildTrees, buildRocks, clearTrees, buildLava, coolLava, pulseLava } fr
 const dbg = (window.__flood = { ready: false, error: null, frames: 0, steers: [], prints: new Map() });
 
 const params = new URLSearchParams(location.search);
+// Stamped with the commit at deploy (see .github/workflows/pages.yml); shown small, so a stale cache is visible.
+const BUILD = '__BUILD__';
+document.getElementById('build').textContent = BUILD.startsWith('__') ? 'dev' : `build ${BUILD}`;
 const PLAYER = 'you';
 
 function fail(msg) {
@@ -233,6 +236,8 @@ function beginRace(seed, raceIds, me, rolled) {
   hud.banner.hidden = true;
   hud.feed.textContent = '';
   audio.track('race');
+  finishShown = false;
+  finishEl.classList.remove('on');
   // Opening shot: from low on the island, the rivers raining onto the summit.
   introUntil = river?.dropping && !params.has('nointro') ? performance.now() + 4500 : 0;
   const y = surfaceAt(world, focus.x, focus.z) * VERT;
@@ -557,6 +562,39 @@ function showHint() {
   hintTimer = setTimeout(() => { hud.hint.hidden = true; }, 9000);
 }
 
+// The trailer's lines, each shown once, at the moment it describes.
+const captionEl = document.getElementById('caption'), finishEl = document.getElementById('finish');
+const captionSeen = new Set();
+let captionOff = 0;
+function caption(key, html) {
+  if (captionSeen.has(key) || params.has('nocaptions')) return;
+  captionSeen.add(key);
+  captionEl.innerHTML = html;
+  captionEl.classList.add('on');
+  captionOff = performance.now() + 2800;
+}
+let finishShown = false;
+function watchCaptions(now, place) {
+  if (now > captionOff) captionEl.classList.remove('on');
+  if (!river) return;
+  if (!river.dropping && river.path.length > 1 && world.tick - river.born > 10) caption('goal', 'Be the first <b>to the sea</b>');
+  if (river.lakes > 0) caption('lakes', 'Swallow lakes to grow <b>stronger</b>');
+  if (!river.dropping && isRacing(river) && world.tick - river.born > 200) {
+    for (const r of world.rivers) {
+      if (r === river || !isRacing(r) || r.dropping) continue;
+      if (Math.hypot(r.x - river.x, r.z - river.z) < 1800 && threatOf(r) > 0) { caption('rivals', 'Plan your route well or rivals <b>cut you off</b>'); break; }
+    }
+  }
+  // Reaching the sea: the place, huge, as in the trailer's ending.
+  if (river.finished && !finishShown) {
+    finishShown = true;
+    finishEl.textContent = `#${place}`;
+    finishEl.classList.toggle('other', place !== 1);
+    finishEl.classList.add('on');
+    setTimeout(() => finishEl.classList.remove('on'), 3200);
+  }
+}
+
 const fmtTime = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 const ordinal = (n) => `#${n}`;
 
@@ -801,26 +839,31 @@ renderer.setAnimationLoop(() => {
   const alive = world.rivers.filter(isRacing).length;
   const me = river ?? focus;
   const place = table.indexOf(me) + 1;
-  hud.rank.textContent = river ? `${ordinal(place)}/${world.rivers.length} · ${alive} flowing` : `Spectating · ${alive} flowing`;
+  // Trailer HUD: big rank (#4/12), km to sea, litres.
+  const rankHtml = river ? `#${place}<small>/${world.rivers.length}</small><em>${alive} flowing</em>` : `<small>SPECTATING</small><em>${alive} flowing</em>`;
+  if (hud.rank.innerHTML !== rankHtml) hud.rank.innerHTML = rankHtml;
+  hud.rank.className = !river ? '' : place === 1 ? 'top' : place <= 4 ? 'mid' : 'low';
   const toSea = world.reach[cellIndex(terrain, focus.x, focus.z)];
-  hud.dist.textContent = focus !== river ? `Watching ${nameOf(focus)}`
-    : river.dropping ? `Falling · ${Math.ceil(river.dropping / TICK_HZ)} s · ← → steer · ↑ ↓ speed · land on the glowing ring`
-    : `${(toSea / 1000).toFixed(2)} km to sea`;
+  const distHtml = focus !== river ? `<small>WATCHING</small> ${escapeHtml(nameOf(focus))}`
+    : river.dropping ? `FALLING<small> · ${Math.ceil(river.dropping / TICK_HZ)} S</small>`
+    : `${(toSea / 1000).toFixed(2)}<small> KM TO SEA</small>`;
+  if (hud.dist.innerHTML !== distHtml) hud.dist.innerHTML = distHtml;
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);
-  hud.litres.textContent = me.dropping ? fmtL(me.volume) : `pouring ${fmtL(dischargeOf(me) * TICK_HZ + me.inflow * TICK_HZ)}/s`;
+  hud.litres.textContent = fmtL(me.volume);
   // The water network feeding you: lakes through your outlets, rivers you cut into.
   const feeds = me.via.size;
   let tribs = 0;
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake >= 0 && world.lakeVol[me.inLake] < world.lakeCap[me.inLake] * TUNE.fullAt ? me.inLake : -1;
-  hud.depth.textContent = me.dropping ? 'the beam marks your landing'
+  hud.depth.textContent = me.dropping ? '← → steer · ↑ ↓ speed · land on the glowing ring'
     : basin >= 0
     ? `pouring into a basin · ${Math.min(99, Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin]))}% full`
-    : `head ${headOf(me).toFixed(1)} m · cutting ${me.depth.toFixed(1)} m deep` + (fedBy ? ` · fed by ${fedBy}` : '');
+    : `pouring ${fmtL(dischargeOf(me) * TICK_HZ + me.inflow * TICK_HZ)}/s · head ${headOf(me).toFixed(1)} m · cutting ${me.depth.toFixed(1)} m` + (fedBy ? ` · fed by ${fedBy}` : '');
+  watchCaptions(now, place);
   tugFeedback(now);
-  if (river && !isRacing(river) && !endShown) {
+  if (river && !isRacing(river) && !endShown && (!river.finished || world.tick - river.finishTick > 3 * TICK_HZ)) {
     endShown = true;
     showResults(table, false);
   }
