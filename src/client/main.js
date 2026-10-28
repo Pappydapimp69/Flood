@@ -486,7 +486,7 @@ function advance(inputs) {
     if (e.type === 'land') {
       const en = entries[e.river], lr = world.rivers[e.river];
       if (en) burstSpray(en.spray, lr.x, surfaceAt(world, lr.x, lr.z) * VERT, lr.z, 1.2, 70);
-      if (river && e.river === river.idx) { highlightZone(terrainMesh, dropZone(world), false); audio.lake(); }
+      if (river && e.river === river.idx) { highlightZone(terrainMesh, dropZone(world), false); audio.splash(1.2); }
     } else if (e.type === 'pool') {
       if (river && e.river === river.idx) showPop('Basin — your water pours in as you flow across');
     } else if (e.type === 'spill') {
@@ -500,10 +500,10 @@ function advance(inputs) {
       if (from === river) showPop(`${nameOf(to)} cut your channel — your water runs into it!`);
       feed(`${nameOf(to)} cut into ${nameOf(from)}`);
     } else if (e.type === 'steam') {
-      if (river && e.river === river.idx) steamed += e.amount;
+      if (river && e.river === river.idx) { steamed += e.amount; audio.hiss(); }
     } else if (e.type === 'siphon' && river) {
       // Tally the tug-of-war; the render loop turns it into feedback.
-      if (e.to === river.idx) tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount);
+      if (e.to === river.idx) { tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount); audio.bubble(); }
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
     } else if (e.type === 'merge') {
@@ -591,6 +591,7 @@ function watchCaptions(now, place) {
     finishEl.textContent = `#${place}`;
     finishEl.classList.toggle('other', place !== 1);
     finishEl.classList.add('on');
+    audio.finish(place === 1);
     setTimeout(() => finishEl.classList.remove('on'), 3200);
   }
 }
@@ -880,7 +881,7 @@ renderer.setAnimationLoop(() => {
     finalShown = true;
     showResults(table, true);
   }
-  audio.update(Math.min(1, (river?.speed ?? 0) / 220), !!river && isRacing(river));
+  audio.update(Math.min(1, (river?.speed ?? 0) / 220), !!river && isRacing(river) && !river.dropping, river?.size ?? 1, river?.dropping ? river.dropping / TUNE.dropTicks : 0);
 
   renderer.render(scene, camera);
   dbg.frames++;

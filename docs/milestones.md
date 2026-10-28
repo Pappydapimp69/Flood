@@ -286,3 +286,11 @@ biggest at 60 s won 0/10 (no snowball).
 - Reaching the sea, the camera rises over the surf and your place shows huge, as in the trailer.
 - Rivals cutting you off stays the depth rule (a deeper river cutting your channel takes your water),
   now announced by the caption; no new wall rule, so the flow fixes stay intact.
+
+## M19 — Sound (done)
+- Water in three layers: a low rumble that grows with the river, a rush that brightens with speed and
+  a bubbling gurgle; stereo, low-passed noise so it reads as water, not static. Wind while falling.
+- Effects on a soft-compressed bus with a 12-voice budget, each chain freed when done: touchdown splash,
+  lake swallow, lava hiss, bubbles while drawing a rival's water, a wave and chime at the sea.
+- Music crossfades with an equal-power curve between the menu and race pieces.
+- Verified only by levels (headless analyser on the output: peaks 0.07-0.3, no clipping), not by ear.
