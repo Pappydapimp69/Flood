@@ -216,6 +216,7 @@ function beginRace(seed, raceIds, me, rolled) {
   if (river?.dropping) highlightZone(terrainMesh, dropZone(world), true);
   hud.banner.hidden = true;
   hud.feed.textContent = '';
+  audio.track('race');
   const y = surfaceAt(world, focus.x, focus.z) * VERT;
   camDir.set(focus.dx, focus.dz).normalize();
   camYaw = 0;
@@ -500,6 +501,7 @@ function showPop(text) {
 }
 
 function showResults(table, final) {
+  if (final || !river || !isRacing(river)) audio.track('menu');
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   const place = river ? table.indexOf(river) + 1 : 0;
   let head = 'Race over';
@@ -763,7 +765,7 @@ renderer.setAnimationLoop(() => {
 });
 
 Object.assign(dbg, {
-  renderer, scene, camera,
+  renderer, scene, camera, audio,
   riverFingerprint: () => riverFingerprint(world),
   newRun,
 });

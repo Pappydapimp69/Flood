@@ -1,0 +1,31 @@
+Flood - Source
+C dorian · 6/8 · ♩=76 · mood mysterious · strings · complexity 3 · 28 bars · seed 11
+draft 2 of 6 kept · critic score 18.27
+parts: Violin I, Violin II, Viola, Cello
+form: Intro | A | B | A | Coda
+
+[Intro] bars 1-2 · C dorian · pp · texture pad
+    i | IV
+
+[A] bars 3-10 · C dorian · p · texture pad
+    i | vi°6 | ii | IV    → open (modal) (bar 6)
+    melody: motif, sequence, repeat, cadence:half
+    i | vi°6 bIII | ii IV | i    → modal (bar 10)
+    melody: motif, diminish, vary, cadence:authentic
+
+[B] bars 11-18 · C dorian · mf · texture arpeggio · climax · imitation +1 beat(s)
+    viø7 | i | vi°6 ii | IV    → open (modal) (bar 14)
+    melody: motif, repeat, vary, cadence:half
+    i bIII | vi°6 | i7 ii7 | IV    → open (modal) (bar 18)
+    melody: motif, repeat, vary, cadence:half
+
+[A] bars 19-26 · C dorian · mp · texture pulse · imitation +1 beat(s)
+    i | vi°6 | ii | IV    → open (modal) (bar 22)
+    melody: motif, sequence, repeat, cadence:half
+    i | vi°6 bIII | ii IV | i    → modal (bar 26)
+    melody: motif, diminish, vary, cadence:authentic
+
+[Coda] bars 27-28 · C dorian · p · texture pad
+    IV | i
+
+critic: parallels 0, unresolved leaps 3, range 20, climax count 1, climax at 62%, strong beat support 96%, stepwise 55%, repeated runs 0, counter clashes 0, ends on tonic True, mode colour note 11%

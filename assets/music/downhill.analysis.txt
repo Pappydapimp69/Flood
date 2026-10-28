@@ -1,0 +1,43 @@
+Flood - Downhill
+C minor · 4/4 · ♩=118 · mood heroic · chamber · complexity 4 · 54 bars · seed 23
+draft 2 of 6 kept · critic score 18.19
+parts: Flute, Oboe, Strings, Horn (pad), Cello, Timpani
+form: Intro | A | B | A | C | A | Coda
+
+[Intro] bars 1-1 · C minor · mp · texture pulse
+    V7
+
+[A] bars 2-9 · C minor · mf · texture pulse · free counterpoint
+    i VI6 | i III | V7/iv V7/V | V7    → half (bar 5)
+    melody: motif, fragment, sequence, cadence:half
+    i VIM65 | III6 | iv V7 | i    → authentic (bar 9)
+    melody: motif, augment, invert, cadence:authentic
+
+[B] bars 10-17 · Eb major · mf · texture arpeggio · free counterpoint
+    I V7/vi | vi7 IV6 | I64 V7 | I    → authentic (bar 13)
+    melody: motif, repeat, repeat, cadence:authentic
+    iv | V65/iv | iv | V7    → half (bar 17)
+    melody: motif, fragment, invert, cadence:half
+
+[A] bars 18-25 · C minor · f · texture pad · imitation +1 beat(s)
+    i VI6 | i III6 | V7/iv V65/V | V7    → half (bar 21)
+    melody: motif, fragment, sequence, cadence:half
+    i VIM65 | III6 | iv V7 | i    → authentic (bar 25)
+    melody: motif, augment, invert, cadence:authentic
+
+[C] bars 26-41 · F minor · ff · texture arpeggio · climax · imitation +1 beat(s)
+    i VI6 | V7/VI | VI6 III | VI6 V7/VI | VI6 | i | V7/V V | i    → authentic (bar 33)
+    melody: motif, sequence, repeat, retrograde, vary, fragment, fragment, cadence:authentic
+    VI | V65/VI | VI | IIIM65 | VI6 | V65/VI | VIM7 V65/V | V7    → half (bar 41)
+    melody: motif, repeat, repeat, repeat, vary, sequence, invert, cadence:half
+
+[A] bars 42-51 · C minor · f · texture arpeggio · imitation +1 beat(s)
+    i VI6 | i III6 | V7/iv V65/V | V7    → half (bar 45)
+    melody: motif, fragment, sequence, cadence:half
+    i VI6 | ii°6 | V | VI | i64 V7 | i    → deceptive (bar 49), authentic (bar 51)
+    melody: motif, fragment, vary, cadence:deceptive, invert, cadence:authentic
+
+[Coda] bars 52-54 · C minor · mf · texture pad
+    i | iiø65 V7 | i
+
+critic: parallels 0, unresolved leaps 0, range 20, climax count 1, climax at 70%, strong beat support 87%, stepwise 56%, repeated runs 1, counter clashes 0, ends on tonic True

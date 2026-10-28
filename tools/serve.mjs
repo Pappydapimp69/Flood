@@ -7,11 +7,11 @@ import { fileURLToPath } from 'node:url';
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const TYPES = {
   '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css',
-  '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.wav': 'audio/wav',
+  '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.wav': 'audio/wav', '.mp3': 'audio/mpeg',
 };
 
 // Only what the browser needs is public: never .git, node_modules or server code.
-const PUBLIC = ['/index.html', '/src/client/', '/src/shared/', '/vendor/'];
+const PUBLIC = ['/index.html', '/src/client/', '/src/shared/', '/vendor/', '/assets/'];
 
 export async function staticHandler(req, res) {
   try {

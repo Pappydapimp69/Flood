@@ -44,3 +44,8 @@ npm run online       # two headless browsers in one online race
 - `src/server/` — the room and WebSocket server
 - `tests/` — unit tests and headless smoke test
 - `docs/milestones.md` — the plan and a log of each finished milestone
+
+## Music
+Both pieces were written with `brain compose` (MusicXML/MIDI/analysis beside each MP3 in
+`assets/music/`): **Source** (menu, C dorian, strings, 6/8, 76 bpm, seed 11) and **Downhill**
+(races, C minor, chamber ensemble, 118 bpm, seed 23). The splash press starts the music.

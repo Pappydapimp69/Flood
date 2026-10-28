@@ -1,5 +1,7 @@
 // Small procedural sound: a rushing-water bed that follows speed, a gulp for
-// lakes, a thud for merges, and a slow generative music loop. Started on the first gesture, fire-and-forget:
+// lakes, a thud for merges. Music: two pieces written with `brain compose`
+// (assets/music: a strings theme for the menu, a chamber piece for races),
+// looped and crossfaded; a small generative loop stands in if they can't load. Started on the first gesture, fire-and-forget:
 // nothing in the game waits on audio, so a blocked AudioContext costs only sound.
 
 export function createAudio() {
@@ -62,6 +64,43 @@ export function createAudio() {
     o.start(t);
     o.stop(t + dur + 0.05);
   }
+  // The composed pieces, decoded once; null until loaded (or if they fail).
+  const TRACKS = { menu: './assets/music/source.mp3', race: './assets/music/downhill.mp3' };
+  const VOLUME = { menu: 0.55, race: 0.4 };
+  let musicBus = null, buffers = null, playing = null, want = 'menu';
+  function loadTracks() {
+    if (buffers) return;
+    buffers = {};
+    musicBus = ctx.createGain();
+    musicBus.gain.value = muted ? 0 : 1;
+    musicBus.connect(ctx.destination);
+    for (const [name, url] of Object.entries(TRACKS)) {
+      fetch(url).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
+        .then((b) => ctx.decodeAudioData(b))
+        .then((buf) => { buffers[name] = buf; if (name === want) play(want); })
+        .catch(() => { if (name === want && !music) startMusic(); }); // fall back to the generative loop
+    }
+  }
+  // Crossfade to a piece, looping it.
+  function play(name) {
+    want = name;
+    if (!ctx || !buffers?.[name] || playing?.name === name) return;
+    const t = ctx.currentTime;
+    if (playing) {
+      playing.gain.gain.setTargetAtTime(0, t, 0.6);
+      playing.src.stop(t + 3);
+    }
+    if (music) { music.out.gain.setTargetAtTime(0, t, 0.6); clearInterval(music.timer); }
+    const src = ctx.createBufferSource(), gain = ctx.createGain();
+    src.buffer = buffers[name];
+    src.loop = true;
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.setTargetAtTime(VOLUME[name], t, 0.8);
+    src.connect(gain).connect(musicBus);
+    src.start(t);
+    playing = { name, src, gain };
+  }
+
   function startMusic() {
     if (!ctx || music) return;
     const out = ctx.createGain();
@@ -87,7 +126,9 @@ export function createAudio() {
 
   return {
     // The splash screen's press: unlocks audio and starts the music.
-    music() { start(); startMusic(); },
+    music() { start(); if (ctx) loadTracks(); },
+    // Which piece plays: 'menu' (splash, menu, results) or 'race'.
+    track(name) { want = name; if (ctx && buffers) play(name); },
     // speed01: 0..1 of top speed; flowing: false when out or finished.
     update(speed01, flowing) {
       if (!bed) return;
@@ -100,10 +141,12 @@ export function createAudio() {
     toggle() {
       muted = !muted;
       try { localStorage.setItem('flood.muted', muted ? '1' : '0'); } catch { /* no storage */ }
-      if (!muted) start();
+      if (!muted) { start(); if (ctx) loadTracks(); }
       if (music) music.out.gain.setTargetAtTime(muted ? 0 : 0.5, ctx.currentTime, 0.1);
+      if (musicBus) musicBus.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, 0.1);
       return muted;
     },
     get muted() { return muted; },
+    get playing() { return playing?.name ?? (music ? 'generative' : null); },
   };
 }
