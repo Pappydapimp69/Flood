@@ -10,7 +10,7 @@ import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
 import { connect } from './net.js';
 import { createAudio } from './audio.js';
-import { buildTrees, buildRocks, clearTrees, buildLava, coolLava, pulseLava } from './scenery.js';
+import { buildTrees, buildRocks, clearTrees, clearAround, buildLava, coolLava, pulseLava } from './scenery.js';
 
 // Test/debug surface. Tests poll this instead of waiting on wall-clock time.
 const dbg = (window.__flood = { ready: false, error: null, frames: 0, steers: [], prints: new Map() });
@@ -770,6 +770,12 @@ renderer.setAnimationLoop(() => {
     }
     updateSpray(e.spray, hx, hy, hz, e.mx, e.mz, r.size, Math.min(1, r.speed / 200), frameDt, flowing && !r.finished);    e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
     e.ribbon.update(world, r, hx, hz, now / 1000);
+    // Nothing stands in the water: clear trees and boulders along each new stretch.
+    while ((e.cleared ?? 0) < r.path.length) {
+      const q = r.path[e.cleared ?? 0];
+      clearAround([trees, rocks], terrain, q.x, q.z, q.w * 0.7);
+      e.cleared = (e.cleared ?? 0) + 1;
+    }
     if (r === focus) { fx = hx; fz = hz; fy = hy; }
   }
 
@@ -817,7 +823,9 @@ renderer.setAnimationLoop(() => {
     // Low and close behind the surge, like the trailer; it pulls back as the
     // river grows, and sits high while falling.
     const sz = focus.size ?? 1;
-    const back = falling ? 1300 : 560 + 160 * sz, up = falling ? 1100 : 300 + 110 * sz;
+    // Reaching the sea, it rises high over the surf, as in the trailer's ending.
+    const done = !!focus.finished;
+    const back = falling ? 1300 : done ? 700 : 560 + 160 * sz, up = falling ? 1100 : done ? 2600 : 300 + 110 * sz;
     const want = new THREE.Vector3(fx - view.x * back, Math.max(fy, 0) + up, fz - view.y * back);
     // Stay above the ground along the whole sightline, not just at the camera.
     for (let f = 0.25; f <= 1; f += 0.25) {
@@ -830,7 +838,7 @@ renderer.setAnimationLoop(() => {
     const kY = 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
     camera.position.y += (want.y - camera.position.y) * kY;
     camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
-    const ahead = falling ? 600 : 380 + 80 * sz;
+    const ahead = falling ? 600 : done ? 2200 : 380 + 80 * sz;
     camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
   }

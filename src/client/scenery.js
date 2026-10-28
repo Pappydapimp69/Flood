@@ -136,19 +136,44 @@ export function clearTrees(group, cells, carve) {
   }
 }
 
-// Lava: a glowing quad per lava cell, pulsing; cooled cells go dark.
+// Lava: an overlapping soft-edged patch per lava cell, so the flow reads as one
+// glowing stream: dark crust broken by bright moving cracks. Cooled cells vanish
+// (the rock they leave is drawn by the terrain).
 export function buildLava(world) {
   const t = world.terrain, n = t.size;
   const cells = [];
   for (let k = 0; k < n * n; k++) if (world.lava[k]) cells.push(k);
   const quad = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
-  const mat = new THREE.MeshBasicMaterial({ color: '#ff5a1c', transparent: true, opacity: 0.9, depthWrite: false });
+  const mat = new THREE.MeshBasicMaterial({ color: '#ff5a1c', transparent: true, depthWrite: false });
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uTime = mat.userData.uTime = { value: 0 };
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec2 vUv2;\nvarying vec3 vW;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvUv2 = uv;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvW = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', `#include <common>
+        uniform float uTime;
+        varying vec2 vUv2;
+        varying vec3 vW;
+        float lh(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
+        float ln(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(mix(lh(i), lh(i + vec2(1, 0)), u.x), mix(lh(i + vec2(0, 1)), lh(i + vec2(1, 1)), u.x), u.y); }`)
+      .replace('vec4 diffuseColor = vec4( diffuse, opacity );', `
+        float edge = 1.0 - smoothstep(0.3, 0.5, length(vUv2 - 0.5));
+        vec2 p = vW.xz * 0.012;
+        float flow = ln(p + vec2(uTime * 0.15, uTime * 0.07)) * 0.6 + ln(p * 3.1 - uTime * 0.2) * 0.4;
+        float crack = smoothstep(0.5, 0.66, flow);
+        float hot = smoothstep(0.62, 0.8, flow);
+        vec3 crust = vec3(0.13, 0.04, 0.03), glow = mix(vec3(0.82, 0.12, 0.03), vec3(1.0, 0.55, 0.12), hot);
+        vec4 diffuseColor = vec4(mix(crust, glow, 0.2 + 0.8 * crack), edge * 0.95);`);
+  };
   const mesh = new THREE.InstancedMesh(quad, mat, Math.max(1, cells.length));
-  const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3(t.cell * 1.15, 1, t.cell * 1.15);
+  const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3(t.cell * 2.1, 1, t.cell * 2.1);
   const byCell = new Map();
   cells.forEach((k, i) => {
     const [x, z] = cellPos(t, k);
-    p.set(x, t.height[k] * VERT + 3, z);
+    p.set(x, t.height[k] * VERT + 3 + (i % 7) * 0.3, z);
     mesh.setMatrixAt(i, m.compose(p, q, s));
     byCell.set(k, i);
   });
@@ -169,5 +194,24 @@ export function coolLava(mesh, cells) {
 }
 
 export function pulseLava(mesh, time) {
-  mesh.material.color.setHSL(0.04 + 0.015 * Math.sin(time * 2.1), 1, 0.5 + 0.06 * Math.sin(time * 3.3));
+  if (mesh.material.userData.uTime) mesh.material.userData.uTime.value = time;
+}
+
+// Clear trees and boulders under a river's water: everything within radius r
+// (metres) of (x, z), so the channel never has trees standing in it.
+export function clearAround(meshes, t, x, z, r) {
+  const n = t.size, cx = Math.round((x / t.worldSize + 0.5) * (n - 1)), cy = Math.round((z / t.worldSize + 0.5) * (n - 1));
+  const rc = Math.ceil(r / t.cell), m = new THREE.Matrix4().makeScale(0, 0, 0);
+  for (const group of meshes) for (const mesh of group.userData.parts ?? [group]) {
+    let changed = false;
+    for (let dy = -rc; dy <= rc; dy++) for (let dx = -rc; dx <= rc; dx++) {
+      if ((dx * dx + dy * dy) * t.cell * t.cell > r * r) continue;
+      const k = (cy + dy) * n + cx + dx, i = mesh.userData.byCell.get(k);
+      if (i === undefined) continue;
+      mesh.setMatrixAt(i, m);
+      mesh.userData.byCell.delete(k);
+      changed = true;
+    }
+    if (changed) mesh.instanceMatrix.needsUpdate = true;
+  }
 }

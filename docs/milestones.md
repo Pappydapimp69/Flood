@@ -279,3 +279,10 @@ biggest at 60 s won 0/10 (no snowball).
   landing, SWALLOW LAKES TO GROW STRONGER on the first lake, PLAN YOUR ROUTE WELL OR RIVALS CUT YOU OFF
   when a deeper rival first comes close. Reaching the sea shows your place huge (#1 in gold) before results.
 - Deploys version every relative import with the commit (no mixed stale modules) and show a build id.
+
+## M18 — Lava, clear channels and the sea finish (done)
+- Lava is one glowing stream: soft overlapping patches with dark crust and bright moving cracks.
+- Nothing stands in the water: trees and boulders are cleared along each channel's full width.
+- Reaching the sea, the camera rises over the surf and your place shows huge, as in the trailer.
+- Rivals cutting you off stays the depth rule (a deeper river cutting your channel takes your water),
+  now announced by the caption; no new wall rule, so the flow fixes stay intact.
