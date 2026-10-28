@@ -19,10 +19,15 @@ function flowFrom(world, r, hx, hz) {
     const gx = (surfaceAt(world, x + h, z, r.idx) - surfaceAt(world, x - h, z, r.idx)) / (2 * h);
     const gz = (surfaceAt(world, x, z + h, r.idx) - surfaceAt(world, x, z - h, r.idx)) / (2 * h);
     const gl = Math.sqrt(gx * gx + gz * gz);
+    // Same rule as moveRiver: aimed downhill or across, it goes where it's
+    // aimed with a slight drift down; aimed uphill, the uphill part is dropped.
     let mx = hx, mz = hz;
-    if (gl >= TUNE.flatSlope) {
-      const wf = Math.min(1, gl / TUNE.fallSlope);
-      mx = (-gx / gl) * wf + hx * TUNE.headingPull; mz = (-gz / gl) * wf + hz * TUNE.headingPull;
+    const k = cellIndex(world.terrain, x, z), lake = world.lakeOf[k];
+    if (gl >= TUNE.flatSlope && !(lake >= 0 && world.lakeVol[lake] > 0)) {
+      const wf = Math.min(1, gl / TUNE.fallSlope), fx = -gx / gl, fz = -gz / gl, up = hx * fx + hz * fz;
+      if (up < 0) { mx -= up * fx; mz -= up * fz; }
+      mx += fx * wf * (up < 0 ? TUNE.fallUphill : TUNE.fallDrift);
+      mz += fz * wf * (up < 0 ? TUNE.fallUphill : TUNE.fallDrift);
       const ml = Math.sqrt(mx * mx + mz * mz) || 1;
       mx /= ml; mz /= ml;
     }

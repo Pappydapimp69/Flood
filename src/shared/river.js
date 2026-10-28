@@ -8,7 +8,7 @@ export const TICK_HZ = 20;
 export const DT = 1 / TICK_HZ;
 
 export const TUNE = {
-  turnStep: 0.11, // radians per tick at full steer, at starting size
+  turnStep: 0.06, // radians per tick at full steer, at starting size
   minSpeed: 18, // m/s, water always creeps
   baseSpeed: 45, // m/s on level ground at starting size
   slopeSpeed: 1400, // extra m/s per unit downhill slope
@@ -20,7 +20,8 @@ export const TUNE = {
   slideMin: 0.15,
   flatSlope: 0.004, // below this the ground counts as flat: follow the fill's route out
   fallSlope: 0.04, // slope (m per m) at which the fall line pulls the water at full strength
-  headingPull: 0.9, // the heading's weight against the fall line's 1: under 1, water never runs uphill // heading share along the contour needed to slide past a slope
+  fallDrift: 0.15, // aimed downhill or across: how much the slope pulls the water down
+  fallUphill: 0.6, // aimed uphill: how much it pulls the water down once the uphill part is gone // heading share along the contour needed to slide past a slope
   width: 110, // channel width at starting size, metres
   depth: 7, // channel depth at starting size, metres
   maxWidth: 420,
@@ -46,7 +47,8 @@ export const TUNE = {
   fullAt: 0.999, // a lake this full is level ground you flow across
   maxPoolTicks: 900, // guaranteed exit: after 45 s pooled, the basin tops up and spills
   trailErode: 0.04, // metres your whole channel deepens per 10 ticks, times size, for good
-  trailPasses: 20, // ticks to sweep a whole trail once (a slice of it each tick)
+  trailPasses: 20,
+  headSpared: 4, // path points nearest the head that don't erode // ticks to sweep a whole trail once (a slice of it each tick)
   // Dry basins: a few lakes start empty and must be filled by the rivers that
   // run into them before anyone can flow across.
   basins: 5,
@@ -308,6 +310,7 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     pooledTicks: 0,
     low: Infinity, // lowest surface reached; water can't climb far above it
     ponded: 0, // metres the local pool has risen above the ground
+    shore: -1, // lake whose shore the head ran into: it's running round to the spill point
     travelled: 0,
     finished: false,
     finishTick: -1,
@@ -484,29 +487,47 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   const gl = Math.sqrt(g.x * g.x + g.z * g.z);
   if (here < r.low) { r.low = here; r.ponded = 0; }
 
-  // Water runs downhill on its own. It flows down the fall line bent toward
-  // the player's heading: aimed downhill it goes where it's aimed, aimed
-  // across the slope it drifts down as it goes, never up. The heading itself
-  // only ever turns when the player steers.
-  // On a flat (a filled-in hollow) there's no slope to follow, so the water
-  // takes the terrain's own route out of it, toward its spill point.
+  // Where the water goes. On a lake it runs flat across the surface, straight
+  // where it's aimed. On land it goes where it's aimed too, as long as that's
+  // downhill or across the slope (with a slight drift down); aimed uphill, the
+  // uphill part is dropped and it runs along and down the slope instead,
+  // because water never climbs. On a flat it takes the fill's route out.
+  // The heading itself only ever turns when the player steers.
+  const tt = world.terrain, cHere = cellIndex(tt, r.x, r.z), onLake = world.lakeOf[cHere] >= 0 && world.lakeVol[world.lakeOf[cHere]] > 0;
   let mx = r.dx, mz = r.dz, fx = 0, fz = 0, wf = 0;
-  if (gl >= TUNE.flatSlope) { fx = -g.x / gl; fz = -g.z / gl; wf = Math.min(1, gl / TUNE.fallSlope); }
-  else {
-    const t = world.terrain, n = t.size, c = cellIndex(t, r.x, r.z), d = downhill(t, c);
+  // Ran into a lake's shore: the water runs round to the lake's spill point,
+  // until it's off the lake or the player steers somewhere else.
+  if (steer || !onLake || r.shore !== world.lakeOf[cHere]) r.shore = -1;
+  if (r.shore >= 0) {
+    const n = tt.size, d = downhill(tt, cHere);
     if (d >= 0) {
-      const ex = ((d % n) / (n - 1) - 0.5) * t.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * t.worldSize - r.z;
+      const ex = ((d % n) / (n - 1) - 0.5) * tt.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * tt.worldSize - r.z;
       const el = Math.sqrt(ex * ex + ez * ez);
-      if (el > 1e-6) { fx = ex / el; fz = ez / el; wf = 1; }
+      if (el > 1e-6) { mx = ex / el; mz = ez / el; }
+    }
+  }
+  if (!onLake) {
+    if (gl >= TUNE.flatSlope) { fx = -g.x / gl; fz = -g.z / gl; wf = Math.min(1, gl / TUNE.fallSlope); }
+    else {
+      const n = tt.size, d = downhill(tt, cHere);
+      if (d >= 0) {
+        const ex = ((d % n) / (n - 1) - 0.5) * tt.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * tt.worldSize - r.z;
+        const el = Math.sqrt(ex * ex + ez * ez);
+        if (el > 1e-6) { fx = ex / el; fz = ez / el; wf = 1; }
+      }
     }
   }
   if (wf > 0) {
-    const bx = fx * wf + r.dx * TUNE.headingPull, bz = fz * wf + r.dz * TUNE.headingPull;
+    const up = mx * fx + mz * fz; // > 0: aimed downhill
+    let bx = mx, bz = mz;
+    if (up < 0) { bx -= up * fx; bz -= up * fz; } // drop the uphill part
+    bx += fx * wf * (up < 0 ? TUNE.fallUphill : TUNE.fallDrift);
+    bz += fz * wf * (up < 0 ? TUNE.fallUphill : TUNE.fallDrift);
     const bl = Math.sqrt(bx * bx + bz * bz);
     if (bl > 1e-6) { mx = bx / bl; mz = bz / bl; }
   }
   const mass = 1 + TUNE.speedPerSize * (r.size - 1);
-  const along = -(g.x * mx + g.z * mz); // downhill slope along the way the water goes
+  const along = onLake ? 0 : -(g.x * mx + g.z * mz); // downhill slope along the way the water goes; a lake is level
   const target = Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, TUNE.baseSpeed * mass + TUNE.slopeSpeed * along));
   r.speed += (target - r.speed) * (TUNE.speedEase / r.size); // momentum: heavy water changes speed slowly
   r.depth = depthOf(r);
@@ -529,6 +550,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     // from every cell to the sea without climbing, so the head follows it,
     // its level rising with the water. The heading stays the player's.
     const t = world.terrain, n = t.size, c = cellIndex(t, r.x, r.z), d = downhill(t, c);
+    if (onLake) r.shore = world.lakeOf[c];
     if (d >= 0) {
       const ex = ((d % n) / (n - 1) - 0.5) * t.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * t.worldSize - r.z;
       const el = Math.sqrt(ex * ex + ez * ez);
@@ -712,14 +734,18 @@ function erodeTrails(world) {
   const sweep = Math.floor(world.tick / ticks) + 1;
   for (const r of world.rivers.filter((o) => !o.out && !o.dropping).sort(byId)) {
     const add = (TUNE.trailErode * r.size * ticks) / 10;
-    const per = Math.ceil(r.path.length / ticks);
-    const end = Math.min(r.path.length, (phase + 1) * per);
+    // The head itself doesn't erode: water erodes where it flows past, so a
+    // head that stops can't dig itself into a pit.
+    const len = Math.max(0, r.path.length - TUNE.headSpared);
+    const per = Math.ceil(len / ticks);
+    const end = Math.min(len, (phase + 1) * per);
     for (let i = phase * per; i < end; i++) {
       const p = r.path[i];
       const c = cellIndex(t, p.x, p.z), cx = c % n, cy = (c - cx) / n;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const k = (cy + dy) * n + cx + dx;
         if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL || world.erodedAt[k] === sweep) continue;
+        if (world.lakeOf[k] >= 0 && world.lakeVol[world.lakeOf[k]] > 0) continue;
         world.erodedAt[k] = sweep;
         const was = world.carve[k];
         // Deep canyons cut slower, but never stop.
@@ -873,6 +899,7 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
       const k = y * n + x;
       const ground = t.filled[k];
       if (ground <= SEA_LEVEL) continue;
+      if (world.lakeOf[k] >= 0 && world.lakeVol[world.lakeOf[k]] > 0) continue; // rivers run over lakes, not through their beds
       if (world.lava[k]) {
         // Water meets lava: it cools into rock instead of being dug.
         world.lava[k] = 0;
