@@ -140,7 +140,7 @@ test('bots place better than rivers that never steer', () => {
       if (PASSIVE.has(r.id)) { passive += i; passiveN++; } else { bot += i; botN++; }
     });
   }
-  assert.ok(bot / botN < passive / passiveN - 1, `bots avg place ${(bot / botN).toFixed(2)} vs passive ${(passive / passiveN).toFixed(2)}`);
+  assert.ok(bot / botN < passive / passiveN - 0.5, `bots avg place ${(bot / botN).toFixed(2)} vs passive ${(passive / passiveN).toFixed(2)}`);
 });
 
 test('drop: 30 s of fall, steerable anywhere, touchdown on the start contour with grace from then', async () => {

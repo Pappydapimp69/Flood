@@ -39,16 +39,18 @@ export const TUNE = {
   lakeCellCap: 400, // ...counting at most this many cells
   discharge: 3000, // litres per tick a river delivers downstream, times size squared
   outletStart: 1, // metres an outlet is cut when a river leaves a lake
-  outletK: 1500, // litres per tick an outlet carries per metre of erosion, at size 1
+  outletK: 1500, // litres per tick an outlet carries per metre of water over its lip, at size 1
   erodeK: 0.0028, // metres of outlet erosion per 1000 L that flow through it, times size
   outletMax: 12, // metres
-  lakeFloor: 0.15, // a lake can drain to this share once its deepest outlet is fully cut
+  poolBelow: 0.5, // only a basin under half full holds a head; fuller lakes are level water you cross
   joinShare: 0.06, // share of a lake's water you take at once when you join it
   fullAt: 0.999, // a lake this full is level ground you flow across
-  maxPoolTicks: 900, // guaranteed exit: after 45 s pooled, the basin tops up and spills
+  maxPoolTicks: 200, // guaranteed exit: after 10 s pooled, the basin tops up and spills
   trailErode: 0.04, // metres your whole channel deepens per 10 ticks, times size, for good
   trailPasses: 20,
-  headSpared: 4, // path points nearest the head that don't erode // ticks to sweep a whole trail once (a slice of it each tick)
+  headSpared: 4,
+  stallTicks: 20, stallMin: 30, stallNet: 0.35, // moved over 30 m in 1 s but under 35% of it net: going nowhere
+  routeDrop: 1.5, // metres a head following the fill route must fall before it goes back to its heading // path points nearest the head that don't erode // ticks to sweep a whole trail once (a slice of it each tick)
   // Dry basins: a few lakes start empty and must be filled by the rivers that
   // run into them before anyone can flow across.
   basins: 5,
@@ -112,6 +114,7 @@ export function createWorld(terrain) {
     lakeIn: new Float64Array(lakes.length), // litres per tick flowing in, last tick
     lakeOut: new Float64Array(lakes.length), // litres per tick flowing out, last tick
     lakeOutlet: lakeOutlets(terrain, lakeOf, lakes), // cell just past each lake's spill point
+    ...lakeLevels(terrain, lakeOf, lakes), // lakeBrim, lakeBed: surface when full, lowest point
     events: [], // for presentation, see step()
     digs: [], // channel digs queued during a tick, applied together at its end
     junctions: new Map(), // 'from|to' -> { from, to, until }: a cut channel's water flowing on into the cutter
@@ -126,6 +129,24 @@ export function createWorld(terrain) {
 }
 
 // Surface seen by river `self` (-1 = everyone's channels, for rendering).
+// Each lake's surface when full (its brim, the fill level) and its lowest bed
+// point. In between, the level is taken as linear in the water it holds.
+function lakeLevels(t, lakeOf, lakes) {
+  const lakeBrim = new Float64Array(lakes.length).fill(Infinity), lakeBed = new Float64Array(lakes.length).fill(Infinity);
+  for (let k = 0; k < lakeOf.length; k++) {
+    const l = lakeOf[k];
+    if (l < 0) continue;
+    if (t.filled[k] < lakeBrim[l]) lakeBrim[l] = t.filled[k];
+    if (t.height[k] < lakeBed[l]) lakeBed[l] = t.height[k];
+  }
+  return { lakeBrim, lakeBed };
+}
+
+export function lakeLevel(world, lake) {
+  const f = Math.min(1, world.lakeVol[lake] / world.lakeCap[lake]);
+  return world.lakeBed[lake] + (world.lakeBrim[lake] - world.lakeBed[lake]) * f;
+}
+
 // The cell each lake spills into: the first cell outside it on the fill's
 // downhill tree, from the lowest-lying lake cell that drains out.
 function lakeOutlets(t, lakeOf, lakes) {
@@ -310,7 +331,8 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     pooledTicks: 0,
     low: Infinity, // lowest surface reached; water can't climb far above it
     ponded: 0, // metres the local pool has risen above the ground
-    shore: -1, // lake whose shore the head ran into: it's running round to the spill point
+    route: null, // level where the head was blocked: it's following the fill route out until it runs lower
+    netAt: 0, netX: 0, netZ: 0, netT: 0, // where it was a moment ago, to tell going nowhere from flowing
     travelled: 0,
     finished: false,
     finishTick: -1,
@@ -487,37 +509,40 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   const gl = Math.sqrt(g.x * g.x + g.z * g.z);
   if (here < r.low) { r.low = here; r.ponded = 0; }
 
-  // Where the water goes. On a lake it runs flat across the surface, straight
-  // where it's aimed. On land it goes where it's aimed too, as long as that's
-  // downhill or across the slope (with a slight drift down); aimed uphill, the
-  // uphill part is dropped and it runs along and down the slope instead,
-  // because water never climbs. On a flat it takes the fill's route out.
-  // The heading itself only ever turns when the player steers.
+  // Where the water goes. On a lake or a flat it runs level, straight where
+  // it's aimed. On a slope it goes where it's aimed too, as long as that's
+  // downhill or across (with a slight drift down); aimed uphill, the uphill
+  // part is dropped and it runs along and down the slope instead, because
+  // water never climbs. The heading itself only ever turns when the player steers.
+  //
+  // Blocked, water doesn't stall or rock against the rise: it fills the hollow
+  // and spills out at its lowest point, along the terrain's fill route
+  // (priority flood), which leads to the sea without climbing. Once on that
+  // route it stays on it until it has run clearly lower than where it was
+  // blocked, or the player steers. (Choosing afresh each tick, it would step
+  // back toward the rise and rock in place.)
   const tt = world.terrain, cHere = cellIndex(tt, r.x, r.z), onLake = world.lakeOf[cHere] >= 0 && world.lakeVol[world.lakeOf[cHere]] > 0;
-  let mx = r.dx, mz = r.dz, fx = 0, fz = 0, wf = 0;
-  // Ran into a lake's shore: the water runs round to the lake's spill point,
-  // until it's off the lake or the player steers somewhere else.
-  if (steer || !onLake || r.shore !== world.lakeOf[cHere]) r.shore = -1;
-  if (r.shore >= 0) {
-    const n = tt.size, d = downhill(tt, cHere);
-    if (d >= 0) {
-      const ex = ((d % n) / (n - 1) - 0.5) * tt.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * tt.worldSize - r.z;
-      const el = Math.sqrt(ex * ex + ez * ez);
-      if (el > 1e-6) { mx = ex / el; mz = ez / el; }
-    }
+  if (r.route !== null && (steer || here < r.route - TUNE.routeDrop)) r.route = null;
+  // Going nowhere (moving, but back and forth, as across a valley floor when
+  // aimed up it): take the fill route out too.
+  if (world.tick - r.netAt >= TUNE.stallTicks) {
+    const moved = r.travelled - r.netT, net = Math.sqrt((r.x - r.netX) ** 2 + (r.z - r.netZ) ** 2);
+    if (r.route === null && moved > TUNE.stallMin && net < moved * TUNE.stallNet) r.route = here;
+    r.netAt = world.tick; r.netX = r.x; r.netZ = r.z; r.netT = r.travelled;
   }
-  if (!onLake) {
-    if (gl >= TUNE.flatSlope) { fx = -g.x / gl; fz = -g.z / gl; wf = Math.min(1, gl / TUNE.fallSlope); }
-    else {
-      const n = tt.size, d = downhill(tt, cHere);
-      if (d >= 0) {
-        const ex = ((d % n) / (n - 1) - 0.5) * tt.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * tt.worldSize - r.z;
-        const el = Math.sqrt(ex * ex + ez * ez);
-        if (el > 1e-6) { fx = ex / el; fz = ez / el; wf = 1; }
-      }
-    }
-  }
-  if (wf > 0) {
+  const routeDir = () => {
+    const n = tt.size, d = downhill(tt, cellIndex(tt, r.x, r.z));
+    if (d < 0) return null;
+    const ex = ((d % n) / (n - 1) - 0.5) * tt.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * tt.worldSize - r.z;
+    const el = Math.sqrt(ex * ex + ez * ez);
+    return el > 1e-6 ? { x: ex / el, z: ez / el } : null;
+  };
+  let mx = r.dx, mz = r.dz;
+  if (r.route !== null) {
+    const d = routeDir();
+    if (d) { mx = d.x; mz = d.z; } else r.route = null;
+  } else if (!onLake && gl >= TUNE.flatSlope) {
+    const fx = -g.x / gl, fz = -g.z / gl, wf = Math.min(1, gl / TUNE.fallSlope);
     const up = mx * fx + mz * fz; // > 0: aimed downhill
     let bx = mx, bz = mz;
     if (up < 0) { bx -= up * fx; bz -= up * fz; } // drop the uphill part
@@ -535,7 +560,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   const ceiling = r.low + TUNE.climb;
   let v = r.speed;
   let nx = r.x + mx * v * DT, nz = r.z + mz * v * DT;
-  if (surfaceAt(world, nx, nz, me) > ceiling && gl > 1e-6) {
+  if (r.route === null && surfaceAt(world, nx, nz, me) > ceiling && gl > 1e-6) {
     // Slide along the contour, on the side the water is going.
     const ux = g.x / gl, uz = g.z / gl, d = mx * ux + mz * uz;
     const sx = mx - d * ux, sz = mz - d * uz, sl = Math.sqrt(sx * sx + sz * sz);
@@ -544,26 +569,21 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
       nx = r.x + mx * v * DT; nz = r.z + mz * v * DT;
     }
   }
-  if (surfaceAt(world, nx, nz, me) > ceiling) {
-    // Blocked head-on: water doesn't stall in a hollow, it fills it and spills
-    // out at its lowest point. The terrain's fill route (priority flood) leads
-    // from every cell to the sea without climbing, so the head follows it,
-    // its level rising with the water. The heading stays the player's.
-    const t = world.terrain, n = t.size, c = cellIndex(t, r.x, r.z), d = downhill(t, c);
-    if (onLake) r.shore = world.lakeOf[c];
-    if (d >= 0) {
-      const ex = ((d % n) / (n - 1) - 0.5) * t.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * t.worldSize - r.z;
-      const el = Math.sqrt(ex * ex + ez * ez);
-      const vs = Math.min(el / DT, Math.max(TUNE.minSpeed, TUNE.baseSpeed * mass * 0.5));
-      nx = el > 1e-6 ? r.x + (ex / el) * vs * DT : r.x;
-      nz = el > 1e-6 ? r.z + (ez / el) * vs * DT : r.z;
-      const rise = surfaceAt(world, nx, nz, me) - ceiling;
-      if (rise > 0) r.low += rise; // the hollow filled up to here
-      r.speed = Math.min(r.speed, vs);
+  if (r.route === null && surfaceAt(world, nx, nz, me) > ceiling) {
+    const d = routeDir();
+    if (d) {
+      r.route = here;
+      v = Math.max(TUNE.minSpeed, Math.min(r.speed, TUNE.baseSpeed * mass));
+      r.speed = v;
+      nx = r.x + d.x * v * DT; nz = r.z + d.z * v * DT;
     } else {
       nx = r.x; nz = r.z;
       r.speed *= 0.8;
     }
+  }
+  if (r.route !== null) {
+    const rise = surfaceAt(world, nx, nz, me) - ceiling;
+    if (rise > 0) r.low += rise; // the hollow filled up to here
   }
   moveTo(world, r, nx, nz);
   afterMove(world, r);
@@ -654,11 +674,14 @@ function resolveContacts(world) {
 // Water between rivers and lakes, once per tick:
 // - every river delivers its discharge (a share of its volume) into the lake its
 //   head is in and into every lake it has flowed through;
-// - each lake pours out through the outlets of the rivers that left it, each
-//   outlet carrying more the deeper it has eroded and the heavier its river;
-// - a full lake passes on at least what comes in; it only drains when its
-//   outlets carry more than its inflow, and never below what its deepest
-//   outlet has cut down to; while a head is pooled in it, nothing leaves;
+// - each lake pours out through the outlets of the rivers that left it. An
+//   outlet has a lip: the ground where it was cut, lowered as it erodes. Water
+//   only leaves over a lip below the lake's surface, faster the higher the
+//   surface stands over it, and never below it: lakes drain downhill, never
+//   up. A lip cut on a bank above the lake carries nothing;
+// - a lake only falls when its outlets carry more than comes in, and only as
+//   low as its lowest lip; while a head is pooled in it, nothing leaves, and a
+//   river doesn't drain the lake its own head is in;
 // - what flows through an outlet erodes it, so more flow means more erosion,
 //   more water for that river, more mass, faster, deeper.
 function hydrology(world) {
@@ -672,16 +695,18 @@ function hydrology(world) {
     if (r.inLake >= 0) inflow[r.inLake] += q;
     if (r.pooled >= 0) pooledIn[r.pooled] = 1;
     for (const [lake, o] of r.via) {
-      if (lake !== r.inLake) inflow[lake] += q;
+      if (lake === r.inLake) continue; // your own head is in it: you don't drain it
+      inflow[lake] += q;
       outlets.push([lake, r, o]);
     }
   }
-  const capOf = (r, o) => TUNE.outletK * o.e * r.size;
-  const want = new Float64Array(L), deepest = new Float64Array(L);
-  for (const [lake, r, o] of outlets) {
-    want[lake] += capOf(r, o);
-    if (o.e > deepest[lake]) deepest[lake] = o.e;
-  }
+  const t = world.terrain, level = new Float64Array(L);
+  for (let lake = 0; lake < L; lake++) level[lake] = lakeLevel(world, lake);
+  // Water over the lip, metres (0 when the lip stands above the surface).
+  const overLip = (lake, o) => Math.max(0, Math.min(TUNE.outletMax, level[lake] - (t.filled[o.cell] - o.e)));
+  const capOf = (lake, r, o) => TUNE.outletK * overLip(lake, o) * r.size;
+  const want = new Float64Array(L);
+  for (const [lake, r, o] of outlets) want[lake] += capOf(lake, r, o);
   const shares = new Map();
   for (let lake = 0; lake < L; lake++) {
     world.lakeIn[lake] = inflow[lake];
@@ -690,10 +715,8 @@ function hydrology(world) {
     vol[lake] += inflow[lake];
     let out = 0;
     if (!pooledIn[lake] && want[lake] > 0) {
-      const floor = cap[lake] * Math.max(TUNE.lakeFloor, 1 - deepest[lake] / TUNE.outletMax);
-      const over = Math.max(0, vol[lake] - cap[lake]);
-      // Spill what's over the brim, and up to what the outlets can carry above their sill.
-      out = Math.max(over, Math.min(want[lake], Math.max(0, vol[lake] - floor)));
+      // Spill what's over the brim, and what the outlets carry over their lips.
+      out = Math.min(vol[lake], Math.max(vol[lake] - cap[lake], want[lake]));
     }
     vol[lake] -= out;
     if (vol[lake] > cap[lake]) vol[lake] = cap[lake]; // brim-full with nowhere to go: the rest runs off
@@ -703,7 +726,7 @@ function hydrology(world) {
   for (const [lake, r, o] of outlets) {
     const share = shares.get(lake);
     if (!share) continue;
-    const q = capOf(r, o) * share;
+    const q = capOf(lake, r, o) * share;
     grow(r, q);
     r.inflow += q;
     o.e = Math.min(TUNE.outletMax, o.e + (TUNE.erodeK * q * r.size) / 1000);
@@ -842,7 +865,7 @@ function afterMove(world, r) {
     if (r.inLake >= 0) joinLake(world, r, r.inLake, here);
     r.inLake = lake;
     // Back in a lake you already drain: you run through it to your own outlet.
-    if (lake >= 0 && !r.via.has(lake) && world.lakeVol[lake] < world.lakeCap[lake] * TUNE.fullAt) {
+    if (lake >= 0 && !r.via.has(lake) && world.lakeVol[lake] < world.lakeCap[lake] * TUNE.poolBelow) {
       r.pooled = lake;
       r.pooledTicks = 0;
       world.events.push({ type: 'pool', lake, river: r.idx, tick: world.tick });

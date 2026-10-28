@@ -60,7 +60,8 @@ test('leaving a lake: mass jumps at once, an outlet opens, water keeps coming an
   assert.ok(o.e > e0, 'the outlet did not erode');
 });
 
-test('a lake only falls when more flows out than in, and not below its outlet floor', () => {
+test('a lake drains downhill only: never below its lowest lip, and not at all over a high bank', async () => {
+  const { lakeLevel } = await import('../../src/shared/river.js');
   const w = createWorld(t42);
   const { lake, inside, outCell, pos } = bigLake(w);
   const r = addRiver(w, 'a', inside);
@@ -68,12 +69,34 @@ test('a lake only falls when more flows out than in, and not below its outlet fl
   Object.assign(r, pos(outCell));
   for (let k = 0; k < 6; k++) step(w, new Map());
   assert.ok(w.lakeVol[lake.id] >= w.lakeCap[lake.id] * 0.9, 'drained with a fresh outlet');
-  // Cut the outlet deep and make the river heavy: outflow beats inflow and the level drops.
-  r.via.get(lake.id).e = TUNE.outletMax;
+  // Cut the spill outlet deep and make the river heavy: outflow beats inflow and the level drops,
+  // but only down to the outlet's lip.
+  const o = r.via.get(lake.id);
+  o.e = 8;
   r.volume = TUNE.startVolume * 16; r.size = 2;
-  for (let k = 0; k < 400; k++) step(w, new Map());
-  assert.ok(w.lakeVol[lake.id] < w.lakeCap[lake.id] * 0.9, 'a deep outlet did not drain it');
-  assert.ok(w.lakeVol[lake.id] >= w.lakeCap[lake.id] * TUNE.lakeFloor - 1, 'drained below the outlet floor');
+  for (let k = 0; k < 600; k++) { step(w, new Map()); o.e = 8; }
+  const lip = t42.filled[o.cell] - o.e;
+  assert.ok(w.lakeVol[lake.id] < w.lakeCap[lake.id] * 0.99, 'a cut outlet did not lower the lake');
+  assert.ok(lakeLevel(w, lake.id) >= lip - 0.05, `level ${lakeLevel(w, lake.id)} fell below the lip ${lip}`);
+  // An outlet on a bank above the lake carries nothing, however heavy the river.
+  const w2 = createWorld(t42);
+  const b = addRiver(w2, 'b', inside);
+  step(w2, new Map());
+  let bank = -1;
+  for (let k = 0; k < w2.lakeOf.length && bank < 0; k++) {
+    if (w2.lakeOf[k] >= 0 || t42.filled[k] < w2.lakeBrim[lake.id] + 1 || t42.filled[k] > w2.lakeBrim[lake.id] + 1.4) continue;
+    const n = t42.size;
+    if ([1, -1, n, -n].some((d) => w2.lakeOf[k + d] === lake.id)) bank = k;
+  }
+  assert.ok(bank >= 0, 'no high bank found');
+  Object.assign(b, pos(bank));
+  b.via.set(lake.id, { cell: bank, e: TUNE.outletStart * 0.5, born: 0 });
+  b.inLake = -1;
+  b.volume = TUNE.startVolume * 16; b.size = 2;
+  const v0 = w2.lakeVol[lake.id];
+  step(w2, new Map());
+  assert.equal(w2.lakeOut[lake.id], 0, 'water left over a lip above the lake');
+  assert.ok(w2.lakeVol[lake.id] >= v0, 'the lake drained uphill');
 });
 
 test('every start is at the same elevation', () => {

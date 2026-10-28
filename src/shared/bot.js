@@ -56,24 +56,17 @@ export function botSteer(world, bot) {
   const r = bot.river;
   if (!isRacing(r)) return 0;
   if (r.dropping) return botGlide(world, bot);
-  // Stuck against a rise (barely moved in 2 s): turn toward the fall line,
-  // the way a player would. The game itself never steers.
+  // Going nowhere (moving, but back and forth, or not at all) for 2 s: let
+  // go of the stick for a few seconds so the water finds its own way out, the
+  // way a player would. The game itself never steers.
   if (world.tick % 40 === 0) {
-    bot.stuck = bot.lastTravelled !== undefined && r.travelled - bot.lastTravelled < 60;
-    bot.lastTravelled = r.travelled;
+    if (bot.at) {
+      const moved = r.travelled - bot.at.t, net = Math.sqrt((r.x - bot.at.x) ** 2 + (r.z - bot.at.z) ** 2);
+      if (r.pooled < 0 && net < Math.max(40, moved * 0.35)) bot.hands = world.tick + 60;
+    }
+    bot.at = { x: r.x, z: r.z, t: r.travelled };
   }
-  if (bot.stuck && r.pooled < 0) {
-    const h = world.terrain.cell;
-    const gx = surfaceAt(world, r.x + h, r.z, r.idx) - surfaceAt(world, r.x - h, r.z, r.idx);
-    const gz = surfaceAt(world, r.x, r.z + h, r.idx) - surfaceAt(world, r.x, r.z - h, r.idx);
-    // Fall line (-gx, -gz) relative to heading: on the left if cross > 0.
-    const cross = -gx * r.dz - -gz * r.dx;
-    const ahead = -gx * r.dx + -gz * r.dz;
-    // Turn until roughly facing downhill, then hold straight (a stale turn would spin).
-    bot.steer = ahead < 0.99 * Math.sqrt(gx * gx + gz * gz) ? (cross > 0 ? -1 : 1) : 0;
-    bot.next = world.tick + bot.think;
-    return bot.steer;
-  }
+  if (world.tick < (bot.hands ?? -1)) { bot.steer = 0; return 0; }
   if (world.tick < bot.next) return bot.steer;
   bot.next = world.tick + bot.think;
 
@@ -100,9 +93,9 @@ export function botSteer(world, bot) {
       const k = cellIndex(t, p.x, p.z);
       const lake = world.lakeOf[k];
       if (lake >= 0 && !r.via.has(lake)) {
-        // A full lake you haven't joined pays at once and keeps paying; one below
-        // full holds you until the rivers in it fill it, so only big rivers take it on.
-        const full = world.lakeVol[lake] >= world.lakeCap[lake] * TUNE.fullAt;
+        // A lake with water you haven't joined pays at once and keeps paying; a
+        // near-empty basin holds you until it fills, so only big rivers take it on.
+        const full = world.lakeVol[lake] >= world.lakeCap[lake] * TUNE.poolBelow;
         score += (full ? (0.6 + bot.skill) * w : -(1.6 - 0.5 * Math.min(2, r.size - 1)) * w) / path.length * 3;
       }
       if (world.lava[k]) score -= (3 * w) / path.length * 3; // lava boils water off

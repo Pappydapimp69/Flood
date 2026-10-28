@@ -35,19 +35,20 @@ test('a dry basin: the head pools and the basin rises by the river\'s discharge'
 });
 
 test('two rivers fill a basin about twice as fast, then both flow on', () => {
-  const ticksToFill = (n) => {
+  const run = (n) => {
     const w = createWorld(t1);
     const at = inBasin(w);
     const rs = Array.from({ length: n }, (_, i) => addRiver(w, `r${i}`, at));
-    let k = 0;
-    while (rs.some((r) => r.pooled >= 0 || k === 0) && k < TUNE.maxPoolTicks + 5) { step(w, new Map()); k++; }
+    for (let k = 0; k < 40; k++) step(w, new Map());
+    const filled = w.lakeVol[w.basins[0]];
+    for (let k = 0; k < TUNE.maxPoolTicks + 5 && rs.some((r) => r.pooled >= 0); k++) step(w, new Map());
     assert.ok(rs.every((r) => r.pooled < 0), 'still pooled');
     assert.ok(w.lakeVol[w.basins[0]] >= w.lakeCap[w.basins[0]] * TUNE.fullAt);
-    assert.ok(w.events.filter((e) => e.type === 'spill').length === n);
-    return k;
+    assert.equal(w.events.filter((e) => e.type === 'spill').length, n);
+    return filled;
   };
-  const one = ticksToFill(1), two = ticksToFill(2);
-  assert.ok(two < one * 0.65, `one river ${one} ticks, two ${two}`);
+  const one = run(1), two = run(2);
+  assert.ok(two > one * 1.7, `in 2 s one river put in ${one | 0} L, two ${two | 0} L`);
 });
 
 test('pooling has a guaranteed exit', () => {
