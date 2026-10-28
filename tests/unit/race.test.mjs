@@ -123,16 +123,24 @@ test('standings are complete and ordered: finishers, then racers, then the drain
   }
 });
 
-// Comparative check, built against the baseline's best case: a river that never steers
-// still reaches the sea on these maps. Bots should still place better on average.
+// Doing nothing should not win: water flows downhill on its own, but steering
+// well (as the bots do) should place clearly better on average.
 test('bots place better than rivers that never steer', () => {
+  // Races as the game runs them: rerolled islands, everyone dropping in.
   let bot = 0, botN = 0, passive = 0, passiveN = 0;
-  for (const seed of islands.keys()) {
-    standings(race(seed)).forEach((r, i) => {
+  for (const seed of [11, 222, 3333, 44444]) {
+    const { world: w } = rollIsland(seed, ids.length);
+    const bots = new Map();
+    for (const id of ids) {
+      const r = addRiver(w, id, undefined, { drop: true });
+      if (!PASSIVE.has(id)) bots.set(id, createBot(w, r));
+    }
+    for (let k = 0; k < TICK_HZ * 330 && w.rivers.some(isRacing); k++) step(w, new Map([...bots].map(([id, b]) => [id, botSteer(w, b)])));
+    standings(w).forEach((r, i) => {
       if (PASSIVE.has(r.id)) { passive += i; passiveN++; } else { bot += i; botN++; }
     });
   }
-  assert.ok(bot / botN < passive / passiveN, `bots avg place ${(bot / botN).toFixed(2)} vs passive ${(passive / passiveN).toFixed(2)}`);
+  assert.ok(bot / botN < passive / passiveN - 1, `bots avg place ${(bot / botN).toFixed(2)} vs passive ${(passive / passiveN).toFixed(2)}`);
 });
 
 test('drop: 30 s of fall, steerable anywhere, touchdown on the start contour with grace from then', async () => {

@@ -80,3 +80,22 @@ test('digging stays on land and never cuts below sea level', () => {
   }
   assert.ok(dug > 100, `only ${dug} cells dug`);
 });
+
+// Water runs downhill on its own: a river nobody steers keeps flowing, it
+// doesn't sit at a crawl against a rise or rock in a hollow.
+test('a river left alone keeps flowing', async () => {
+  const { rollIsland } = await import('../../src/shared/river.js');
+  let crawl = 0, all = 0;
+  for (const seed of [7, 345678]) {
+    const { world: w } = rollIsland(seed, 12);
+    for (let i = 0; i < 12; i++) addRiver(w, `p${String(i).padStart(2, '0')}`, undefined, { drop: true });
+    for (let k = 0; k < TUNE.dropTicks + TICK_HZ * 90; k++) {
+      step(w, new Map());
+      if (k < TUNE.dropTicks + TICK_HZ * 5) continue;
+      for (const r of w.rivers) if (isRacingRiver(r)) { all++; if (r.speed <= TUNE.minSpeed + 1) crawl++; }
+    }
+    for (const r of w.rivers) if (!r.out) assert.ok(r.travelled > 3000, `${seed} ${r.id} only went ${r.travelled | 0} m in 90 s`);
+  }
+  assert.ok(crawl / all < 0.12, `crawling ${(100 * crawl / all).toFixed(0)}% of the time`);
+});
+const isRacingRiver = (r) => !r.finished && !r.out && r.pooled < 0;

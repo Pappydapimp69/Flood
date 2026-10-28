@@ -17,7 +17,10 @@ export const TUNE = {
   climb: 1.5, // metres the head may sit above the lowest point it has reached
   pool: 0.3, // metres a blocked head's water rises per tick...
   pondMax: 3, // ...but only this far: water fills a dent, it doesn't climb a hill
-  slideMin: 0.15, // heading share along the contour needed to slide past a slope
+  slideMin: 0.15,
+  flatSlope: 0.004, // below this the ground counts as flat: follow the fill's route out
+  fallSlope: 0.04, // slope (m per m) at which the fall line pulls the water at full strength
+  headingPull: 0.9, // the heading's weight against the fall line's 1: under 1, water never runs uphill // heading share along the contour needed to slide past a slope
   width: 110, // channel width at starting size, metres
   depth: 7, // channel depth at starting size, metres
   maxWidth: 420,
@@ -481,40 +484,62 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   const gl = Math.sqrt(g.x * g.x + g.z * g.z);
   if (here < r.low) { r.low = here; r.ponded = 0; }
 
+  // Water runs downhill on its own. It flows down the fall line bent toward
+  // the player's heading: aimed downhill it goes where it's aimed, aimed
+  // across the slope it drifts down as it goes, never up. The heading itself
+  // only ever turns when the player steers.
+  // On a flat (a filled-in hollow) there's no slope to follow, so the water
+  // takes the terrain's own route out of it, toward its spill point.
+  let mx = r.dx, mz = r.dz, fx = 0, fz = 0, wf = 0;
+  if (gl >= TUNE.flatSlope) { fx = -g.x / gl; fz = -g.z / gl; wf = Math.min(1, gl / TUNE.fallSlope); }
+  else {
+    const t = world.terrain, n = t.size, c = cellIndex(t, r.x, r.z), d = downhill(t, c);
+    if (d >= 0) {
+      const ex = ((d % n) / (n - 1) - 0.5) * t.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * t.worldSize - r.z;
+      const el = Math.sqrt(ex * ex + ez * ez);
+      if (el > 1e-6) { fx = ex / el; fz = ez / el; wf = 1; }
+    }
+  }
+  if (wf > 0) {
+    const bx = fx * wf + r.dx * TUNE.headingPull, bz = fz * wf + r.dz * TUNE.headingPull;
+    const bl = Math.sqrt(bx * bx + bz * bz);
+    if (bl > 1e-6) { mx = bx / bl; mz = bz / bl; }
+  }
   const mass = 1 + TUNE.speedPerSize * (r.size - 1);
-  const along = -(g.x * r.dx + g.z * r.dz); // downhill slope along the heading
+  const along = -(g.x * mx + g.z * mz); // downhill slope along the way the water goes
   const target = Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, TUNE.baseSpeed * mass + TUNE.slopeSpeed * along));
   r.speed += (target - r.speed) * (TUNE.speedEase / r.size); // momentum: heavy water changes speed slowly
   r.depth = depthOf(r);
 
   const ceiling = r.low + TUNE.climb;
-  let mx = r.dx, mz = r.dz, v = r.speed;
+  let v = r.speed;
   let nx = r.x + mx * v * DT, nz = r.z + mz * v * DT;
   if (surfaceAt(world, nx, nz, me) > ceiling && gl > 1e-6) {
-    // Slide along the contour, on the side the heading points to.
-    const ux = g.x / gl, uz = g.z / gl, d = r.dx * ux + r.dz * uz;
-    const sx = r.dx - d * ux, sz = r.dz - d * uz, sl = Math.sqrt(sx * sx + sz * sz);
+    // Slide along the contour, on the side the water is going.
+    const ux = g.x / gl, uz = g.z / gl, d = mx * ux + mz * uz;
+    const sx = mx - d * ux, sz = mz - d * uz, sl = Math.sqrt(sx * sx + sz * sz);
     if (sl > TUNE.slideMin) {
       mx = sx / sl; mz = sz / sl; v = r.speed * sl;
       nx = r.x + mx * v * DT; nz = r.z + mz * v * DT;
     }
   }
   if (surfaceAt(world, nx, nz, me) > ceiling) {
-    // Blocked head-on: the water finds its way around small lumps at a creep,
-    // down the slope right here (the heading stays the player's). If even that
-    // rises, it ponds a little against the rise and slows.
-    const h = 5;
-    const fx = surfaceAt(world, r.x - h, r.z, me) - surfaceAt(world, r.x + h, r.z, me);
-    const fz = surfaceAt(world, r.x, r.z - h, me) - surfaceAt(world, r.x, r.z + h, me);
-    const fl = Math.sqrt(fx * fx + fz * fz);
-    const cx = fl > 1e-6 ? r.x + (fx / fl) * TUNE.minSpeed * DT : r.x;
-    const cz = fl > 1e-6 ? r.z + (fz / fl) * TUNE.minSpeed * DT : r.z;
-    if (fl > 1e-6 && surfaceAt(world, cx, cz, me) <= ceiling) {
-      nx = cx; nz = cz;
-      r.speed = Math.min(r.speed, TUNE.minSpeed);
+    // Blocked head-on: water doesn't stall in a hollow, it fills it and spills
+    // out at its lowest point. The terrain's fill route (priority flood) leads
+    // from every cell to the sea without climbing, so the head follows it,
+    // its level rising with the water. The heading stays the player's.
+    const t = world.terrain, n = t.size, c = cellIndex(t, r.x, r.z), d = downhill(t, c);
+    if (d >= 0) {
+      const ex = ((d % n) / (n - 1) - 0.5) * t.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * t.worldSize - r.z;
+      const el = Math.sqrt(ex * ex + ez * ez);
+      const vs = Math.min(el / DT, Math.max(TUNE.minSpeed, TUNE.baseSpeed * mass * 0.5));
+      nx = el > 1e-6 ? r.x + (ex / el) * vs * DT : r.x;
+      nz = el > 1e-6 ? r.z + (ez / el) * vs * DT : r.z;
+      const rise = surfaceAt(world, nx, nz, me) - ceiling;
+      if (rise > 0) r.low += rise; // the hollow filled up to here
+      r.speed = Math.min(r.speed, vs);
     } else {
       nx = r.x; nz = r.z;
-      if (r.ponded < TUNE.pondMax) { r.low += TUNE.pool; r.ponded += TUNE.pool; }
       r.speed *= 0.8;
     }
   }
@@ -859,7 +884,7 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
       const w = d <= rad ? 1 : 1 - (d - rad) / feather;
       const want = (ground - bed) * w; // carve down to the bed, less at the banks
       if (want > world.carve[k]) {
-        world.carve[k] = Math.min(want, depth * 3);
+        world.carve[k] = Math.min(want, depth * 3, Math.max(0, t.height[k] + world.rock[k] - SEA_LEVEL - 0.5)); // never below the sea
         world.owner[k] = r.idx;
         world.dirty.push(k);
       }
