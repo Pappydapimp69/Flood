@@ -9,7 +9,7 @@ const shotDir = process.argv[2];
 const server = await serve(0);
 const root = `http://127.0.0.1:${server.address().port}/`;
 // Most checks skip the opening sky drop (?nodrop); the drop has its own check.
-const base = `${root}?seed=1&nodrop`;
+const base = `${root}?seed=1&nodrop&lite`;
 const browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'] });
 
 const state = (page) => page.evaluate(() => {
@@ -36,6 +36,8 @@ const turned = (a, b) => Math.atan2(a.dx * b.dz - a.dz * b.dx, a.dx * b.dx + a.d
 const fails = [];
 async function check(name, fn) {
   try { await fn(); console.log(`ok   ${name}`); } catch (e) { fails.push(name); console.error(`FAIL ${name}: ${e.message}`); }
+  // A failed check must not leave its page rendering: it would starve every later one.
+  for (const ctx of browser.contexts()) await ctx.close().catch(() => {});
 }
 
 await check('river flows and digs on its own', async () => {
@@ -124,7 +126,7 @@ await check('race: rank shows, and a drained player spectates the winner', async
   await page.goto(base);
   await until(page, (s) => s.ready, 'ready');
   const rank = await page.evaluate(() => document.getElementById('rank').textContent);
-  if (!/^#\d+\/12 · \d+ flowing$/.test(rank)) throw new Error(`rank text: ${rank}`);
+  if (!/^#\d+\/12\d+ flowing$/.test(rank)) throw new Error(`rank text: ${rank}`);
   const s0 = await state(page);
   await until(page, (s) => s.tick > s0.tick + 110, 'past spawn grace');
   // Shrink the player and drop a bot on its head: next tick it must be absorbed.
@@ -138,8 +140,8 @@ await check('race: rank shows, and a drained player spectates the winner', async
   for (let i = 0; i < 100; i++) {
     const r = await page.evaluate(() => ({ out: __flood.river.out, focus: __flood.focus.id, banner: document.getElementById('banner').hidden ? '' : document.getElementById('banner').textContent }));
     if (r.out && r.banner) {
-      const by = await page.evaluate(() => window.__absorber);
-      if (r.out.by !== by || r.focus !== by || !r.banner.includes(`Drained dry by ${by}`)) throw new Error(JSON.stringify(r));
+      const by = await page.evaluate(() => window.__absorber), byName = await page.evaluate((id) => __flood.nameOf(id), by);
+      if (r.out.by !== by || r.focus !== by || !r.banner.includes(`Drained dry by ${byName}`)) throw new Error(JSON.stringify(r));
       if (shotDir) await page.screenshot({ path: `${shotDir}/play-race.png` });
       const rows = await page.evaluate(() => document.querySelectorAll('#banner li').length);
       if (rows < 6) throw new Error(`results list has ${rows} rows`);
@@ -169,7 +171,7 @@ await check('tug-of-war: a deeper rival on you shows the drain warning and takes
     }, 20);
     await new Promise((res) => setTimeout(res, 2500));
     clearInterval(park);
-    return { warned, lost: v0 - me.volume, bot: bot.id, tag: document.querySelector('#tags div.threat')?.textContent ?? '' };
+    return { warned, lost: v0 - me.volume, bot: __flood.nameOf(bot.id), tag: document.querySelector('#tags div.threat')?.textContent ?? '' };
   });
   if (!r.warned.includes(r.bot)) throw new Error(`no drain warning naming ${r.bot}: ${JSON.stringify(r)}`);
   if (!(r.lost > 0)) throw new Error(`player lost no water: ${JSON.stringify(r)}`);
@@ -197,7 +199,7 @@ await check('lakes are full and a river skates across without stopping', async (
 
 await check('sky drop: fall with a countdown and a landing ring, steer and hurry, land on the contour', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
-  await page.goto(`${root}?seed=1&nohint`);
+  await page.goto(`${root}?seed=1&nohint&lite`);
   await until(page, (s) => s.ready, 'ready');
   const d0 = await page.evaluate(() => ({ dropping: __flood.river.dropping, alt: __flood.river.alt, hud: document.getElementById('dist').textContent, x: __flood.river.x, z: __flood.river.z, dx: __flood.river.dx, dz: __flood.river.dz }));
   if (!(d0.dropping > 0 && d0.alt > 0)) throw new Error(`not falling at the start: ${JSON.stringify(d0)}`);

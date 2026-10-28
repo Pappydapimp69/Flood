@@ -108,18 +108,22 @@ function terrainMaterial() {
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         {
           // Rocky relief the 100 m grid can't carry: bump the lighting normal by
-          // noise, strong on steep rock, gentle on grass, gone in the distance.
+          // a noise height, strong on steep rock, gentle on grass, off in the
+          // distance. One noise sample; its slope comes from screen-space
+          // derivatives (standard bump mapping), so it costs little per pixel.
           float dist = length(cameraPosition - vWPos);
-          float near = 1.0 - smoothstep(2500.0, 9000.0, dist);
-          float slope = 1.0 - clamp(vWNorm.y, 0.0, 1.0);
-          float k = (0.35 + 1.4 * smoothstep(0.25, 0.6, slope)) * near;
-          vec2 p = vWPos.xz;
-          float e = 9.0;
-          #define BH(q) (tn((q) * 0.012) * 0.55 + tn((q) * 0.035) * 0.3 + tn((q) * 0.09) * 0.15)
-          float gx = BH(p + vec2(e, 0.0)) - BH(p - vec2(e, 0.0));
-          float gz = BH(p + vec2(0.0, e)) - BH(p - vec2(0.0, e));
-          vec3 wn = normalize(vWNorm + vec3(-gx, 0.0, -gz) * k * 5.0);
-          normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz);
+          if (dist < 9000.0) {
+            float near = 1.0 - smoothstep(2500.0, 9000.0, dist);
+            float slope = 1.0 - clamp(vWNorm.y, 0.0, 1.0);
+            float k = (0.35 + 1.4 * smoothstep(0.25, 0.6, slope)) * near * 14.0;
+            float h = (tn(vWPos.xz * 0.012) * 0.65 + tn(vWPos.xz * 0.04) * 0.35) * k;
+            vec3 sx = dFdx(vWPos), sy = dFdy(vWPos), vn = normalize(vWNorm);
+            vec3 r1 = cross(sy, vn), r2 = cross(vn, sx);
+            float det = dot(sx, r1);
+            vec3 grad = sign(det) * (dFdx(h) * r1 + dFdy(h) * r2);
+            vec3 wn = normalize(abs(det) * vn - grad);
+            normal = normalize((viewMatrix * vec4(wn, 0.0)).xyz);
+          }
         }`);
   };
   return mat;

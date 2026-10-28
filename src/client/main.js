@@ -30,7 +30,9 @@ function fail(msg) {
 
 // Phones and tablets: no MSAA and a lower pixel-ratio cap; fill rate is the bottleneck there.
 const lowPower = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)').matches;
-const maxRatio = lowPower ? 1.5 : 2;
+// ?lite (tests on software rendering): quarter-resolution, no trees or boulders.
+const lite = new URLSearchParams(location.search).has('lite');
+const maxRatio = lite ? 0.5 : lowPower ? 1.5 : 2;
 
 let renderer;
 try {
@@ -227,8 +229,8 @@ function beginRace(seed, raceIds, me, rolled) {
     scene.remove(m);
     m.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); o.dispose?.(); });
   }
-  trees = buildTrees(world, lowPower ? 2500 : 7000);
-  rocks = buildRocks(world, lowPower ? 1200 : 3500);
+  trees = buildTrees(world, lite ? 0 : lowPower ? 2500 : 7000);
+  rocks = buildRocks(world, lite ? 0 : lowPower ? 1200 : 3500);
   scene.add(rocks);
   lava = buildLava(world);
   scene.add(trees, lava);
@@ -891,6 +893,7 @@ renderer.setAnimationLoop(() => {
 
 Object.assign(dbg, {
   renderer, scene, camera, audio,
+  nameOf: (id) => names[id] ?? id, // display name for a river id (rivals have names in solo)
   riverFingerprint: () => riverFingerprint(world),
   newRun,
 });

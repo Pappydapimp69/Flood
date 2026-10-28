@@ -45,7 +45,7 @@ try {
   const a = await ctxA.newPage(), b = await ctxB.newPage();
   errs = [];
   for (const p of [a, b]) p.on('pageerror', (e) => errs.push(e.message));
-  await Promise.all([a.goto(`${base}?online&name=Ann`), b.goto(`${base}?online&name=Bo`)]);
+  await Promise.all([a.goto(`${base}?online&lite&name=Ann`), b.goto(`${base}?online&lite&name=Bo`)]);
 
   const va = await until(a, (v) => v.you, 'A in race');
   const vb = await until(b, (v) => v.you, 'B in race');
