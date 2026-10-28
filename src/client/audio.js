@@ -32,7 +32,16 @@ export function createAudio() {
       bed = { filter, gain };
     } catch { ctx = null; }
   }
-  for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, start, { once: false, passive: true });
+  // Browsers only let sound start from a click, tap or key press (a gamepad
+  // button doesn't count). Every such gesture starts or wakes the audio and
+  // the music, however the page was opened.
+  const wake = () => {
+    start();
+    if (!ctx) return;
+    if (ctx.state === 'suspended') ctx.resume?.().catch(() => {});
+    loadTracks();
+  };
+  for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, wake, { once: false, passive: true });
 
   function blip(f0, f1, dur, vol) {
     if (!ctx || muted) return;
@@ -148,5 +157,7 @@ export function createAudio() {
     },
     get muted() { return muted; },
     get playing() { return playing?.name ?? (music ? 'generative' : null); },
+    // True while the browser is holding sound back until a click or key press.
+    get blocked() { return !muted && (!ctx || ctx.state !== 'running'); },
   };
 }

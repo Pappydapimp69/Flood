@@ -156,7 +156,9 @@ input.onPad = () => {
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
-const showMute = () => { muteBtn.textContent = audio.muted ? '🔇' : '🔊'; };
+const showMute = () => { muteBtn.textContent = audio.muted ? '🔇' : audio.blocked ? '🔈 click for sound' : '🔊'; };
+// A gamepad press can't start sound in a browser: say so until a click or key wakes it.
+setInterval(showMute, 1000);
 muteBtn.onclick = () => { audio.toggle(); showMute(); };
 showMute();
 const hud = {
