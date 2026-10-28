@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { generateIsland, stats, fingerprint } from '../shared/terrain.js';
+import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
 import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
-import { buildTerrainMesh, buildSea, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
+import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
+import { buildSea, buildLakes, makeSurge, makeSpray, updateSpray, tickWater } from './water.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
 import { connect } from './net.js';
@@ -48,16 +49,17 @@ const sun = new THREE.DirectionalLight('#fff3dc', 2.2);
 scene.add(sun);
 
 // The island changes per race online, so its meshes are rebuilt on demand.
-let terrain, terrainMesh, seabed, sea, W;
+let terrain, terrainMesh, seabed, sea, lakesMesh, W;
 function useIsland(seed, made) {
   if (terrain?.seed === seed) return;
-  for (const m of [terrainMesh, seabed, sea]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+  for (const m of [terrainMesh, seabed, sea, lakesMesh]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
   terrain = made ?? generateIsland(seed);
   W = terrain.worldSize;
   terrainMesh = buildTerrainMesh(terrain);
   seabed = buildSeabed(terrain);
-  sea = buildSea(W);
-  scene.add(terrainMesh, seabed, sea);
+  sea = buildSea(terrain);
+  lakesMesh = buildLakes(terrain, findLakes(terrain).label);
+  scene.add(terrainMesh, seabed, sea, lakesMesh);
   sun.position.set(-W * 0.6, W * 0.5, -W * 0.3);
   Object.assign(dbg, { seed, fingerprint: fingerprint(terrain), stats: stats(terrain) });
 }
@@ -65,7 +67,6 @@ function useIsland(seed, made) {
 const PLAYER_COLOR = '#45d2ff';
 const BOT_COLORS = ['#4f8fd0', '#4fb39a', '#7d84d8', '#3fa8b8', '#6c95e8', '#58a77f', '#9480d8', '#3f93c4', '#6fae8f', '#8496e0', '#4c9aa8'];
 const headGeo = new THREE.SphereGeometry(1, 20, 12);
-const spillGeo = new THREE.RingGeometry(0.82, 1, 32).rotateX(-Math.PI / 2);
 const streakGeo = new THREE.CylinderGeometry(0.15, 1, 1, 8, 1, true).translate(0, 0.5, 0);
 // Where your drop will touch down if you keep this heading: a ring on the start contour.
 const marker = new THREE.Mesh(
@@ -116,16 +117,10 @@ function makeEntry(r, i) {
   }));
   // The streak a falling drop leaves, like the trailer's rain of rivers.
   const streak = new THREE.Mesh(streakGeo, new THREE.MeshBasicMaterial({ color: mine ? '#bff3ff' : '#d8eef5', transparent: true, opacity: 0.55, depthWrite: false }));
-  // The head is a faucet: water keeps spilling out of it in rings of foam
-  // that spread and fade, wider and faster the more it pours.
-  const spill = [0, 1, 2].map(() => {
-    const m = new THREE.Mesh(spillGeo, new THREE.MeshBasicMaterial({ color: '#f4feff', transparent: true, opacity: 0, depthWrite: false }));
-    m.renderOrder = 1;
-    scene.add(m);
-    return m;
-  });
-  scene.add(ribbon.mesh, head, streak);
-  return { r, ribbon, head, streak, spill, prev: { x: r.x, z: r.z } };
+  // On the ground the head is a foaming surge throwing spray, as in the trailer.
+  const surge = makeSurge(mine), spray = makeSpray();
+  scene.add(ribbon.mesh, head, streak, surge, spray);
+  return { r, ribbon, head, streak, surge, spray, prev: { x: r.x, z: r.z }, mx: r.dx, mz: r.dz };
 }
 
 const camera = new THREE.PerspectiveCamera(55, 1, 20, 400000);
@@ -188,9 +183,9 @@ let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 // rolled: a world already built for this seed (solo rolls it), else built here.
 function beginRace(seed, raceIds, me, rolled) {
   for (const e of entries) {
-    scene.remove(e.ribbon.mesh, e.head, e.streak, ...e.spill);
+    scene.remove(e.ribbon.mesh, e.head, e.streak, e.surge, e.spray);
     e.ribbon.geo.dispose(); e.head.material.dispose(); e.streak.material.dispose();
-    for (const m of e.spill) m.material.dispose();
+    e.surge.material.dispose(); e.spray.geometry.dispose(); e.spray.material.dispose();
   }
   useIsland(seed, rolled?.terrain);
   world = rolled?.terrain === terrain ? rolled : createWorld(terrain);
@@ -655,40 +650,34 @@ renderer.setAnimationLoop(() => {
     const hx = e.prev.x + (r.x - e.prev.x) * alpha, hz = e.prev.z + (r.z - e.prev.z) * alpha;
     // A falling drop sits its altitude above the ground (true metres, not exaggerated).
     const hy = surfaceAt(world, hx, hz, r.idx) * VERT + (r.dropping ? (r.alt - (r.alt - (e.prevAlt ?? r.alt)) * (1 - alpha)) : 0);
-    e.head.visible = !r.out;
-    e.head.position.set(hx, hy + 8, hz);
     const big = mapView ? 6 : 1; // heads read as markers on the map
+    // Falling: a stretched drop with its streak. Flowing: the surge.
+    e.head.visible = !r.out && (!!r.dropping || mapView);
+    e.head.position.set(hx, hy + 8, hz);
     e.streak.visible = !!r.dropping;
     if (r.dropping) { e.streak.position.set(hx, hy, hz); e.streak.scale.set(28, 1400, 28); }
-    if (r.dropping) e.head.scale.set(45 * big, 130 * big, 45 * big); // a falling drop, stretched
+    if (r.dropping) e.head.scale.set(45 * big, 130 * big, 45 * big);
     else e.head.scale.set(55 * r.size * big, 30 * r.size * big, 55 * r.size * big);
-    // Foam rings pour out of the head; a pooled head spills wider, filling its basin.
-    const pouring = !r.dropping && !r.out && !r.finished && !mapView;
-    const rate = Math.min(2.5, dischargeOf(r) / TUNE.discharge); // 1 at start size
-    for (let i = 0; i < e.spill.length; i++) {
-      const m = e.spill[i];
-      m.visible = pouring;
-      if (!pouring) continue;
-      const ph = ((now / 1000) * (0.8 + 0.3 * rate) + i / e.spill.length) % 1;
-      const filling = r.inLake >= 0 && world.lakeVol[r.inLake] < world.lakeCap[r.inLake] * TUNE.fullAt;
-      const reach = (filling ? 260 : 150) * r.size * (0.4 + 1.2 * ph);
-      m.position.set(hx + r.dx * 40 * ph, hy + 4, hz + r.dz * 40 * ph);
-      m.scale.set(reach, 1, reach);
-      m.material.opacity = 0.75 * (1 - ph);
+    const flowing = !r.dropping && !r.out && !mapView;
+    e.surge.visible = flowing;
+    if (flowing) {
+      // Face the way the water actually moves (eased), not the raw heading.
+      const vx = r.x - e.prev.x, vz = r.z - e.prev.z, vl = Math.hypot(vx, vz);
+      if (vl > 0.5) { e.mx += (vx / vl - e.mx) * 0.2; e.mz += (vz / vl - e.mz) * 0.2; }
+      const ml = Math.hypot(e.mx, e.mz) || 1;
+      const s = r.size * (r.finished ? 1.4 : 1);
+      e.surge.position.set(hx, hy + 6 * s, hz);
+      e.surge.scale.set(95 * s, 46 * s, 120 * s);
+      e.surge.rotation.set(0, Math.atan2(e.mx / ml, e.mz / ml), 0);
     }
-    // Threat at a glance: red heads would absorb you, green ones you can absorb.
-    if (river && r !== river) {
-      const t = threatOf(r);
-      e.head.material.emissive.set(t > 0 ? '#a8281c' : t < 0 ? '#2f8a3a' : '#7a6a1c');
-      e.head.material.color.set(t > 0 ? '#ffb3a8' : t < 0 ? '#c9f5c4' : '#f5e9b0');
-    }
-    e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
+    updateSpray(e.spray, hx, hy, hz, e.mx, e.mz, r.size, Math.min(1, r.speed / 200), frameDt, flowing && !r.finished);    e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
     e.ribbon.update(world, r, hx, hz, now / 1000);
     if (r === focus) { fx = hx; fz = hz; fy = hy; }
   }
 
   placeTags();
   pulseLava(lava, now / 1000);
+  tickWater([sea, lakesMesh, ...entries.map((e) => e.surge)], now / 1000);
   showMarker(now, fx, fy, fz);
   showDownhill(now);
   if (mapView) {
@@ -712,11 +701,15 @@ renderer.setAnimationLoop(() => {
       camDir.rotateAround(new THREE.Vector2(0, 0), turn).normalize();
     }
     const view = camDir.clone().rotateAround(new THREE.Vector2(0, 0), camYaw);
-    const back = 1300, want = new THREE.Vector3(fx - view.x * back, Math.max(fy, 0) + 1100, fz - view.y * back);
+    // Low and close behind the surge, like the trailer; it pulls back as the
+    // river grows, and sits high while falling.
+    const sz = focus.size ?? 1;
+    const back = falling ? 1300 : 560 + 160 * sz, up = falling ? 1100 : 300 + 110 * sz;
+    const want = new THREE.Vector3(fx - view.x * back, Math.max(fy, 0) + up, fz - view.y * back);
     // Stay above the ground along the whole sightline, not just at the camera.
     for (let f = 0.25; f <= 1; f += 0.25) {
       const g = surfaceAt(world, fx - view.x * back * f, fz - view.y * back * f) * VERT;
-      want.y = Math.max(want.y, g + 250 + 400 * f);
+      want.y = Math.max(want.y, g + 120 + 220 * f);
     }
     const kXZ = 1 - Math.exp(-frameDt * 5);
     camera.position.x += (want.x - camera.position.x) * kXZ;
@@ -724,7 +717,8 @@ renderer.setAnimationLoop(() => {
     const kY = 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
     camera.position.y += (want.y - camera.position.y) * kY;
     camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
-    camTarget.lerp(new THREE.Vector3(fx + view.x * 600, fy, fz + view.y * 600), 1 - Math.exp(-frameDt * 6));
+    const ahead = falling ? 600 : 380 + 80 * sz;
+    camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
   }
 

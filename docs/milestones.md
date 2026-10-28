@@ -249,3 +249,11 @@ biggest at 60 s won 0/10 (no snowball).
 - Gamepad support shipped earlier in this cycle (stick/D-pad, A, X, Y; menu navigation).
 - Tests: drop timing, glide stays in the zone, grace from touchdown; play test for the
   countdown, steering the landing and flowing after.
+
+## M14 — Water that looks like the trailer (done)
+- One turquoise water language for river, lakes and sea (`src/client/water.js`): deep down the middle,
+  pale toward the edges, white foam at every shore and bank, streaks running with the flow.
+- River head is a churning surge (noise-displaced, crested with foam) throwing spray, not a ball.
+- Lakes are their own water surface at brim level with shore foam; tiny filled hollows under 1 m stay land.
+- The sea reads its depth from the terrain: turquoise shallows, navy deep, surf lines rolling into the coast.
+- Chase camera sits low and close behind the surge (pulls back as the river grows), as in the trailer.

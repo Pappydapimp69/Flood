@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { VERT } from './terrainMesh.js';
 import { surfaceAt, TUNE } from '../shared/river.js';
+import { NOISE, WATER } from './water.js';
 
 const MAX_POINTS = 8000;
 
@@ -26,6 +27,7 @@ const vertex = /* glsl */ `
 `;
 const fragment = /* glsl */ `
   uniform vec3 uColor;
+  uniform vec3 uDeep, uShallow, uFoam;
   uniform float uTime;
   uniform float uTick;
   uniform float uLive;
@@ -34,18 +36,25 @@ const fragment = /* glsl */ `
   varying float vSide;
   varying float vBorn;
   #include <fog_pars_fragment>
+  ${NOISE}
   void main() {
     float age = uTick - vBorn;
     float live = 1.0 - smoothstep(uLive * 0.8, uLive, age);
-    float flow = vAlong * 0.02 - uTime * 2.2;
-    float ripple = 0.5 + 0.5 * sin(flow + sin(vAlong * 0.007 + vSide * 2.0) * 1.7);
-    float streak = smoothstep(0.82, 1.0, ripple) * live;
-    float foam = smoothstep(0.72, 1.0, abs(vSide)) * (0.55 + 0.45 * ripple) * live;
-    vec3 still = mix(uColor, vec3(0.32, 0.36, 0.34), 0.55);
-    vec3 col = mix(still, uColor, live);
-    col = mix(col, vec3(0.92, 0.98, 1.0), streak * 0.35 + foam * 0.6);
-    col += uMine * live * 0.06;
-    gl_FragColor = vec4(col, mix(0.7, 0.95, live));
+    float across = abs(vSide);
+    // Turquoise, deepest down the middle, paler toward the banks.
+    vec3 col = mix(uDeep, uShallow, smoothstep(0.0, 0.9, across));
+    // Foam streaks running downstream, broken and wobbling.
+    vec2 q = vec2(vAlong * 0.012 - uTime * 2.4, vSide * 2.2);
+    float n = fbm2(q) ;
+    float streak = smoothstep(0.62, 0.9, fbm2(vec2(vAlong * 0.02 - uTime * 3.2, vSide * 6.0 + n)));
+    // White foam lining both banks.
+    float bank = smoothstep(0.62, 0.98, across + (n - 0.5) * 0.25);
+    col = mix(col, uFoam, clamp(streak * 0.55 + bank * 0.85, 0.0, 1.0) * live);
+    col *= 0.92 + 0.16 * n;
+    // A drained river's bed: still and grey.
+    col = mix(vec3(0.34, 0.37, 0.36), col, live);
+    col += uMine * live * 0.04;
+    gl_FragColor = vec4(col, mix(0.75, 0.97, live));
     #include <fog_fragment>
   }
 `;
@@ -76,6 +85,7 @@ export class Ribbon {
     this.geo = geo;
     this.uniforms = THREE.UniformsUtils.merge([THREE.UniformsLib.fog, {
       uColor: { value: new THREE.Color(color) },
+      uDeep: { value: WATER.mid }, uShallow: { value: WATER.shallow }, uFoam: { value: WATER.foam },
       uTime: { value: 0 },
       uTick: { value: 0 },
       uLive: { value: TUNE.liveTicks },
@@ -122,7 +132,7 @@ export class Ribbon {
     else if (i === 0) { dx = next.x - x; dz = next.z - z; }
     else { dx = next.x - prev.x; dz = next.z - prev.z; }
     const len = Math.hypot(dx, dz) || 1;
-    const half = (live ? prev.w : path[i].w) * 0.5;
+    const half = (live ? prev.w : path[i].w) * 0.62; // drawn a little wider than it digs: water spreads over the banks
     const px = (-dz / len) * half, pz = (dx / len) * half;
     let ys = this.sideY[i];
     if (!ys || live) {
