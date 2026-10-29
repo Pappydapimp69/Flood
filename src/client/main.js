@@ -481,24 +481,30 @@ const tug = { gain: new Map(), loss: new Map(), lastTick: -1, shownAt: 0 };
 // Every half second: a pop for water you siphoned, a red edge and a warning
 // while someone is siphoning you.
 let steamed = 0;
+// Only the net counts: with each rival, water won minus water lost, so you never
+// see "gaining" and "draining" from the same contact at once.
+let tugNet = 0;
 function tugFeedback(now) {
-  const draining = river && isRacing(river) && world.tick - tug.lastTick < 6 && tug.loss.size > 0;
+  if (now - tug.shownAt >= 500) {
+    tug.shownAt = now;
+    const net = new Map();
+    for (const [k, v] of tug.gain) net.set(k, (net.get(k) ?? 0) + v);
+    for (const [k, v] of tug.loss) net.set(k, (net.get(k) ?? 0) - v);
+    tugNet = 0;
+    let best = null, worst = null;
+    for (const [k, v] of net) {
+      tugNet += v;
+      if (!best || v > best[1]) best = [k, v];
+      if (!worst || v < worst[1]) worst = [k, v];
+    }
+    if (tugNet < 0 && worst) hud.drainText.textContent = `${nameOf(world.rivers[worst[0]])} is cutting deeper — it's draining you`;
+    if (steamed > 0) { showPop(`Lava! Boiling off ${fmtL(steamed)}`); steamed = 0; }
+    else if (tugNet > 0 && best) showPop(`+${fmtL(tugNet)} from ${nameOf(world.rivers[best[0]])}`);
+    tug.gain.clear();
+    tug.loss.clear();
+  }
+  const draining = river && isRacing(river) && world.tick - tug.lastTick < 12 && tugNet < 0;
   hud.drain.classList.toggle('on', !!draining);
-  if (now - tug.shownAt < 500) return;
-  tug.shownAt = now;
-  const top = (m) => [...m].sort((a, b) => b[1] - a[1])[0];
-  if (draining) {
-    const [who] = top(tug.loss);
-    hud.drainText.textContent = `${nameOf(world.rivers[who])} is cutting deeper — it's draining you`;
-  }
-  if (steamed > 0) { showPop(`Lava! Boiling off ${fmtL(steamed)}`); steamed = 0; return; }
-  if (tug.gain.size) {
-    const total = [...tug.gain.values()].reduce((a, b) => a + b, 0);
-    const [who] = top(tug.gain);
-    showPop(`+${fmtL(total)} from ${nameOf(world.rivers[who])}`);
-  }
-  tug.gain.clear();
-  tug.loss.clear();
 }
 
 // Lake levels follow the water each holds; redrawn in small steps.

@@ -32,7 +32,7 @@ export const TUNE = {
   // momentum (slower to speed up, slow down and turn), faster flow, deeper cuts.
   startVolume: 1_000_000,
   trickle: 25, // litres gained per metre of trail: longer trails hold more water
-  speedPerSize: 0.4, // speed multiplier gained per unit of size above 1
+  speedPerSize: 1, // speed multiplier gained per unit of size above 1: twice the size, twice the speed
   // Lakes are reservoirs. Every river flowing into a lake adds its discharge;
   // every river that has passed through takes water out through its own outlet,
   // which erodes with the flow. A lake's level only falls when more flows out
@@ -673,7 +673,7 @@ function resolveContacts(world) {
     const k = cellIndex(world.terrain, a.x, a.z);
     const o = owner[k];
     if (o >= 0 && o !== a.idx && live.has(o) && carve[k] > TUNE.contactDepth && isLive(world, k)) {
-      cuts.push([a, a.depth, world.rivers[o], carve[k]]);
+      cuts.push([a, a.depth, world.rivers[o], world.rivers[o].depth]); // the same test as heads: which river cuts deeper now
     }
     // Heads touching.
     for (const b of rs) {
@@ -702,6 +702,7 @@ function resolveContacts(world) {
     const [win, dw, lose, dl] = da >= db ? [a, da, b, db] : [b, db, a, da];
     if ((dw - dl) / Math.max(dl, 0.5) < TUNE.siphonDeadband) continue;
     const jk = `${lose.id}|${win.id}`;
+    world.junctions.delete(`${win.id}|${lose.id}`); // the deeper side flipped: water runs one way only
     if (!world.junctions.has(jk)) world.events.push({ type: 'junction', from: lose.idx, to: win.idx, tick: world.tick });
     world.junctions.set(jk, { from: lose, to: win, until: world.tick + TUNE.liveTicks });
   }
@@ -713,6 +714,25 @@ function resolveContacts(world) {
     lost.set(j.from, (lost.get(j.from) ?? 0) + amount);
   }
   if (!flows.length) return;
+  // Net each pair to one flow, so a pair never trades water both ways in a tick.
+  const net = new Map();
+  for (const f of flows) {
+    const fwd = byId(f.win, f.lose) < 0;
+    const key = fwd ? `${f.win.id}|${f.lose.id}` : `${f.lose.id}|${f.win.id}`;
+    const n = net.get(key) ?? { p: fwd ? f.win : f.lose, q: fwd ? f.lose : f.win, amount: 0, how: f.how };
+    n.amount += fwd ? f.amount : -f.amount;
+    net.set(key, n);
+  }
+  flows.length = 0;
+  lost.clear();
+  for (const key of [...net.keys()].sort()) {
+    const n = net.get(key);
+    if (n.amount === 0) continue;
+    const [win, lose] = n.amount > 0 ? [n.p, n.q] : [n.q, n.p];
+    const amount = Math.abs(n.amount);
+    flows.push({ win, lose, amount, how: n.how });
+    lost.set(lose, (lost.get(lose) ?? 0) + amount);
+  }
   for (const f of flows) {
     // Scale down evenly if one river is being drained from several sides at once.
     const total = lost.get(f.lose), cap = start.get(f.lose) * TUNE.siphonCap;
