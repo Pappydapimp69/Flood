@@ -18,8 +18,7 @@ export const TUNE = {
   headPerSize: 2, // metres the water stands at the head per unit of size: what it can push over
   headLook: 150,
   climbSpeed: 40, // m/s: below this a head aimed uphill can't run up the slope // metres ahead a rise is judged against the head // metres the head may sit above the lowest point it has reached
-  pool: 0.3, // metres a blocked head's water rises per tick...
-  pondMax: 3, // ...but only this far: water fills a dent, it doesn't climb a hill
+  pool: 0.15, // metres a stuck head's water rises per tick, times size: the hollow fills, then spills
   slideMin: 0.15,
   flatSlope: 0.004, // below this the ground counts as flat: follow the fill's route out
   fallSlope: 0.04, // slope (m per m) at which the fall line pulls the water at full strength
@@ -33,26 +32,27 @@ export const TUNE = {
   startVolume: 1_000_000,
   trickle: 25, // litres gained per metre of trail: longer trails hold more water
   speedPerSize: 1, // speed multiplier gained per unit of size above 1: twice the size, twice the speed
-  // Lakes are reservoirs. Every river flowing into a lake adds its discharge;
-  // every river that has passed through takes water out through its own outlet,
-  // which erodes with the flow. A lake's level only falls when more flows out
-  // than in, and a lake below full is a basin heads pool in until it refills.
+  // Lakes are reservoirs. They hold still until water flows in: every river
+  // pouring in raises the level (its own volume holds while its head is in).
+  // A river leaving cuts an outlet as deep as its head; water over that lip
+  // drains out to it (weir law, head^1.5, times outlet width) and erodes the
+  // outlet deeper, slower as it deepens. Above its rim a lake spills into an
+  // ownerless channel that dries up once the level drops back.
   lakeBase: 120_000, // capacity of any lake, litres...
   lakePerCell: 9_000, // ...plus this per lake cell...
   lakeCellCap: 400, // ...counting at most this many cells
+  lakeStart: 0.95, // every lake starts this full
   discharge: 3000, // litres per tick a river delivers downstream, times size squared
-  outletStart: 1, // metres an outlet is cut when a river leaves a lake
-  outletK: 1500, // litres per tick an outlet carries per metre of water over its lip, at size 1
-  erodeK: 0.0028, // metres of outlet erosion per 1000 L that flow through it, times size
-  outletMax: 12, // metres
+  outletK: 3000, // litres per tick an outlet carries at 1 m of water over its lip, starting width
+  erodeK: 0.001, // metres of outlet erosion per 1000 L through it, less as it deepens
+  outletMax: 40, // metres: most water over a lip that counts
+  spillK: 4000, // litres per tick a lake spills at 1 m over its rim
+  spillDepth: 2, // metres a spill cuts its channel (it never erodes)
+  spillWidth: 50, // metres
+  spillCells: 160, // longest spill channel, cells
   shallowWater: 0.3, // metres of standing water that count as under water (no digging)
-  overflow: 2, // metres a river's water stands over a lake's brim where it runs (times size)...
-  overflowRise: 1.5, // ...rising this much per second you keep pouring in...
-  overflowMax: 60, // ...up to this
   levelGlide: 0.997, // on level water or flats, speed fades only this much per tick: momentum carries
   joinShare: 0, // nothing taken at once on joining: only what flows out is added
-  lakeFlowPerCell: 30, // litres per tick a lake puts out per cell of its area...
-  lakeFlowCells: 800, // ...counting at most this many cells
   fullAt: 0.999, // a lake this full is level ground you flow across
   maxPoolTicks: 200, // guaranteed exit: after 10 s pooled, the basin tops up and spills
   trailErode: 0.04, // metres your whole channel deepens per 10 ticks, times size, for good
@@ -125,7 +125,9 @@ export function createWorld(terrain) {
     reach: descentDistance(terrain), // shortest route water can take (HUD, standings, bots)
     lakeOf, lakes,
     lakeCap: Float64Array.from(lakes, (l) => lakeGain(l)), // litres when full
-    lakeVol: Float64Array.from(lakes, (l) => lakeGain(l)), // litres now
+    lakeVol: Float64Array.from(lakes, (l) => lakeGain(l) * TUNE.lakeStart), // litres now
+    lakePending: new Float64Array(lakes.length), // litres arriving next tick (outlets and spills into lakes)
+    spills: new Map(), // lake -> { path: [cells], flow, on }: overflow over the rim, owned by nobody
     lakeIn: new Float64Array(lakes.length), // litres per tick flowing in, last tick
     lakeOut: new Float64Array(lakes.length), // litres per tick flowing out, last tick
     lakeOutlet: lakeOutlets(terrain, lakeOf, lakes), // cell just past each lake's spill point
@@ -165,15 +167,13 @@ export function underWater(world, k) {
   return world.lakeOf[k] >= 0 || t.filled[k] - t.height[k] > TUNE.shallowWater;
 }
 
-// Litres per tick a lake puts out to the rivers connected to it.
-export function lakeFlow(world, lake) {
-  return TUNE.lakeFlowPerCell * Math.min(world.lakes[lake].cells, TUNE.lakeFlowCells);
-}
-
+// Water surface: bed when empty, rim when full, above the rim past full.
 export function lakeLevel(world, lake) {
-  const f = Math.min(1, world.lakeVol[lake] / world.lakeCap[lake]);
-  return world.lakeBed[lake] + (world.lakeBrim[lake] - world.lakeBed[lake]) * f;
+  return world.lakeBed[lake] + lakeSpan(world, lake) * (world.lakeVol[lake] / world.lakeCap[lake]);
 }
+const lakeSpan = (world, lake) => Math.max(0.5, world.lakeBrim[lake] - world.lakeBed[lake]);
+// Litres a lake holds at a given surface level.
+const lakeVolAt = (world, lake, level) => Math.max(0, world.lakeCap[lake] * (level - world.lakeBed[lake]) / lakeSpan(world, lake));
 
 // The cell each lake spills into: the first cell outside it on the fill's
 // downhill tree, from the lowest-lying lake cell that drains out.
@@ -551,16 +551,9 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   // blocked, or the player steers. (Choosing afresh each tick, it would step
   // back toward the rise and rock in place.)
   const tt = world.terrain, cHere = cellIndex(tt, r.x, r.z), onLake = world.lakeOf[cHere] >= 0;
-  // A river flowing into a lake makes it overflow where it runs: its water
-  // stands over the brim, so it skates across and leaves over whatever bank
-  // it reaches, unless that bank stands higher than the overflow.
-  if (onLake) {
-    // The longer you pour in, the higher your water stands over the brim, until
-    // it tops whatever bank you're against and you spill out over it.
-    r.lakeTicks = (r.lakeTicks ?? 0) + 1;
-    const rise = Math.min(TUNE.overflowMax, (TUNE.overflow + TUNE.overflowRise * (r.lakeTicks / TICK_HZ)) * r.size);
-    r.low = Math.max(r.low, world.lakeBrim[world.lakeOf[cHere]] + rise);
-  } else r.lakeTicks = 0;
+  // On a lake the head floats on its water: as the lake rises past its rim,
+  // the head rises with it and can top higher banks.
+  if (onLake) r.low = Math.max(r.low, lakeLevel(world, world.lakeOf[cHere]));
   // Off the route again once it has run clearly lower and the heading no longer
   // points back up the slope (or the player steers): otherwise a heading aimed
   // uphill would climb, block and fall back forever.
@@ -641,9 +634,20 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     }
   }
   if (r.route !== null) {
-    const rise = surfaceAt(world, nx, nz, me) - ceiling;
-    if (rise > 0) r.low += rise; // the hollow filled up to here
+    // Stuck in a hollow: a rushing river can't stop, so its water fills the
+    // hollow, rising each tick, and the head waits until it spills over.
+    const rise = surfaceAt(world, nx, nz, me) - ceiling, fill = TUNE.pool * r.size;
+    if (rise > fill) {
+      r.low += fill;
+      r.speed = Math.min(r.speed, TUNE.minSpeed);
+      if (!r.filling) world.events.push({ type: 'pond', river: r.idx, tick: world.tick });
+      r.filling = true;
+      r.depth = depthOf(r);
+      return;
+    }
+    if (rise > 0) r.low += rise;
   }
+  r.filling = false;
   moveTo(world, r, nx, nz);
   afterMove(world, r);
 }
@@ -750,71 +754,124 @@ function resolveContacts(world) {
   }
 }
 
-// Water between rivers and lakes, once per tick:
-// - every river delivers its discharge (a share of its volume) into the lake its
-//   head is in and into every lake it has flowed through;
-// - each lake pours out through the outlets of the rivers that left it. An
-//   outlet has a lip: the ground where it was cut, lowered as it erodes. Water
-//   only leaves over a lip below the lake's surface, faster the higher the
-//   surface stands over it, and never below it: lakes drain downhill, never
-//   up. A lip cut on a bank above the lake carries nothing;
-// - every lake is always full: what its outlets carry is made up from the land
-//   around it, so it never drops (a river doesn't draw on the lake its own
-//   head is in);
-// - what flows through an outlet erodes it, so more flow means more erosion,
-//   more water for that river, more mass, faster, deeper.
+// Water between rivers and lakes, once per tick. A lake is a reservoir:
+// - every river pours its discharge into the lake its head is in and into every
+//   lake upstream of it that it flowed through; the river's own volume holds
+//   while its head is in a lake (the lake is part of its body);
+// - a lake drains through the outlets of the rivers that left it: each lip is
+//   the ground where the outlet was cut, minus how deep it's cut. Only water
+//   standing over a lip flows out, by weir law (head^1.5, times outlet width),
+//   so a deeper or wider outlet takes more, whoever got there first; what
+//   flows through erodes the outlet deeper, slower as it deepens; a river's
+//   own water passing through is no gain, only what drains out beyond it;
+// - more in than out and the level rises, past the lips and past the rim:
+//   over the rim it spills into a channel nobody owns, which runs dry once the
+//   level falls back. A river whose head is in a spill channel takes its water;
+// - you grow only by what leaves through your outlets, never by stored water.
 function hydrology(world) {
-  const L = world.lakes.length, cap = world.lakeCap, vol = world.lakeVol;
-  const inflow = new Float64Array(L), pooledIn = new Uint8Array(L);
+  const L = world.lakes.length, cap = world.lakeCap, vol = world.lakeVol, t = world.terrain;
+  const inflow = world.lakePending;
+  world.lakePending = new Float64Array(L);
   const outlets = []; // [lake, river, outlet]
   const flowing = world.rivers.filter((r) => isRacing(r) && !r.dropping).sort(byId);
   for (const r of flowing) {
     r.inflow = 0;
     const q = dischargeOf(r);
     if (r.inLake >= 0) inflow[r.inLake] += q;
-    if (r.pooled >= 0) pooledIn[r.pooled] = 1;
     for (const [lake, o] of r.via) {
       if (lake === r.inLake) continue; // your own head is in it: you don't drain it
       inflow[lake] += q;
       outlets.push([lake, r, o]);
     }
   }
-  const t = world.terrain, level = new Float64Array(L);
-  for (let lake = 0; lake < L; lake++) level[lake] = lakeLevel(world, lake);
-  // Water over the lip, metres (0 when the lip stands above the surface).
-  const overLip = (lake, o) => Math.max(0, Math.min(TUNE.outletMax, level[lake] - (t.filled[o.cell] - o.e)));
-  // Each lake puts out a fixed flow, set by its size (the land draining into it
-  // keeps it full). Every river with an outlet whose lip sits below the water
-  // shares that flow, in proportion to how deep the river cuts right now: a
-  // deeper river takes a bigger share, whoever got there first. Alone, a river
-  // gets it all. Only what flows out is added, never the lake's stored water.
-  const depthSum = new Float64Array(L);
-  const open = outlets.filter(([lake, , o]) => overLip(lake, o) > 0);
-  for (const [lake, r] of open) depthSum[lake] += r.depth;
+  const give = (r, q) => {
+    // Water reaching a river whose head is in a lake goes into that lake.
+    if (r.inLake >= 0) world.lakePending[r.inLake] += q;
+    else { grow(r, q); r.inflow += q; }
+  };
+  const want = new Float64Array(L), lowLip = new Float64Array(L).fill(Infinity);
+  for (let lake = 0; lake < L; lake++) { vol[lake] += inflow[lake]; world.lakeIn[lake] = inflow[lake]; }
+  const open = [];
+  for (const [lake, r, o] of outlets) {
+    const lip = t.filled[o.cell] - o.e;
+    const h = Math.min(TUNE.outletMax, lakeLevel(world, lake) - lip);
+    if (h <= 0) continue;
+    const q = TUNE.outletK * (o.w / TUNE.width) * h * Math.sqrt(h);
+    open.push([lake, r, o, q]);
+    want[lake] += q;
+    if (lip < lowLip[lake]) lowLip[lake] = lip;
+  }
+  // No outlet drains a lake below its own lip: the total is capped by the
+  // water standing over the lowest open lip.
+  const scale = new Float64Array(L).fill(1);
   for (let lake = 0; lake < L; lake++) {
-    world.lakeIn[lake] = inflow[lake];
-    world.lakeOut[lake] = !pooledIn[lake] && depthSum[lake] > 0 ? lakeFlow(world, lake) : 0;
-    vol[lake] = cap[lake];
+    if (!want[lake]) continue;
+    const avail = vol[lake] - lakeVolAt(world, lake, lowLip[lake]);
+    if (want[lake] > avail) scale[lake] = Math.max(0, avail) / want[lake];
   }
-  for (const [lake, r, o] of open) {
-    if (!world.lakeOut[lake]) continue;
-    const q = world.lakeOut[lake] * (r.depth / depthSum[lake]);
-    grow(r, q);
-    r.inflow += q;
-    o.e = Math.min(TUNE.outletMax, o.e + (TUNE.erodeK * q * r.size) / 1000);
+  const out = new Float64Array(L);
+  for (const [lake, r, o, w] of open) {
+    const q = w * scale[lake];
+    if (q <= 0) continue;
+    vol[lake] -= q;
+    out[lake] += q;
+    // Your own water passing through the lake is already yours: only what
+    // drains out beyond it (stored water, rivals' inflow) makes you bigger.
+    const gain = q - dischargeOf(r);
+    if (gain > 0) give(r, gain);
+    o.e = Math.min(t.filled[o.cell] - SEA_LEVEL - 0.5, o.e + (TUNE.erodeK * q) / 1000 / (1 + o.e / (TUNE.depth * 3)));
   }
-  // Pooled heads go free once their lake is full again (or after the guaranteed wait).
-  for (const r of flowing) {
-    if (r.pooled < 0) continue;
-    const lake = r.pooled;
-    if (vol[lake] >= cap[lake] * TUNE.fullAt || r.pooledTicks >= TUNE.maxPoolTicks) {
-      vol[lake] = Math.max(vol[lake], cap[lake]);
-      r.pooled = -1;
-      r.pooledTicks = 0;
-      r.low = Infinity;
-      world.events.push({ type: 'spill', lake, river: r.idx, tick: world.tick });
+  // Over the rim: spill.
+  for (let lake = 0; lake < L; lake++) {
+    const hs = lakeLevel(world, lake) - world.lakeBrim[lake];
+    let sp = world.spills.get(lake);
+    if (hs <= 0 || world.lakeOutlet[lake] < 0) {
+      if (sp?.on) { sp.on = false; sp.flow = 0; world.events.push({ type: 'overflow', lake, on: false, tick: world.tick }); }
+      world.lakeOut[lake] = out[lake];
+      continue;
+    }
+    if (!sp) { sp = spillChannel(world, lake); world.spills.set(lake, sp); }
+    if (!sp.on) { sp.on = true; world.events.push({ type: 'overflow', lake, on: true, tick: world.tick }); }
+    const q = Math.min(vol[lake] - cap[lake], TUNE.spillK * hs * Math.sqrt(hs));
+    vol[lake] -= q;
+    sp.flow = q;
+    out[lake] += q;
+    world.lakeOut[lake] = out[lake];
+    // Rivers with their head in the spill channel share it by depth; the rest
+    // runs on into the lake (if any) the channel ends in.
+    const taps = flowing.filter((r) => r.inLake < 0 && sp.cells.has(cellIndex(t, r.x, r.z)));
+    const dsum = taps.reduce((a, r) => a + r.depth, 0);
+    for (const r of taps) give(r, (q * r.depth) / dsum);
+    if (!taps.length && sp.into >= 0) world.lakePending[sp.into] += q;
+  }
+}
+
+// A lake's spill channel: from its spill point down the fill's downhill tree
+// to the sea, the next lake, or spillCells long. Cut once, shallow, owned by
+// nobody; it never erodes, so it stays a temporary channel.
+function spillChannel(world, lake) {
+  const t = world.terrain, n = t.size, path = [], cells = new Set();
+  let k = world.lakeOutlet[lake], into = -1;
+  while (k >= 0 && path.length < TUNE.spillCells) {
+    if (world.lakeOf[k] >= 0 && world.lakeOf[k] !== lake) { into = world.lakeOf[k]; break; }
+    if (t.filled[k] <= SEA_LEVEL) break;
+    path.push(k);
+    k = downhill(t, k);
+  }
+  const rad = Math.max(1, Math.round(TUNE.spillWidth / 2 / t.cell));
+  for (const c of path) {
+    const cx = c % n, cy = (c - cx) / n;
+    for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+      const x = cx + dx, y = cy + dy;
+      if (x < 1 || y < 1 || x >= n - 1 || y >= n - 1 || dx * dx + dy * dy > rad * rad) continue;
+      const j = y * n + x;
+      cells.add(j);
+      if (world.owner[j] >= 0 || underWater(world, j) || t.filled[j] <= SEA_LEVEL) continue;
+      const v = Math.min(TUNE.spillDepth * (1 - (dx * dx + dy * dy) / (rad * rad + 1)), t.height[j] - SEA_LEVEL - 0.5);
+      if (v > world.carve[j]) { world.carve[j] = v; world.dirty.push(j); }
     }
   }
+  return { path, cells, into, flow: 0, on: false };
 }
 
 // Erosion is forever: every river's whole trail keeps deepening as long as it
@@ -906,12 +963,15 @@ function moveTo(world, r, nx, nz) {
   const moved = Math.sqrt(mx * mx + mz * mz);
   r.travelled += moved;
   r.x = nx; r.z = nz;
-  grow(r, moved * TUNE.trickle);
+  // In a lake the river's volume holds: its water goes into the lake.
+  if (world.lakeOf[cellIndex(world.terrain, nx, nz)] < 0) grow(r, moved * TUNE.trickle);
 }
 
 function joinLake(world, r, lake, cell) {
   if (r.via.has(lake)) return; // already has an outlet from this lake
-  r.via.set(lake, { cell, e: TUNE.outletStart, born: world.tick });
+  // The outlet is cut as deep and wide as the head that cut it; from then on
+  // only the water through it deepens it.
+  r.via.set(lake, { cell, e: r.depth, w: widthOf(r), born: world.tick });
   r.lakes++;
   // Joining a lake adds its water to yours at once, then keeps flowing.
   // A full lake's surge comes off the brim: it doesn't lower the lake (a lake
@@ -944,7 +1004,7 @@ function afterMove(world, r) {
   if (lake !== r.inLake) {
     if (r.inLake >= 0) joinLake(world, r, r.inLake, here);
     r.inLake = lake;
-    if (lake >= 0 && !r.via.has(lake) && world.lakeVol[lake] < world.lakeCap[lake] * TUNE.fullAt) {
+    if (lake >= 0 && !r.via.has(lake)) {
       world.events.push({ type: 'pool', lake, river: r.idx, tick: world.tick });
     }
   }

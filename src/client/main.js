@@ -195,6 +195,27 @@ const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
 // A race: the world plus what draws it. `river` is null when spectating.
 let trees, rocks, lava; // scenery for the current race
 let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, endShown, mode, raceOver, finalShown;
+// Lake overflow: one water strip per spill channel, shown while it runs.
+const spillRibbons = new Map();
+function updateSpills(time) {
+  const t = world.terrain, n = t.size;
+  for (const [lake, sp] of world.spills) {
+    let sr = spillRibbons.get(lake);
+    if (!sr) {
+      const path = sp.path.map((k) => {
+        const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+        return { x, z, w: TUNE.spillWidth, water: surfaceAt(world, x, z) + 0.6, tick: 0 };
+      });
+      if (path.length < 2) continue;
+      sr = { ribbon: new Ribbon('#7fd3e0'), river: { path, out: null, idx: -1 } };
+      scene.add(sr.ribbon.mesh);
+      spillRibbons.set(lake, sr);
+    }
+    sr.ribbon.mesh.visible = sp.on;
+    if (sp.on) { const last = sr.river.path[sr.river.path.length - 1]; sr.ribbon.update(world, sr.river, last.x, last.z, time); }
+  }
+}
+
 // Online: frames from the server, consumed in order; ids give each char's river.
 let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 
@@ -206,6 +227,8 @@ function beginRace(seed, raceIds, me, rolled) {
     e.ribbon.geo.dispose(); e.head.material.dispose(); e.streak.material.dispose();
     e.surge.material.dispose(); e.spray.geometry.dispose(); e.spray.material.dispose();
   }
+  for (const sr of spillRibbons.values()) { scene.remove(sr.ribbon.mesh); sr.ribbon.geo.dispose(); }
+  spillRibbons.clear();
   useIsland(seed, rolled?.terrain);
   world = rolled?.terrain === terrain ? rolled : createWorld(terrain);
   for (const id of raceIds) addRiver(world, id, undefined, { drop: !params.has('nodrop') }); // sorted ids: reproducible spawns
@@ -536,12 +559,13 @@ function advance(inputs) {
       if (en) burstSpray(en.spray, lr.x, surfaceAt(world, lr.x, lr.z) * VERT, lr.z, 1.2, 70);
       if (river && e.river === river.idx) { highlightZone(terrainMesh, dropZone(world), false); audio.splash(1.2); }
     } else if (e.type === 'pool') {
-      if (river && e.river === river.idx) showPop('Basin — your water pours in as you flow across');
-    } else if (e.type === 'spill') {
-      if (river && e.river === river.idx) showPop('Full — spilling on, and the lake keeps feeding you');
-      feed(`${nameOf(world.rivers[e.river])} filled a basin`);
+      if (river && e.river === river.idx) showPop('Lake — your water pours in and raises it');
+    } else if (e.type === 'pond') {
+      if (river && e.river === river.idx) showPop('Stuck — your water fills the hollow until it spills');
+    } else if (e.type === 'overflow') {
+      if (e.on) feed('A lake is overflowing — its spill is free water');
     } else if (e.type === 'join') {
-      if (river && e.river === river.idx) { showPop('Lake joined · its outflow now feeds you, shared by depth'); audio.lake(); }
+      if (river && e.river === river.idx) { showPop('Outlet cut · what drains through it feeds you'); audio.lake(); }
     } else if (e.type === 'junction') {
       const from = world.rivers[e.from], to = world.rivers[e.to];
       if (to === river) showPop(`You cut into ${nameOf(from)} — its water flows into you`);
@@ -830,6 +854,7 @@ renderer.setAnimationLoop(() => {
 
   placeTags();
   pulseLava(lava, now / 1000);
+  updateSpills(now / 1000);
   tickWater([sea, lakesMesh, ...entries.map((e) => e.surge)], now / 1000);
   showMarker(now, fx, fy, fz);
   showDownhill(now);
@@ -914,10 +939,10 @@ renderer.setAnimationLoop(() => {
   let tribs = 0;
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
-  const basin = me.inLake >= 0 && world.lakeVol[me.inLake] < world.lakeCap[me.inLake] * TUNE.fullAt ? me.inLake : -1;
+  const basin = me.inLake;
   hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · drag far to dive faster · land on the glowing ring' : '← → steer · ↑ ↓ speed (or drag) · land on the glowing ring')
     : basin >= 0
-    ? `pouring into a basin · ${Math.min(99, Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin]))}% full`
+    ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : `pouring ${fmtL(dischargeOf(me) * TICK_HZ + me.inflow * TICK_HZ)}/s · head ${headOf(me).toFixed(1)} m · cutting ${me.depth.toFixed(1)} m` + (fedBy ? ` · fed by ${fedBy}` : '');
   watchCaptions(now, place);
   tugFeedback(now);
