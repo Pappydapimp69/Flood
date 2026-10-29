@@ -360,6 +360,7 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     pooledTicks: 0,
     low: Infinity, // lowest surface reached; water can't climb far above it
     ponded: 0, // metres the local pool has risen above the ground
+    exit: -1, // cell of the lake exit a blocked head on a lake is making for, or -1
     route: null, // level where the head was blocked: it's following the fill route out until it runs lower
     netAt: 0, netX: 0, netZ: 0, netT: 0, // where it was a moment ago, to tell going nowhere from flowing
     travelled: 0,
@@ -611,6 +612,30 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   const ceiling = r.low + TUNE.climb + headOf(r);
   let v = r.speed;
   let nx = r.x + mx * v * DT, nz = r.z + mz * v * DT;
+  // On a lake with no bank low enough to climb, the head makes for the lake's
+  // lowest exit, its natural spill point or any river's outlet (a rival's too:
+  // riding it out cuts into their channel). Nobody is trapped by a lake that
+  // has drained below its rim.
+  if (onLake && r.exit < 0 && surfaceAt(world, nx, nz, me) > ceiling) r.exit = lowestExit(world, world.lakeOf[cHere]);
+  if (r.exit >= 0) {
+    const n = tt.size;
+    const ex = ((r.exit % n) / (n - 1) - 0.5) * tt.worldSize - r.x, ez = (Math.floor(r.exit / n) / (n - 1) - 0.5) * tt.worldSize - r.z;
+    const el = Math.sqrt(ex * ex + ez * ez);
+    if (el > tt.cell) {
+      v = Math.max(TUNE.baseSpeed * mass, r.speed);
+      r.speed = v;
+      const s = Math.min(v * DT, el);
+      moveTo(world, r, r.x + (ex / el) * s, r.z + (ez / el) * s);
+      afterMove(world, r);
+      return;
+    }
+    // Through: the water stands at the exit now and runs on downhill.
+    r.exit = -1;
+    r.low = Math.max(r.low, surfaceAt(world, r.x, r.z, me));
+    r.route = r.low;
+    const d = routeDir();
+    if (d) { mx = d.x; mz = d.z; nx = r.x + mx * v * DT; nz = r.z + mz * v * DT; }
+  }
   if (r.route === null && surfaceAt(world, nx, nz, me) > ceiling && gl > 1e-6) {
     // Slide along the contour, on the side the water is going.
     const ux = g.x / gl, uz = g.z / gl, d = mx * ux + mz * uz;
@@ -979,11 +1004,26 @@ function moveTo(world, r, nx, nz) {
   if (world.lakeOf[cellIndex(world.terrain, nx, nz)] < 0) grow(r, moved * TUNE.trickle);
 }
 
+// A lake's lowest way out: its spill point or the lip of any outlet cut from it.
+function lowestExit(world, lake) {
+  const f = world.terrain.filled;
+  let best = world.lakeOutlet[lake], low = best >= 0 ? f[best] : Infinity;
+  for (const o of world.rivers) {
+    const ot = o.via.get(lake);
+    if (ot && f[ot.cell] - ot.e < low) { low = f[ot.cell] - ot.e; best = ot.cell; }
+  }
+  return best;
+}
+
 function joinLake(world, r, lake, cell) {
   if (r.via.has(lake)) return; // already has an outlet from this lake
-  // The outlet is cut as deep and wide as the head that cut it; from then on
-  // only the water through it deepens it.
-  r.via.set(lake, { cell, e: r.depth, w: widthOf(r), born: world.tick });
+  // The head floats on the lake, so it cuts its outlet down from the water it
+  // rides on (or the bank, if lower): a river leaving a drained lake cuts a
+  // lower outlet. As wide as the head; from then on only the water through it
+  // deepens it.
+  const ground = world.terrain.filled[cell];
+  const lip = Math.max(SEA_LEVEL + 0.5, Math.min(ground, lakeLevel(world, lake)) - r.depth);
+  r.via.set(lake, { cell, e: Math.max(0, ground - lip), w: widthOf(r), born: world.tick });
   r.lakes++;
   // Joining a lake adds its water to yours at once, then keeps flowing.
   // A full lake's surge comes off the brim: it doesn't lower the lake (a lake
