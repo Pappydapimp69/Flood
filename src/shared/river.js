@@ -48,7 +48,9 @@ export const TUNE = {
   shallowWater: 0.3, // metres of standing water that count as under water (no digging)
   overflow: 2, // metres a river's water stands over a lake's brim where it runs (times size)
   levelGlide: 0.997, // on level water or flats, speed fades only this much per tick: momentum carries
-  joinShare: 0.06, // share of a lake's water you take at once when you join it
+  joinShare: 0, // nothing taken at once on joining: only what flows out is added
+  lakeFlowPerCell: 30, // litres per tick a lake puts out per cell of its area...
+  lakeFlowCells: 800, // ...counting at most this many cells
   fullAt: 0.999, // a lake this full is level ground you flow across
   maxPoolTicks: 200, // guaranteed exit: after 10 s pooled, the basin tops up and spills
   trailErode: 0.04, // metres your whole channel deepens per 10 ticks, times size, for good
@@ -153,6 +155,11 @@ function lakeLevels(t, lakeOf, lakes) {
 export function underWater(world, k) {
   const t = world.terrain;
   return world.lakeOf[k] >= 0 || t.filled[k] - t.height[k] > TUNE.shallowWater;
+}
+
+// Litres per tick a lake puts out to the rivers connected to it.
+export function lakeFlow(world, lake) {
+  return TUNE.lakeFlowPerCell * Math.min(world.lakes[lake].cells, TUNE.lakeFlowCells);
 }
 
 export function lakeLevel(world, lake) {
@@ -742,30 +749,22 @@ function hydrology(world) {
   for (let lake = 0; lake < L; lake++) level[lake] = lakeLevel(world, lake);
   // Water over the lip, metres (0 when the lip stands above the surface).
   const overLip = (lake, o) => Math.max(0, Math.min(TUNE.outletMax, level[lake] - (t.filled[o.cell] - o.e)));
-  const capOf = (lake, r, o) => TUNE.outletK * overLip(lake, o) * r.size;
-  const want = new Float64Array(L);
-  for (const [lake, r, o] of outlets) want[lake] += capOf(lake, r, o);
-  const shares = new Map();
+  // Each lake puts out a fixed flow, set by its size (the land draining into it
+  // keeps it full). Every river with an outlet whose lip sits below the water
+  // shares that flow, in proportion to how deep the river cuts right now: a
+  // deeper river takes a bigger share, whoever got there first. Alone, a river
+  // gets it all. Only what flows out is added, never the lake's stored water.
+  const depthSum = new Float64Array(L);
+  const open = outlets.filter(([lake, , o]) => overLip(lake, o) > 0);
+  for (const [lake, r] of open) depthSum[lake] += r.depth;
   for (let lake = 0; lake < L; lake++) {
     world.lakeIn[lake] = inflow[lake];
-    world.lakeOut[lake] = 0;
-    if (!inflow[lake] && !want[lake]) continue;
-    vol[lake] += inflow[lake];
-    let out = 0;
-    if (!pooledIn[lake] && want[lake] > 0) {
-      // Spill what's over the brim, and what the outlets carry over their lips.
-      out = Math.min(vol[lake], Math.max(vol[lake] - cap[lake], want[lake]));
-    }
-    // A lake is always full: the land around it keeps it topped up, so what
-    // the rivers draw off never lowers it (and anything over the brim runs off).
+    world.lakeOut[lake] = !pooledIn[lake] && depthSum[lake] > 0 ? lakeFlow(world, lake) : 0;
     vol[lake] = cap[lake];
-    world.lakeOut[lake] = out;
-    if (out > 0) shares.set(lake, out / want[lake]);
   }
-  for (const [lake, r, o] of outlets) {
-    const share = shares.get(lake);
-    if (!share) continue;
-    const q = capOf(lake, r, o) * share;
+  for (const [lake, r, o] of open) {
+    if (!world.lakeOut[lake]) continue;
+    const q = world.lakeOut[lake] * (r.depth / depthSum[lake]);
     grow(r, q);
     r.inflow += q;
     o.e = Math.min(TUNE.outletMax, o.e + (TUNE.erodeK * q * r.size) / 1000);

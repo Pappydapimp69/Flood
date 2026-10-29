@@ -535,7 +535,7 @@ function advance(inputs) {
       if (river && e.river === river.idx) showPop('Full — spilling on, and the lake keeps feeding you');
       feed(`${nameOf(world.rivers[e.river])} filled a basin`);
     } else if (e.type === 'join') {
-      if (river && e.river === river.idx) { showPop(`Lake joined · +${fmtL(e.gain)} now, more through your outlet`); audio.lake(); }
+      if (river && e.river === river.idx) { showPop('Lake joined · its outflow now feeds you, shared by depth'); audio.lake(); }
     } else if (e.type === 'junction') {
       const from = world.rivers[e.from], to = world.rivers[e.to];
       if (to === river) showPop(`You cut into ${nameOf(from)} — its water flows into you`);
