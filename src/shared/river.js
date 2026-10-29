@@ -3,6 +3,7 @@
 
 import { SEA_LEVEL, downhill, findLakes, MinHeap, generateIsland } from './terrain.js';
 import { stream } from './rng.js';
+import { plantForest } from './forest.js';
 
 export const TICK_HZ = 20;
 export const DT = 1 / TICK_HZ;
@@ -89,6 +90,10 @@ export const TUNE = {
   steamFloor: 1.15,
   lavaSlow: 0.6,
   damHeight: 4,
+  // Trees: what a river must be to knock a stand flat, and how tall a stand
+  // stands to one that can't.
+  treeBreak: 1.3,
+  treeHeight: 14,
   // Contact is a depth tug-of-war: the deeper water siphons the shallower.
   junctionK: 0.3, // share of a cut river's discharge that flows on into the river that cut it
   siphonRate: 0.012,
@@ -146,6 +151,10 @@ export function createWorld(terrain) {
   world.rock = new Float32Array(n * n); // metres of cooled rock on top of the ground
   world.basins = makeBasins(world);
   makeLava(world);
+  const band = spawnBand(world);
+  world.trees = plantForest(world, band.ring, band.cells, TUNE.climb);
+  world.felled = []; // cells whose trees a river knocked down, for presentation
+  world.treeRock = Float32Array.from(world.rock, (v, k) => v + (world.trees[k] ? TUNE.treeHeight : 0)); // the ground as a small river feels it
   return world;
 }
 
@@ -249,7 +258,8 @@ export function surfaceAt(world, wx, wz, self = -1) {
   // A river doesn't feel its own channel, nor a rival's live water (crossing that
   // costs water instead, see resolveContacts); old dry beds are ordinary ground.
   const cv = (k) => (self >= 0 && o[k] >= 0 && (o[k] === self || isLive(world, k)) ? 0 : c[k]);
-  const rk = world.rock;
+  // To a river too small to knock them down, a stand of trees is a rise.
+  const rk = self >= 0 && world.rivers[self] && world.rivers[self].size < TUNE.treeBreak ? world.treeRock : world.rock;
   const a = f[i] + rk[i] - cv(i), b = f[i + 1] + rk[i + 1] - cv(i + 1), d = f[i + n] + rk[i + n] - cv(i + n), e = f[i + n + 1] + rk[i + n + 1] - cv(i + n + 1);
   return (a + (b - a) * fx) + ((d + (e - d) * fx) - (a + (b - a) * fx)) * fy;
 }
@@ -1202,10 +1212,16 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
       const ground = t.filled[k];
       if (ground <= SEA_LEVEL) continue;
       if (underWater(world, k)) continue; // rivers run over lakes, not through their beds: only banks erode
+      if (world.trees[k]) {
+        // A big river knocks the trees flat; a small one's water stops at them.
+        if (r.size < TUNE.treeBreak) continue;
+        fell(world, k);
+      }
       if (world.lava[k]) {
         // Water meets lava: it cools into rock instead of being dug.
         world.lava[k] = 0;
         world.rock[k] = Math.max(world.rock[k], TUNE.damHeight);
+        world.treeRock[k] = world.rock[k] + (world.trees[k] ? TUNE.treeHeight : 0);
         world.dirty.push(k);
         world.cooled.push(k);
         continue;
@@ -1221,6 +1237,12 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
       if (world.owner[k] === r.idx && want > TUNE.contactDepth) world.dugAt[k] = world.tick;
     }
   }
+}
+
+function fell(world, k) {
+  world.trees[k] = 0;
+  world.treeRock[k] = world.rock[k];
+  world.felled.push(k);
 }
 
 function sampleFilled(t, wx, wz) {

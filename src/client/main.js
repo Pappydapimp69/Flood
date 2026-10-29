@@ -253,7 +253,7 @@ function beginRace(seed, raceIds, me, rolled) {
     scene.remove(m);
     m.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); o.dispose?.(); });
   }
-  trees = buildTrees(world, lite ? 0 : lowPower ? 2500 : 7000);
+  trees = buildTrees(world, lite ? 0 : lowPower ? 6000 : 12000);
   rocks = buildRocks(world, lite ? 0 : lowPower ? 1200 : 3500);
   scene.add(rocks);
   lava = buildLava(world);
@@ -549,7 +549,7 @@ function advance(inputs) {
   step(world, inputs);
   const dirty = world.dirty.splice(0);
   applyCarve(terrainMesh, world.carve, dirty, world.rock);
-  clearTrees(trees, dirty, world.carve);
+  clearTrees(trees, world.felled.splice(0));
   clearTrees(rocks, dirty, world.carve);
   const cooled = world.cooled.splice(0);
   if (cooled.length) { coolLava(lava, cooled); clearTrees(trees, cooled, world.rock); }
@@ -847,7 +847,7 @@ renderer.setAnimationLoop(() => {
     // Nothing stands in the water: clear trees and boulders along each new stretch.
     while ((e.cleared ?? 0) < r.path.length) {
       const q = r.path[e.cleared ?? 0];
-      clearAround([trees, rocks], terrain, q.x, q.z, q.w * 0.7);
+      clearAround([rocks], terrain, q.x, q.z, q.w * 0.7); // trees fall only where the game knocks them down
       e.cleared = (e.cleared ?? 0) + 1;
     }
     if (r === focus) { fx = hx; fz = hz; fy = hy; }
@@ -866,16 +866,16 @@ renderer.setAnimationLoop(() => {
   if (mapView) {
     controls.update();
   } else if (intro) {
-    // Low on the island, looking up at the summit with the comets coming in.
+    // High above the falling comets, behind the summits, looking down on them
+    // and the three peaks they rain onto, the slope running away beyond.
     const top = spawnBand(world).top, n = terrain.size;
     const tx = ((top % n) / (n - 1) - 0.5) * W, tz = (Math.floor(top / n) / (n - 1) - 0.5) * W, th = terrain.height[top] * VERT;
-    let ax = river.spawn.x - tx, az = river.spawn.z - tz;
-    const al = Math.hypot(ax, az) || 1; ax /= al; az /= al;
+    const ax = terrain.axis.x, az = terrain.axis.y; // down the slope
     const t = 1 - (introUntil - now) / 4500;
-    const dist = 14000 - 2500 * t;
-    camera.position.set(tx + ax * dist, 0, tz + az * dist);
-    camera.position.y = Math.max(th * 0.55, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 900) + 400 * t;
-    camera.lookAt(tx, th + 3200 - 1500 * t, tz);
+    const back = 9000 - 3000 * t, above = th + TUNE.dropAlt + 7000 - 3000 * t;
+    camera.position.set(tx - ax * back, above, tz - az * back);
+    const lx = tx + ax * (2500 + 1500 * t), lz = tz + az * (2500 + 1500 * t);
+    camera.lookAt(lx, th + 1500 * (1 - t), lz);
     camTarget.set(tx, th, tz);
   } else {
     // Chase camera. It must never fight the player: it follows the river's

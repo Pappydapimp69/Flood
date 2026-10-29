@@ -25,35 +25,15 @@ function pineGeometry() {
   return geo;
 }
 
-// Forest density from smooth noise: dense stands and open glades, like the
-// trailer's dark pine woods, thinning with height and steepness.
-function forestAt(t, x, y) {
-  const f = (s, o) => hash2(Math.floor(x / s), Math.floor(y / s), t.seed + o);
-  // Bilinear-smoothed coarse noise (two scales) for clustering.
-  const smooth = (s, o) => {
-    const gx = x / s, gy = y / s, ix = Math.floor(gx), iy = Math.floor(gy), fx = gx - ix, fy = gy - iy;
-    const v = (a, b) => hash2(ix + a, iy + b, t.seed + o);
-    const u = fx * fx * (3 - 2 * fx), w = fy * fy * (3 - 2 * fy);
-    return (v(0, 0) * (1 - u) + v(1, 0) * u) * (1 - w) + (v(0, 1) * (1 - u) + v(1, 1) * u) * w;
-  };
-  void f;
-  return smooth(14, 31) * 0.65 + smooth(5, 37) * 0.35;
-}
-
-// Trees: dense pine stands where the forest noise is high, scattered round
-// broadleaf trees lower down, none on water, lava, steep rock or high peaks.
+// Trees: one tall stand per forest cell of the game (world.trees), pines on
+// the upper slope, round broadleaf trees mixed in lower down. Tall enough to
+// hide what's ahead from a low chase camera.
 export function buildTrees(world, max) {
   const t = world.terrain, n = t.size;
   const pines = [], broad = [];
-  for (let y = 2; y < n - 2; y++) for (let x = 2; x < n - 2; x++) {
-    const k = y * n + x, h = t.height[k];
-    if (h < 20 || h > 2100 || world.lakeOf[k] >= 0 || world.lava[k] || t.filled[k] - h > 0.5) continue;
-    const slope = Math.hypot(t.height[k + 1] - t.height[k - 1], t.height[k + n] - t.height[k - n]) / (2 * t.cell);
-    if (slope > 0.5) continue;
-    const dens = forestAt(t, x, y) * (h > 1700 ? (2100 - h) / 400 : 1);
-    const r = hash2(x, y, t.seed + 13);
-    if (dens > 0.56 && r < (dens - 0.5) * 2.2) pines.push(k);
-    else if (h < 700 && r < 0.035) broad.push(k);
+  for (let k = 0; k < n * n; k++) {
+    if (!world.trees[k]) continue;
+    (t.height[k] < 600 && hash2(k, 21, t.seed) < 0.45 ? broad : pines).push(k);
   }
   const thin = (list, cap) => (list.length > cap ? list.filter((_, i) => (i * cap) % list.length < cap) : list);
   const pk = thin(pines, Math.round(max * 0.85)), bk = thin(broad, Math.round(max * 0.15));
@@ -74,9 +54,9 @@ export function buildTrees(world, max) {
     mesh.userData.byCell = byCell;
     return mesh;
   };
-  const pine = place(new THREE.InstancedMesh(pineGeometry(), new THREE.MeshLambertMaterial({ color: '#ffffff' }), Math.max(1, pk.length)), pk, [55, 170],
+  const pine = place(new THREE.InstancedMesh(pineGeometry(), new THREE.MeshLambertMaterial({ color: '#ffffff' }), Math.max(1, pk.length)), pk, [80, 290],
     (col, k) => col.setHSL(0.3 + hash2(k, 3, t.seed) * 0.05, 0.38, 0.13 + hash2(k, 4, t.seed) * 0.07));
-  const leaf = place(new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1).translate(0, 1.1, 0), new THREE.MeshLambertMaterial({ color: '#ffffff' }), Math.max(1, bk.length)), bk, [60, 52],
+  const leaf = place(new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1).translate(0, 1.1, 0), new THREE.MeshLambertMaterial({ color: '#ffffff' }), Math.max(1, bk.length)), bk, [85, 120],
     (col, k) => col.setHSL(0.22 + hash2(k, 3, t.seed) * 0.06, 0.4, 0.2 + hash2(k, 4, t.seed) * 0.08));
   pine.count = pk.length; leaf.count = bk.length;
   pine.add(leaf);
@@ -119,15 +99,16 @@ export function buildRocks(world, max) {
   return mesh;
 }
 
-// Trees (and boulders) in a dug channel or on cooled lava are gone.
-export function clearTrees(group, cells, carve) {
+// Trees (and boulders) in a dug channel or on cooled lava are gone; with no
+// depth given (felled trees), every listed cell goes.
+export function clearTrees(group, cells, carve = null) {
   const m = new THREE.Matrix4().makeScale(0, 0, 0);
   for (const mesh of group.userData.parts ?? [group]) {
     const byCell = mesh.userData.byCell;
     let changed = false;
     for (const k of cells) {
       const i = byCell.get(k);
-      if (i === undefined || carve[k] < 2) continue;
+      if (i === undefined || (carve && carve[k] < 2)) continue;
       mesh.setMatrixAt(i, m);
       byCell.delete(k);
       changed = true;
