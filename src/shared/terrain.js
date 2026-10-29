@@ -54,9 +54,8 @@ function ridged(x, y, seed, octaves) {
   return sum / norm;
 }
 
-// Island shape, drawn from the seed: a long ski slope that starts as three
-// lanes, each from its own summit, walled apart, which merge late into one
-// trunk down to the sea. Which way it points, its length, its width and how it
+// Island shape, drawn from the seed: a long, walled ski slope with three
+// summits side by side across its top end. Which way it points, its length, its width and how it
 // tapers. No trig (the direction is a
 // unit vector from sqrt), so every machine builds the same island.
 function shapeOf(seed) {
@@ -67,10 +66,8 @@ function shapeOf(seed) {
   return {
     ax, ay, // down the slope: summit end at -long, sea end at +long
     long: 0.62 + 0.06 * r(), // half-length along the axis (fits the map in any direction)
-    wide: 0.17 + 0.05 * r(), // half-width of the trunk
-    lane: 0.29 + 0.03 * r(), // how far the outer lanes start from the middle one
-    laneWide: 0.075 + 0.015 * r(), // half-width of each lane
-    merge: 0.56 + 0.06 * r(), // where along the slope the three lanes become one
+    wide: 0.17 + 0.05 * r(), // half-width of the corridor
+    gap: 0.08 + 0.01 * r(), // how far the outer summits stand from the middle one
     taper: 0.25 + 0.2 * r(), // how much the width wanders along the slope
     warp: 0.05 + 0.04 * r(),
     wall: 0.08 + 0.03 * r(), // side walls, as a share of the top height
@@ -88,17 +85,14 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   const t = (wu + S.long) / (2 * S.long); // 0 at the summit end, 1 at the sea end
   // Width wanders and tapers at both ends.
   const halfW = S.wide * (1 + S.taper * (fbm(t * 3.1, 0.5, seed + 31, 3) - 0.5) * 2) * (0.75 + 0.25 * smooth(0.0, 0.2, t)) * (1 - 0.3 * smooth(0.85, 1.0, t));
-  // Three lanes: their centre lines start apart and close in to one at merge.
-  const k = 1 - smooth(0.05, S.merge, t), off = S.lane * k;
-  const hw = lerp(halfW, S.laneWide, k);
-  const side0 = Math.min(Math.abs(wv + off), Math.abs(wv), Math.abs(wv - off)) / hw; // 0 down a lane, 1 at its wall tops
-  const env = (Math.abs(wv) - off) / hw; // beyond the outer lanes' walls
-  if (env > 1 || t < -0.03 || t > 1.08) {
+  // Wide enough at the top for three summits side by side inside the walls.
+  const topW = ((S.gap + SUMMIT.room) / 0.62) * (1 - smooth(0.15, 0.35, t));
+  const side = Math.abs(wv) / Math.max(halfW, topW); // 0 down the middle, 1 at the wall tops
+  if (side > 1 || t < -0.03 || t > 1.08) {
     // Outside the slope: cliffs into deep sea.
-    const out = Math.max(env - 1, -t, t - 1.08, 0);
+    const out = Math.max(side - 1, -t, t - 1.08, 0);
     return -seaDepth * lerp(0.35, 1, smooth(0, 0.25, out));
   }
-  const side = Math.min(1, side0); // between lanes: the full wall, a ridge apart
   const peaks = ridged(x * 3.1, y * 3.1, seed + 47, 6);
   const hills = fbm(x * 7, y * 7, seed + 59, 5);
   // The floor falls the whole way to the sea, a little steeper near the top.
@@ -113,25 +107,29 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   const wall = smooth(0.62, 0.97, side) * maxHeight * S.wall * (1 + 0.8 * (1 - tt)) * (0.8 + 0.4 * peaks);
   // The summits: one cone at the top of each lane, all the same height, with
   // an even grade all round (no flat top to stall on). The starts ring them.
-  const su = (t - SUMMIT.at) * (2 * S.long), so = S.lane * (1 - smooth(0.05, S.merge, SUMMIT.at));
+  const su = (t - SUMMIT.at) * (2 * S.long), so = S.gap;
   let cone = -Infinity;
   for (const c of [-so, 0, so]) {
     const sv = wv - c;
     cone = Math.max(cone, SUMMIT.top * maxHeight - SUMMIT.grade * Math.sqrt(su * su + sv * sv));
   }
-  // Walls stand on top of the cones too, and close the lanes off behind the
-  // summits, so water off a summit only runs down its own lane.
-  const back = smooth(SUMMIT.at - 0.04, -0.02, t) * maxHeight * S.wall * 1.8;
-  return Math.max(floor, cone) + wall + back;
+  // Walls stand on top of the cones too, and close the slope off behind the
+  // summits, so all water runs down toward the sea end.
+  // Near the top the walls stand as high as the summits, so no water off a
+  // summit can spill over the side or back.
+  const crest = Math.max(0, SUMMIT.top * maxHeight - floor);
+  const tall = smooth(0.62, 0.97, side) * crest * (1 - smooth(0.15, 0.4, t));
+  const back = smooth(SUMMIT.at - 0.04, -0.02, t) * crest;
+  return Math.max(floor, cone) + Math.max(wall, tall) + back;
 }
 
 // Summit cones: peak height as a share of maxHeight, and metres of drop per
 // unit of map half-width (32 km) away from the peak: an even grade.
-const SUMMIT = { top: 1.2, grade: 7500, at: 0.1 };
+const SUMMIT = { top: 1.2, grade: 7500, at: 0.1, room: 0.06 };
 
 // The three peaks' cells, where each summit cone stands highest.
 function summitCells(height, n, S) {
-  const so = S.lane * (1 - smooth(0.05, S.merge, SUMMIT.at));
+  const so = S.gap;
   const u = -S.long + SUMMIT.at * 2 * S.long;
   return [-so, 0, so].map((v) => {
     const x = u * S.ax - v * S.ay, y = u * S.ay + v * S.ax;

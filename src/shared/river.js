@@ -75,7 +75,7 @@ export const TUNE = {
   settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
   zoneSlack: 300, // metres a falling drop may stray from the landing ring
   glideTurn: 0.1, // radians per tick while falling: a full circle in about 3 s
-  startElevation: 0.89, // starts ring each summit cone this far up its peak
+  startElevation: 0.91, // starts ring each summit cone this far up its peak
   startTolerance: 0.006, // starts within ±0.6% of the peak's height of each other
   fairReach: 0.025, // and within ±2.5% of the same route length to the sea // +- share of the peak
   // Lava: a few flows down from the high ground. Water crossing lava boils off
