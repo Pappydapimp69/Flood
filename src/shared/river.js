@@ -44,7 +44,7 @@ export const TUNE = {
   lakeStart: 0.95, // every lake starts this full
   discharge: 3000, // litres per tick a river delivers downstream, times size squared
   outletK: 3000, // litres per tick an outlet carries at 1 m of water over its lip, starting width
-  erodeK: 0.001, // metres of outlet erosion per 1000 L through it, less as it deepens
+  erodeK: 0.002, // metres an outlet erodes per tick, per metre of water over its lip, times the river's size
   outletMax: 40, // metres: most water over a lip that counts
   spillK: 4000, // litres per tick a lake spills at 1 m over its rim
   spillDepth: 2, // metres a spill cuts its channel (it never erodes)
@@ -762,7 +762,8 @@ function resolveContacts(world) {
 //   the ground where the outlet was cut, minus how deep it's cut. Only water
 //   standing over a lip flows out, by weir law (head^1.5, times outlet width),
 //   so a deeper or wider outlet takes more, whoever got there first; what
-//   flows through erodes the outlet deeper, slower as it deepens; a river's
+//   flows through erodes the outlet deeper, faster with more water over the
+//   lip and a bigger river, slowing as the lake falls to the lip; a river's
 //   own water passing through is no gain, only what drains out beyond it;
 // - more in than out and the level rises, past the lips and past the rim:
 //   over the rim it spills into a channel nobody owns, which runs dry once the
@@ -797,7 +798,7 @@ function hydrology(world) {
     const h = Math.min(TUNE.outletMax, lakeLevel(world, lake) - lip);
     if (h <= 0) continue;
     const q = TUNE.outletK * (o.w / TUNE.width) * h * Math.sqrt(h);
-    open.push([lake, r, o, q]);
+    open.push([lake, r, o, q, h]);
     want[lake] += q;
     if (lip < lowLip[lake]) lowLip[lake] = lip;
   }
@@ -810,7 +811,7 @@ function hydrology(world) {
     if (want[lake] > avail) scale[lake] = Math.max(0, avail) / want[lake];
   }
   const out = new Float64Array(L);
-  for (const [lake, r, o, w] of open) {
+  for (const [lake, r, o, w, h] of open) {
     const q = w * scale[lake];
     if (q <= 0) continue;
     vol[lake] -= q;
@@ -819,7 +820,9 @@ function hydrology(world) {
     // drains out beyond it (stored water, rivals' inflow) makes you bigger.
     const gain = q - dischargeOf(r);
     if (gain > 0) give(r, gain);
-    o.e = Math.min(t.filled[o.cell] - SEA_LEVEL - 0.5, o.e + (TUNE.erodeK * q) / 1000 / (1 + o.e / (TUNE.depth * 3)));
+    // Erosion follows the water over the lip and the river's volume: a high
+    // lake and a big river cut fast; as the lake drops to the lip it slows.
+    o.e = Math.min(t.filled[o.cell] - SEA_LEVEL - 0.5, o.e + TUNE.erodeK * h * r.size);
   }
   // Over the rim: spill.
   for (let lake = 0; lake < L; lake++) {
