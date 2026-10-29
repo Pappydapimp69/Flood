@@ -71,6 +71,14 @@ function shapeOf(seed) {
     taper: 0.25 + 0.2 * r(), // how much the width wanders along the slope
     warp: 0.05 + 0.04 * r(),
     wall: 0.08 + 0.03 * r(), // side walls, as a share of the top height
+    // Lake basins: bowls sunk into the slope below the summits, which the
+    // fill turns into lakes. Where along (t) and across (v, share of the
+    // half-width) each sits, and its radius.
+    lakes: Array.from({ length: LAKES }, (_, i) => ({
+      t: 0.2 + (0.7 * (i + r())) / LAKES,
+      v: (r() * 2 - 1) * 0.55,
+      rad: 0.018 + 0.025 * r(),
+    })),
   };
 }
 
@@ -120,11 +128,20 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   const crest = Math.max(0, SUMMIT.top * maxHeight - floor);
   const tall = smooth(0.62, 0.97, side) * crest * (1 - smooth(0.15, 0.4, t));
   const back = smooth(SUMMIT.at - 0.04, -0.02, t) * crest;
-  return Math.max(floor, cone) + Math.max(wall, tall) + back;
+  let h = Math.max(floor, cone) + Math.max(wall, tall) + back;
+  // Lake basins: deep enough to hold water against the slope they sit on.
+  for (const L of S.lakes) {
+    const du = (t - L.t) * (2 * S.long), dv = wv - L.v * halfW;
+    const q = (du * du + dv * dv) / (L.rad * L.rad);
+    if (q < 1) h -= (40 + 2200 * L.rad) * (1 - q) * (1 - q);
+  }
+  return h;
 }
 
 // Summit cones: peak height as a share of maxHeight, and metres of drop per
 // unit of map half-width (32 km) away from the peak: an even grade.
+const LAKES = 12; // lake basins down the slope
+
 const SUMMIT = { top: 1.2, grade: 7500, at: 0.1, room: 0.06 };
 
 // The three peaks' cells, where each summit cone stands highest.
