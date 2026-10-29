@@ -33,15 +33,19 @@ test('the game never steers: no input, no change of heading', () => {
   }
 });
 
-test('water never climbs: the head stays within the climb and pond allowance of its lowest point', () => {
+test('water never climbs: the head stays within its climb and head height of the water it stands on', async () => {
+  const { headOf } = await import('../../src/shared/river.js');
   const w = createWorld(islands.get(2));
   const r = addRiver(w, 'p1');
-  let lowest = Infinity;
   for (let t = 0; t < TICK_HZ * 120 && !r.finished; t++) {
+    const low = r.low;
     step(w, new Map([['p1', (t >> 6) & 1 ? 1 : -1]]));
+    // On a lake (or carried along its water to the exit) it floats on the
+    // water, wherever its level stands.
+    if (w.lakeOf[cellIndex(w.terrain, r.x, r.z)] >= 0 || r.exit >= 0) continue;
     const h = surfaceAt(w, r.x, r.z, r.idx);
-    lowest = Math.min(lowest, h);
-    assert.ok(h <= lowest + TUNE.climb + TUNE.pondMax + 0.5, `climbed to ${h - lowest} m above its lowest point`);
+    // r.low only rises as a hollow fills or a lake rises under the head.
+    assert.ok(h <= Math.max(low, r.low) + TUNE.climb + headOf(r) + 0.5, `climbed to ${(h - r.low).toFixed(1)} m above its water`);
   }
 });
 
@@ -160,14 +164,14 @@ test('more water stands taller: a big river pushes over rises a small one is tur
   const climb = (size) => {
     const w = createWorld(islands.get(2));
     const r = addRiver(w, 'a', at);
-    r.volume = TUNE.startVolume * size ** 4; r.size = size;
+    r.volume = TUNE.startVolume * size ** 3; r.size = size;
     r.dx = -fall.x; r.dz = -fall.z; // straight back up the slope it came down
     const h0 = surfaceAt(w, r.x, r.z, r.idx);
     let top = h0;
     for (let k = 0; k < 40; k++) { step(w, new Map()); top = Math.max(top, surfaceAt(w, r.x, r.z, r.idx)); }
     return top - h0;
   };
-  assert.ok(headOf({ size: 3 }) === 3 * headOf({ size: 1 }));
+  assert.ok(headOf({ size: 3 }) === 9 * headOf({ size: 1 }));
   const small = climb(1), big = climb(3);
   assert.ok(big > small + 2, `small river rose ${small.toFixed(1)} m, big ${big.toFixed(1)} m`);
   // Same stick, same turn, whatever the size.

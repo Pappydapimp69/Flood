@@ -125,10 +125,10 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   // summits, so all water runs down toward the sea end.
   // Near the top the walls stand as high as the summits, so no water off a
   // summit can spill over the side or back.
-  const crest = Math.max(0, SUMMIT.top * maxHeight - floor);
+  const crest = SUMMIT.top * maxHeight * 0.995;
   const tall = smooth(0.62, 0.97, side) * crest * (1 - smooth(0.15, 0.4, t));
   const back = smooth(SUMMIT.at - 0.04, -0.02, t) * crest;
-  let h = Math.max(floor, cone) + Math.max(wall, tall) + back;
+  let h = Math.max(Math.max(floor, cone) + wall, tall, back);
   // Lake basins: deep enough to hold water against the slope they sit on.
   for (const L of S.lakes) {
     const du = (t - L.t) * (2 * S.long), dv = wv - L.v * halfW;

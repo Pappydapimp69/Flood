@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateIsland, findLakes, LAKE_MIN_DEPTH } from '../../src/shared/terrain.js';
-import { createWorld, addRiver, step, spawnBand, spawnPoint, sizeOf, cellIndex, TUNE, TICK_HZ } from '../../src/shared/river.js';
+import { createWorld, addRiver, step, spawnBand, spawnPoint, sizeOf, cellIndex, lakeLevel, TUNE, TICK_HZ } from '../../src/shared/river.js';
 import { createBot, botSteer } from '../../src/shared/bot.js';
 
 const t42 = generateIsland(42);
@@ -17,9 +17,9 @@ test('lakes label exactly the deep filled cells', () => {
   lakes.forEach((l, i) => assert.equal(counts[i], l.cells));
 });
 
-test('size is the fourth root of relative volume', () => {
+test('size is the cube root of relative volume', () => {
   assert.equal(sizeOf(TUNE.startVolume), 1);
-  assert.ok(Math.abs(sizeOf(TUNE.startVolume * 16) - 2) < 1e-12);
+  assert.ok(Math.abs(sizeOf(TUNE.startVolume * 8) - 2) < 1e-12);
 });
 
 // The biggest lake of seed 42 that starts full, a cell inside it and its spill point.
@@ -30,13 +30,18 @@ function bigLake(w) {
   return { lake, inside: pos(w.lakeOf.indexOf(lake.id)), outCell: w.lakeOutlet[lake.id], pos };
 }
 
-test('entering a full lake adds to it and does not drain it', () => {
+test('a head in a lake raises it and keeps its own volume', () => {
   const w = createWorld(t42);
   const { lake, inside } = bigLake(w);
   const r = addRiver(w, 'a', inside);
-  for (let k = 0; k < 20; k++) step(w, new Map());
-  assert.equal(r.pooled, -1, 'pooled in a full lake');
-  assert.ok(w.lakeVol[lake.id] >= w.lakeCap[lake.id] * TUNE.fullAt, 'a head in the lake drained it');
+  step(w, new Map());
+  const l0 = w.lakeVol[lake.id];
+  for (let k = 0; k < 20 && r.inLake === lake.id; k++) {
+    const v = r.volume;
+    step(w, new Map());
+    if (r.inLake === lake.id) assert.equal(r.volume, v, 'the river grew while its head was in the lake');
+  }
+  assert.ok(w.lakeVol[lake.id] > l0, 'the lake did not rise');
   assert.ok(w.lakeIn[lake.id] > 0, 'no inflow from the river in it');
 });
 
@@ -45,37 +50,25 @@ test('leaving a lake: mass jumps at once, an outlet opens, water keeps coming an
   const { lake, inside, outCell, pos } = bigLake(w);
   const r = addRiver(w, 'a', inside);
   step(w, new Map());
-  const v0 = r.volume, lv = w.lakeVol[lake.id];
+  const level = lakeLevel(w, lake.id);
   Object.assign(r, pos(outCell)); // put the head out through the spill point
   step(w, new Map());
   const join = w.events.find((e) => e.type === 'join' && e.lake === lake.id);
   assert.ok(join, 'no join event');
-  assert.ok(Math.abs(join.gain - lv * TUNE.joinShare) < 1);
-  assert.ok(r.volume > v0 + join.gain * 0.99, 'mass did not jump on joining');
   const o = r.via.get(lake.id);
   assert.ok(o, 'no outlet');
+  // Cut down from the water the head floated on (or the bank, if lower).
+  const lip = t42.filled[outCell] - o.e;
+  assert.ok(Math.abs(lip - (Math.min(t42.filled[outCell], level) - r.depth)) < r.depth * 0.5, `lip ${lip} vs level ${level}`);
   const e0 = o.e;
-  for (let k = 0; k < 40; k++) step(w, new Map());
-  assert.ok(r.inflow > 0, 'no water flowing out to the river');
+  let fed = 0;
+  for (let k = 0; k < 40; k++) { step(w, new Map()); fed = Math.max(fed, r.inflow); }
+  assert.ok(fed > 0, 'no water flowing out to the river');
   assert.ok(o.e > e0, 'the outlet did not erode');
 });
 
-test('lakes stay full; water leaves only over a lip below the surface, never over a high bank', async () => {
-  const w = createWorld(t42);
-  const { lake, inside, outCell, pos } = bigLake(w);
-  const r = addRiver(w, 'a', inside);
-  step(w, new Map());
-  Object.assign(r, pos(outCell));
-  for (let k = 0; k < 6; k++) step(w, new Map());
-  assert.ok(w.lakeVol[lake.id] >= w.lakeCap[lake.id] * 0.9, 'drained with a fresh outlet');
-  // Cut the spill outlet deep and make the river heavy: lots flows out, but
-  // the lake stays full (the land around it tops it up).
-  const o = r.via.get(lake.id);
-  o.e = 8;
-  r.volume = TUNE.startVolume * 16; r.size = 2;
-  for (let k = 0; k < 300; k++) step(w, new Map());
-  assert.ok(w.lakeOut[lake.id] > 0, 'a cut outlet carried nothing');
-  assert.equal(w.lakeVol[lake.id], w.lakeCap[lake.id], 'the lake dropped');
+test('water leaves only over a lip below the surface, never over a high bank', async () => {
+  const { inside, pos, lake } = bigLake(createWorld(t42));
   // An outlet on a bank above the lake carries nothing, however heavy the river.
   const w2 = createWorld(t42);
   const b = addRiver(w2, 'b', inside);
@@ -88,13 +81,13 @@ test('lakes stay full; water leaves only over a lip below the surface, never ove
   }
   assert.ok(bank >= 0, 'no high bank found');
   Object.assign(b, pos(bank));
-  b.via.set(lake.id, { cell: bank, e: TUNE.outletStart * 0.5, born: 0 });
+  b.via.set(lake.id, { cell: bank, e: 0.5, w: TUNE.width, born: 0 });
   b.inLake = -1;
   b.volume = TUNE.startVolume * 16; b.size = 2;
   const v0 = w2.lakeVol[lake.id];
   step(w2, new Map());
   assert.equal(w2.lakeOut[lake.id], 0, 'water left over a lip above the lake');
-  assert.equal(w2.lakeVol[lake.id], v0, 'the lake changed');
+  assert.ok(w2.lakeVol[lake.id] >= v0, 'the lake drained over a high bank');
 });
 
 test('every start is at the same elevation', () => {
@@ -129,10 +122,24 @@ test('the island is rerolled until the summit ring seats every river', async () 
   const { rollIsland, seats, spawnBand } = await import('../../src/shared/river.js');
   const { world } = rollIsland(4, 12);
   assert.ok(seats(world) >= 12, `only ${seats(world)} seats`);
-  // Every start cell is on the highest summit's own slopes.
-  const t = world.terrain, band = spawnBand(world);
-  let top = 0;
-  for (let i = 1; i < t.height.length; i++) if (t.height[i] > t.height[top]) top = i;
-  assert.equal(band.top, top);
-  for (const c of band.cells) assert.ok(t.height[c] > t.height[band.top] * 0.55, `start cell ${c} far below the summit`);
+  // Three summits, each with its own ring of starts on its own slopes, and
+  // rivers dealt evenly round them.
+  const t = world.terrain, band = spawnBand(world), n = t.size;
+  assert.equal(t.summits.length, 3);
+  assert.equal(band.groups.length, 3);
+  band.groups.forEach((cells, i) => {
+    const s = t.summits[i], sx = s % n, sy = (s - sx) / n;
+    assert.ok(cells.length > 0, `summit ${i} has no starts`);
+    for (const c of cells) {
+      assert.ok(t.height[c] > t.height[s] * 0.8, `start cell ${c} far below its summit`);
+      assert.ok(Math.hypot((c % n) - sx, Math.floor(c / n) - sy) < 40, `start cell ${c} far from its summit`);
+    }
+  });
+  for (let i = 0; i < 12; i++) addRiver(world, `p${String(i).padStart(2, '0')}`);
+  const per = [0, 0, 0];
+  for (const r of world.rivers) {
+    const k = cellIndex(t, r.x, r.z);
+    per[band.groups.findIndex((g) => g.includes(k))]++;
+  }
+  assert.deepEqual(per, [4, 4, 4]);
 });

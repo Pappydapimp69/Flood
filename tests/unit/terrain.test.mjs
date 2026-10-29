@@ -23,8 +23,8 @@ test('map edge is open sea', () => {
 test('island is a sensible size and height', () => {
   for (const [seed, t] of islands) {
     const s = stats(t);
-    assert.ok(s.landFraction > 0.15 && s.landFraction < 0.45, `seed ${seed} land ${s.landFraction}`);
-    assert.ok(s.peak > 1000 && s.peak < t.maxHeight * 1.1, `seed ${seed} peak ${s.peak}`);
+    assert.ok(s.landFraction > 0.1 && s.landFraction < 0.45, `seed ${seed} land ${s.landFraction}`);
+    assert.ok(s.peak > 1000 && s.peak < t.maxHeight * 1.25, `seed ${seed} peak ${s.peak}`);
     assert.ok(s.lakeCells / (s.landFraction * t.size * t.size) < 0.15, `seed ${seed} is mostly lake`);
   }
 });

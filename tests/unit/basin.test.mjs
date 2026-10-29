@@ -9,20 +9,25 @@ const cellPos = (w, k) => {
   return { x: ((k % n) / (n - 1) - 0.5) * w.terrain.worldSize, z: (Math.floor(k / n) / (n - 1) - 0.5) * w.terrain.worldSize };
 };
 
-test('every lake is full, and stays full however much the rivers draw off', () => {
+test('lakes are reservoirs: they start part full and drain through a low outlet, never below its lip', async () => {
+  const { lakeLevel } = await import('../../src/shared/river.js');
   const w = createWorld(t1);
   assert.equal(w.basins.length, 0);
-  for (const l of w.lakes) assert.equal(w.lakeVol[l.id], w.lakeCap[l.id]);
+  for (const l of w.lakes) assert.equal(w.lakeVol[l.id], w.lakeCap[l.id] * TUNE.lakeStart);
   const lake = w.lakes.reduce((a, b) => (b.cells > a.cells ? b : a));
   const r = addRiver(w, 'a', cellPos(w, w.lakeOf.indexOf(lake.id)));
   step(w, new Map());
-  r.inLake = -1;
-  r.via.set(lake.id, { cell: w.lakeOutlet[lake.id], e: TUNE.outletMax, born: 0 });
-  r.volume = TUNE.startVolume * 81; r.size = 3;
-  const v0 = r.volume;
-  for (let k = 0; k < 200; k++) step(w, new Map());
-  assert.equal(w.lakeVol[lake.id], w.lakeCap[lake.id], 'the lake dropped');
-  assert.ok(r.volume > v0, 'the outlet carried nothing');
+  // An outlet cut 6 m below the water: stored water drains out to the river.
+  const cell = w.lakeOutlet[lake.id], lip = lakeLevel(w, lake.id) - 6;
+  Object.assign(r, cellPos(w, cell)); // the head out through the spill point
+  step(w, new Map());
+  r.via.set(lake.id, { cell, e: w.terrain.filled[cell] - lip, w: TUNE.width, born: 0 });
+  const v0 = r.volume, l0 = w.lakeVol[lake.id], e0 = r.via.get(lake.id).e;
+  for (let k = 0; k < 400; k++) step(w, new Map());
+  assert.ok(w.lakeVol[lake.id] < l0, 'the lake did not drop');
+  assert.ok(r.volume > v0, 'the outlet carried nothing to the river');
+  assert.ok(r.via.get(lake.id).e > e0, 'the outlet did not erode');
+  assert.ok(lakeLevel(w, lake.id) >= w.terrain.filled[cell] - r.via.get(lake.id).e - 0.5, 'drained below its lip');
 });
 
 test('momentum carries across level water instead of dropping to a crawl', () => {
@@ -35,8 +40,8 @@ test('momentum carries across level water instead of dropping to a crawl', () =>
   assert.ok(r.speed > 150, `speed fell to ${r.speed | 0} on the lake`);
 });
 
-test('lakes are not traps: a river skates across and leaves over the bank it reaches, still fast', async () => {
-  const { rollIsland, cellIndex } = await import('../../src/shared/river.js');
+test('lakes are not traps: a river crossing one always gets out, over a bank, through its own cut or the lowest exit', async () => {
+  const { rollIsland, cellIndex, underWater } = await import('../../src/shared/river.js');
   let ok = 0, n = 0;
   const { world: base } = rollIsland(11, 12);
   const t = base.terrain, N = t.size;
@@ -47,13 +52,13 @@ test('lakes are not traps: a river skates across and leaves over the bank it rea
       const w = createWorld(t);
       const r = addRiver(w, 'a', { x: cx - ux * 150, z: cz - uz * 150 });
       r.dx = ux; r.dz = uz; r.speed = 180;
-      let exit = 0;
-      for (let k = 0; k < 800 && !exit; k++) { step(w, new Map()); if (w.lakeOf[cellIndex(t, r.x, r.z)] < 0) exit = r.speed; }
+      let left = false;
+      for (let k = 0; k < 800 && !left; k++) { step(w, new Map()); left = w.lakeOf[cellIndex(t, r.x, r.z)] < 0 && !underWater(w, cellIndex(t, r.x, r.z)); }
       n++;
-      if (exit > 100) ok++;
+      if (left) ok++;
     }
   }
-  assert.ok(n >= 8 && ok / n >= 0.9, `${ok}/${n} crossings left the lake still fast`);
+  assert.ok(n >= 8 && ok === n, `${ok}/${n} crossings got out of the lake`);
 });
 
 test('no digging or erosion under standing water: only the banks erode', async () => {

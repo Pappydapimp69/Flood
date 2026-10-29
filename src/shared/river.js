@@ -373,6 +373,7 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     ponded: 0, // metres the local pool has risen above the ground
     leftLake: -1, // the last lake the head left
     cut: 0, cutTicks: 0, cutAt: -1, cutLake: -1, // a head on a lake cutting its way out through a bank
+    exitPath: null, exitStep: 0,
     exit: -1, // cell of the lake exit a blocked head on a lake is making for, or -1
     route: null, // level where the head was blocked: it's following the fill route out until it runs lower
     netAt: 0, netX: 0, netZ: 0, netT: 0, // where it was a moment ago, to tell going nowhere from flowing
@@ -653,7 +654,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     r.cutLake = onLake ? -1 : shore; // on the rim: keep cutting the way it's aimed
     if (ahead - lakeLevel(world, shore) > TUNE.cutMax * r.size) {
       // A hill, not a rim: no cutting through that. Make for the lowest exit.
-      r.exit = lowestExit(world, shore, r); r.cut = 0; r.cutTicks = 0; r.cutAt = -1; r.cutLake = -1;
+      setExit(world, r, shore); r.cut = 0; r.cutTicks = 0; r.cutAt = -1; r.cutLake = -1;
     } else if (r.cut >= ahead - ceiling) {
       // Through: the water runs out over the cut.
       r.low = ahead - TUNE.climb - headOf(r) + 0.01;
@@ -664,7 +665,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     } else {
       world.digs.push({ r, x: px, z: pz, width: widthOf(r), depth: r.cut, bed: ahead - r.cut });
       if (r.cutTicks === 1) world.events.push({ type: 'cut', river: r.idx, tick: world.tick });
-      if (r.cutTicks > TUNE.cutTicks) { r.exit = lowestExit(world, shore, r); r.cut = 0; r.cutTicks = 0; r.cutAt = -1; r.cutLake = -1; }
+      if (r.cutTicks > TUNE.cutTicks) { setExit(world, r, shore); r.cut = 0; r.cutTicks = 0; r.cutAt = -1; r.cutLake = -1; }
       else {
         r.speed = Math.min(r.speed, TUNE.baseSpeed * mass);
         r.depth = depthOf(r);
@@ -673,11 +674,17 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     }
   } else if (shore < 0) { r.cut = 0; r.cutTicks = 0; r.cutAt = -1; }
   if (r.exit >= 0) {
+    // Along the water to the exit (never straight across a headland).
     const n = tt.size;
-    const ex = ((r.exit % n) / (n - 1) - 0.5) * tt.worldSize - r.x, ez = (Math.floor(r.exit / n) / (n - 1) - 0.5) * tt.worldSize - r.z;
-    const el = Math.sqrt(ex * ex + ez * ez);
-    if (el > tt.cell) {
-      v = Math.max(TUNE.baseSpeed * mass, r.speed);
+    let k = r.exitPath[r.exitStep], ex, ez, el;
+    for (;;) {
+      ex = ((k % n) / (n - 1) - 0.5) * tt.worldSize - r.x; ez = (Math.floor(k / n) / (n - 1) - 0.5) * tt.worldSize - r.z;
+      el = Math.sqrt(ex * ex + ez * ez);
+      if (el > tt.cell * 0.75 || r.exitStep >= r.exitPath.length - 1) break;
+      k = r.exitPath[++r.exitStep];
+    }
+    if (el > tt.cell * 0.75) {
+      v = Math.max(TUNE.baseSpeed * mass * 2, r.speed); // the lake's current carries it to the exit
       r.speed = v;
       const s = Math.min(v * DT, el);
       moveTo(world, r, r.x + (ex / el) * s, r.z + (ez / el) * s);
@@ -685,7 +692,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
       return;
     }
     // Through: the water stands at the exit now and runs on downhill.
-    r.exit = -1;
+    r.exit = -1; r.exitPath = null;
     r.low = Math.max(r.low, surfaceAt(world, r.x, r.z, me));
     r.route = r.low;
     const d = routeDir();
@@ -1057,6 +1064,33 @@ function moveTo(world, r, nx, nz) {
   r.x = nx; r.z = nz;
   // In a lake the river's volume holds: its water goes into the lake.
   if (world.lakeOf[cellIndex(world.terrain, nx, nz)] < 0) grow(r, moved * TUNE.trickle);
+}
+
+// Send a head on a lake to its lowest exit, by a path over the lake's water
+// (lake and its shallow fringe), found breadth-first so every machine agrees.
+function setExit(world, r, lake) {
+  const t = world.terrain, n = t.size, goal = lowestExit(world, lake, r);
+  if (goal < 0) return;
+  const start = cellIndex(t, r.x, r.z), from = new Map([[start, -1]]), queue = [start];
+  // Over the water, or ground no higher than the head can stand on.
+  const top = Math.max(r.low, lakeLevel(world, lake)) + TUNE.climb + headOf(r);
+  const wet = (k) => world.lakeOf[k] === lake || (world.lakeOf[k] < 0 && underWater(world, k)) || t.filled[k] + world.rock[k] <= top;
+  let end = -1;
+  for (let q = 0; q < queue.length && end < 0; q++) {
+    const c = queue[q], cx = c % n, cy = (c - cx) / n;
+    for (let dy = -1; dy <= 1 && end < 0; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const x = cx + dx, y = cy + dy, k = y * n + x;
+      if ((!dx && !dy) || x < 0 || y < 0 || x >= n || y >= n || from.has(k)) continue;
+      if (k === goal) { from.set(k, c); end = k; break; }
+      if (!wet(k)) continue;
+      from.set(k, c);
+      queue.push(k);
+    }
+  }
+  const path = [];
+  for (let k = end >= 0 ? end : goal; k >= 0; k = from.get(k) ?? -1) path.push(k);
+  path.reverse();
+  r.exit = goal; r.exitPath = path; r.exitStep = 0;
 }
 
 // A lake's lowest way out: its spill point or the lip of any outlet cut from it.
