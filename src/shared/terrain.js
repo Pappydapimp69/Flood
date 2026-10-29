@@ -79,6 +79,15 @@ function shapeOf(seed) {
       v: (r() * 2 - 1) * 0.55,
       rad: 0.018 + 0.025 * r(),
     })),
+    // Gates down the lower slope: rock ridges across the run, each a V
+    // pointing downhill with one gap at its tip, the gaps alternating sides.
+    // Water hitting an arm slides along it to the gap, slowly; a river aimed
+    // at the gap early keeps its speed, and everyone squeezes through the
+    // same notch.
+    gates: Array.from({ length: GATES }, (_, i) => ({
+      t: 0.4 + (0.5 * (i + 0.3 + 0.4 * r())) / GATES,
+      v: (i % 2 ? 1 : -1) * (0.2 + 0.3 * r()),
+    })),
   };
 }
 
@@ -129,6 +138,15 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   const tall = smooth(0.62, 0.97, side) * crest * (1 - smooth(0.15, 0.4, t));
   const back = smooth(SUMMIT.at - 0.04, -0.02, t) * crest;
   let h = Math.max(Math.max(floor, cone) + wall, tall, back);
+  // Gates: a ridge GATE.height tall, GATE.thick wide, along each V's arms,
+  // open for GATE.gap either side of its tip.
+  const sv = wv / halfW;
+  for (const G of S.gates) {
+    const off = Math.abs(sv - G.v);
+    if (off < GATE.gap) continue;
+    const d = (t - (G.t - GATE.spread * off)) * (2 * S.long) / GATE.thick;
+    if (d > -1 && d < 1) h += GATE.height * (1 - d * d) * (0.8 + 0.4 * peaks);
+  }
   // Lake basins: deep enough to hold water against the slope they sit on.
   for (const L of S.lakes) {
     const du = (t - L.t) * (2 * S.long), dv = wv - L.v * halfW;
@@ -141,6 +159,8 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
 // Summit cones: peak height as a share of maxHeight, and metres of drop per
 // unit of map half-width (32 km) away from the peak: an even grade.
 const LAKES = 12; // lake basins down the slope
+const GATES = 5; // rock gates across the lower slope
+const GATE = { height: 45, thick: 0.007, gap: 0.12, spread: 0.06 };
 
 const SUMMIT = { top: 1.2, grade: 7500, at: 0.1, room: 0.06 };
 
@@ -211,7 +231,7 @@ export function generateIsland(seed = 1, opts = {}) {
   }
   const filled = fillDepressions(height, n);
   return { seed, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
-    summits: summitCells(height, n, shape), axis: { x: shape.ax, y: shape.ay } };
+    summits: summitCells(height, n, shape), axis: { x: shape.ax, y: shape.ay }, long: shape.long };
 }
 
 // Steepest-descent neighbour on the filled surface, or -1 at the sea.

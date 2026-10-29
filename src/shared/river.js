@@ -94,6 +94,20 @@ export const TUNE = {
   // stands to one that can't.
   treeBreak: 1.3,
   treeHeight: 14,
+  // The heat front: from heatStart ticks (counted from the start of the drop)
+  // a heat wave rolls down the mountain at heatSpeed m/s. Water behind it
+  // boils off heatRate of its volume per tick; dry, the river is out.
+  heatStart: 600 + 20 * 50,
+  heatSpeed: 155,
+  heatRate: 0.004,
+  // Storms: every stormEvery ticks from stormStart, a storm opens over the
+  // slope ahead of the pack for stormTicks, raining stormRain litres per tick
+  // into every river head (and lake) under it.
+  stormStart: 600 + 20 * 40,
+  stormEvery: 20 * 35,
+  stormTicks: 20 * 16,
+  stormRadius: 1300,
+  stormRain: 9000,
   // Contact is a depth tug-of-war: the deeper water siphons the shallower.
   junctionK: 0.3, // share of a cut river's discharge that flows on into the river that cut it
   siphonRate: 0.012,
@@ -123,7 +137,7 @@ export function lakeGain(lake) {
 }
 
 // The game surface: filled terrain minus every carved channel.
-export function createWorld(terrain) {
+export function createWorld(terrain, { forest = true } = {}) {
   const n = terrain.size;
   // owner: which river last dug each cell. A river never feels its own channel
   // (it would sit at the bottom of its own trench and stall), only rivals'.
@@ -143,6 +157,7 @@ export function createWorld(terrain) {
     ...lakeLevels(terrain, lakeOf, lakes), // lakeBrim, lakeBed: surface when full, lowest point
     events: [], // for presentation, see step()
     digs: [], // channel digs queued during a tick, applied together at its end
+    storm: null, // { x, z, radius, until } while a storm rains
     junctions: new Map(), // 'from|to' -> { from, to, until }: a cut channel's water flowing on into the cutter
     carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), dugAt: new Int32Array(n * n), tick: 0, rivers: [], dirty: [],
   };
@@ -151,6 +166,12 @@ export function createWorld(terrain) {
   world.rock = new Float32Array(n * n); // metres of cooled rock on top of the ground
   world.basins = makeBasins(world);
   makeLava(world);
+  if (forest) addForest(world);
+  return world;
+}
+
+// The forest, planted once the island is settled (rerolls skip it).
+export function addForest(world) {
   const band = spawnBand(world);
   world.trees = plantForest(world, band.ring, band.cells, TUNE.climb);
   world.felled = []; // cells whose trees a river knocked down, for presentation
@@ -330,10 +351,10 @@ export function seats(world) {
 export function rollIsland(seed, rivers, tries = 40) {
   let world;
   for (let i = 0; i < tries; i++, seed = (seed % 1_000_000) + 1) {
-    world = createWorld(generateIsland(seed));
+    world = createWorld(generateIsland(seed), { forest: false });
     if (seats(world) >= rivers) break;
   }
-  return { seed: world.terrain.seed, world };
+  return { seed: world.terrain.seed, world: addForest(world) };
 }
 
 // Keyed by player id. Keeps clear of rivers already placed, so add rivers in
@@ -530,6 +551,7 @@ export function step(world, inputs) {
     moveRiver(world, r, readInput(inputs?.get(r.id)));
   }
   resolveContacts(world);
+  weather(world);
   hydrology(world);
   erodeTrails(world);
   applyDigs(world);
@@ -849,6 +871,72 @@ function resolveContacts(world) {
     const by = top.get(r).by;
     r.out = { by: by.id, tick: world.tick };
     world.events.push({ type: 'merge', winner: by.idx, loser: r.idx, gain: 0, how: 'drained', tick: world.tick });
+  }
+}
+
+// How far down the slope a point is: 0 at the summit end, 1 at the sea end.
+export function slopeT(world, x, z) {
+  const t = world.terrain, u = (x * t.axis.x + z * t.axis.y) / (t.worldSize / 2);
+  return (u + t.long) / (2 * t.long);
+}
+
+// Where the heat front stands (as slopeT), or -Infinity before it starts.
+export function heatFront(world) {
+  const ticks = world.tick - TUNE.heatStart;
+  if (ticks < 0) return -Infinity;
+  const t = world.terrain;
+  return -0.02 + (ticks * TUNE.heatSpeed * DT) / (2 * t.long * (t.worldSize / 2));
+}
+
+// Weather, once per tick: the heat front boils off what it has caught up
+// with; storms rain into whatever is under them. Placed from the state of
+// the race and a seeded stream, so every machine agrees.
+function weather(world) {
+  const front = heatFront(world);
+  const racing = world.rivers.filter((r) => isRacing(r) && !r.dropping).sort(byId);
+  if (front > -Infinity) {
+    if (world.tick === TUNE.heatStart) world.events.push({ type: 'heat', tick: world.tick });
+    for (const r of racing) {
+      if (slopeT(world, r.x, r.z) >= front) continue;
+      const boil = r.volume * TUNE.heatRate;
+      grow(r, -boil);
+      world.events.push({ type: 'scorch', river: r.idx, amount: boil, tick: world.tick });
+      if (r.volume < TUNE.floor * TUNE.startVolume) {
+        r.out = { by: null, tick: world.tick, how: 'heat' };
+        world.events.push({ type: 'merge', winner: -1, loser: r.idx, gain: 0, how: 'heat', tick: world.tick });
+      }
+    }
+  }
+  // Storms.
+  if (!world.storm && world.tick >= TUNE.stormStart && (world.tick - TUNE.stormStart) % TUNE.stormEvery === 0 && racing.length) {
+    const rng = stream(world.terrain.seed, `storm:${world.tick}`);
+    const ts = racing.map((r) => slopeT(world, r.x, r.z)).sort((a, b) => a - b);
+    const tAt = Math.min(0.97, ts[ts.length >> 1] + 0.07 + 0.1 * rng());
+    const t = world.terrain, ax = t.axis.x, az = t.axis.y, half = t.worldSize / 2;
+    const u = (tAt * 2 * t.long - t.long) * half;
+    let side = (rng() * 2 - 1) * 4000, x = 0, z = 0;
+    for (let i = 0; i < 6; i++, side *= 0.5) {
+      x = ax * u - az * side; z = az * u + ax * side;
+      const k = cellIndex(t, x, z);
+      if (t.filled[k] > SEA_LEVEL && world.lakeOf[k] < 0) break;
+    }
+    world.storm = { x, z, until: world.tick + TUNE.stormTicks, radius: TUNE.stormRadius };
+    world.events.push({ type: 'storm', on: true, x, z, radius: TUNE.stormRadius, tick: world.tick });
+  }
+  const s = world.storm;
+  if (s) {
+    if (world.tick >= s.until) {
+      world.storm = null;
+      world.events.push({ type: 'storm', on: false, tick: world.tick });
+    } else {
+      const r2 = s.radius * s.radius;
+      for (const r of racing) {
+        if ((r.x - s.x) ** 2 + (r.z - s.z) ** 2 > r2) continue;
+        if (r.inLake >= 0) world.lakePending[r.inLake] += TUNE.stormRain;
+        else grow(r, TUNE.stormRain);
+        r.rained = world.tick;
+      }
+    }
   }
 }
 

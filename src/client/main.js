@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, spawnBand, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, spawnBand, heatFront, slopeT, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -196,6 +196,49 @@ const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
 // A race: the world plus what draws it. `river` is null when spectating.
 let trees, rocks, lava; // scenery for the current race
 let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, endShown, mode, raceOver, finalShown;
+// Metres between a river and the heat front behind it (Infinity before it starts).
+function heatGap(r) {
+  const f = heatFront(world), t = world.terrain;
+  return f === -Infinity ? Infinity : (slopeT(world, r.x, r.z) - f) * 2 * t.long * (t.worldSize / 2);
+}
+
+// Weather: the heat front as a glowing wall of shimmering air across the
+// island, and a storm as a dark cloud with a curtain of rain under it.
+let heatWall = null, stormCloud = null, scorchedAt = -1e9;
+function updateWeather(time) {
+  const t = world.terrain;
+  if (!heatWall) {
+    const mat = new THREE.MeshBasicMaterial({ color: '#ff6a2a', transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false, fog: false });
+    heatWall = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), mat);
+    heatWall.renderOrder = 3;
+    scene.add(heatWall);
+  }
+  const front = heatFront(world);
+  heatWall.visible = front > -Infinity && front < 1.05 && !mapView;
+  if (heatWall.visible) {
+    const half = t.worldSize / 2, u = (front * 2 * t.long - t.long) * half;
+    heatWall.position.set(t.axis.x * u, 2600 * VERT * 0.5, t.axis.y * u);
+    heatWall.scale.set(t.worldSize * 0.6, 2600 * VERT, 1);
+    heatWall.rotation.set(0, Math.atan2(t.axis.x, t.axis.y), 0);
+    heatWall.material.opacity = 0.18 + 0.06 * Math.sin(time * 3);
+  }
+}
+function showStorm(e) {
+  if (!stormCloud) {
+    stormCloud = new THREE.Group();
+    const cloud = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.1, 0.18, 32), new THREE.MeshLambertMaterial({ color: '#3d4652', transparent: true, opacity: 0.85 }));
+    const rain = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.92, 1, 32, 1, true), new THREE.MeshBasicMaterial({ color: '#9fc6e8', transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }));
+    rain.position.y = -0.5;
+    stormCloud.add(cloud, rain);
+    scene.add(stormCloud);
+  }
+  stormCloud.visible = !!e.on;
+  if (!e.on) return;
+  const ground = surfaceAt(world, e.x, e.z) * VERT, top = ground + 2600;
+  stormCloud.position.set(e.x, top, e.z);
+  stormCloud.scale.set(e.radius, 2600, e.radius);
+}
+
 // Lake overflow: one water strip per spill channel, shown while it runs.
 const spillRibbons = new Map();
 function updateSpills(time) {
@@ -229,6 +272,7 @@ function beginRace(seed, raceIds, me, rolled) {
     e.surge.material.dispose(); e.spray.geometry.dispose(); e.spray.material.dispose();
   }
   for (const sr of spillRibbons.values()) { scene.remove(sr.ribbon.mesh); sr.ribbon.geo.dispose(); }
+  if (stormCloud) stormCloud.visible = false;
   spillRibbons.clear();
   useIsland(seed, rolled?.terrain);
   world = rolled?.terrain === terrain ? rolled : createWorld(terrain);
@@ -579,6 +623,19 @@ function advance(inputs) {
       if (e.to === river.idx) { tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount); audio.bubble(); }
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
+    } else if (e.type === 'heat') {
+      showPop('A heat wave is rolling down the mountain — stay ahead of it');
+      feed('The heat front is coming');
+    } else if (e.type === 'storm') {
+      showStorm(e);
+      if (e.on) { feed('A storm breaks over the slope ahead — free water'); if (river && isRacing(river)) showPop('Storm ahead! Get under it to soak up the rain'); }
+    } else if (e.type === 'scorch' && river && e.river === river.idx) {
+      scorchedAt = world.tick;
+    } else if (e.type === 'merge' && e.how === 'heat') {
+      const l = world.rivers[e.loser];
+      feed(`${nameOf(l)} boiled away in the heat`);
+      if (l === river) audio.merge(false);
+      if (l === focus) focus = standings(world).find(isRacing) ?? focus;
     } else if (e.type === 'merge') {
       const w = world.rivers[e.winner], l = world.rivers[e.loser];
       if (w === river) { showPop(`You drained ${nameOf(l)} dry`); audio.merge(true); }
@@ -608,10 +665,11 @@ function showResults(table, final) {
   const place = river ? table.indexOf(river) + 1 : 0;
   let head = 'Race over';
   if (river?.finished) head = place === 1 ? 'You reached the sea first!' : `You reached the sea ${ordinal(place)}`;
+  else if (river?.out?.how === 'heat') head = 'Boiled away by the heat front';
   else if (river?.out) head = `Drained dry by ${nameOf(world.rivers.find((r) => r.id === river.out.by))}`;
   else if (river && final) head = `Time's up — ${ordinal(place)}`;
   const status = (r) => r.finished ? `sea · ${fmtTime(r.finishTick / TICK_HZ)}`
-    : r.out ? `drained by ${nameOf(world.rivers.find((o) => o.id === r.out.by))}` : 'still flowing';
+    : r.out?.how === 'heat' ? 'boiled away' : r.out ? `drained by ${nameOf(world.rivers.find((o) => o.id === r.out.by))}` : 'still flowing';
   const rows = table.slice(0, 5);
   if (river && place > 5) rows.push(river);
   const list = rows.map((r) => `<li class="${r === river ? 'me' : ''}"><span>${ordinal(table.indexOf(r) + 1)} ${escapeHtml(nameOf(r))}</span><span>${status(r)}</span></li>`).join('');
@@ -856,6 +914,7 @@ renderer.setAnimationLoop(() => {
   placeTags();
   pulseLava(lava, now / 1000);
   updateSpills(now / 1000);
+  updateWeather(now / 1000);
   tickWater([sea, lakesMesh, ...entries.map((e) => e.surge)], now / 1000);
   showMarker(now, fx, fy, fz);
   showDownhill(now);
@@ -956,6 +1015,8 @@ renderer.setAnimationLoop(() => {
   hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · drag far to dive faster · land on the glowing ring' : '← → steer · ↑ ↓ speed (or drag) · land on the glowing ring')
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
+    : world.tick - scorchedAt < 10 ? 'BOILING OFF — the heat front has caught you, get ahead of it!'
+    : heatGap(me) < 3000 ? `heat front ${(heatGap(me) / 1000).toFixed(1)} km behind you · keep moving`
     : `pouring ${fmtL(dischargeOf(me) * TICK_HZ + me.inflow * TICK_HZ)}/s · head ${headOf(me).toFixed(1)} m · cutting ${me.depth.toFixed(1)} m` + (fedBy ? ` · fed by ${fedBy}` : '');
   watchCaptions(now, place);
   tugFeedback(now);
