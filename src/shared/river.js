@@ -55,7 +55,8 @@ export const TUNE = {
   joinShare: 0, // nothing taken at once on joining: only what flows out is added
   fullAt: 0.999, // a lake this full is level ground you flow across
   maxPoolTicks: 200, // guaranteed exit: after 10 s pooled, the basin tops up and spills
-  trailErode: 0.04, // metres your whole channel deepens per 10 ticks, times size, for good
+  trailErode: 0.0004, // metres a channel tile erodes per tick, per metre of water over it, times size...
+  slopeErode: 0.04, // ...and once more for every this much slope (steep ground cuts canyons)
   trailPasses: 20,
   headSpared: 4,
   stallTicks: 20, stallMin: 30, stallNet: 0.35, // moved over 30 m in 1 s but under 35% of it net: going nowhere
@@ -878,7 +879,10 @@ function spillChannel(world, lake) {
 }
 
 // Erosion is forever: every river's whole trail keeps deepening as long as it
-// pours, faster for heavier rivers, never below sea level. A trail is swept a
+// pours, never below sea level. Each tile cuts by the water running over it
+// (the river's flow depth, shallower at the banks), the river's size (its
+// volume) and the slope there: big rivers on steep ground carve canyons, small
+// ones on the flats barely scour. A drained river's channel stops eroding. A trail is swept a
 // slice per tick, all of it every trailPasses ticks. Outlets are recut to how
 // far they have eroded. Cells are marked for redraw every quarter metre.
 function erodeTrails(world) {
@@ -888,7 +892,7 @@ function erodeTrails(world) {
   if (!world.erodedAt) world.erodedAt = new Int32Array(n * n);
   const sweep = Math.floor(world.tick / ticks) + 1;
   for (const r of world.rivers.filter((o) => !o.out && !o.dropping).sort(byId)) {
-    const add = (TUNE.trailErode * r.size * ticks) / 10;
+    const flow = 0.7 * depthOf(r); // water stands this deep over the bed
     // The head itself doesn't erode: water erodes where it flows past, so a
     // head that stops can't dig itself into a pit.
     const len = Math.max(0, r.path.length - TUNE.headSpared);
@@ -903,6 +907,11 @@ function erodeTrails(world) {
         if (underWater(world, k)) continue;
         world.erodedAt[k] = sweep;
         const was = world.carve[k];
+        const f = t.filled, kx = k % n;
+        const sx = (f[kx < n - 1 ? k + 1 : k] - f[kx > 0 ? k - 1 : k]) / (2 * t.cell);
+        const sz = (f[k + n < n * n ? k + n : k] - f[k - n >= 0 ? k - n : k]) / (2 * t.cell);
+        const slope = Math.sqrt(sx * sx + sz * sz);
+        const add = TUNE.trailErode * ticks * Math.min(flow, was) * r.size * (1 + slope / TUNE.slopeErode);
         // Deep canyons cut slower, but never stop.
         const v = Math.min(t.height[k] + world.rock[k] - SEA_LEVEL - 0.5, was + add / (1 + was / (TUNE.depth * 3)));
         if (v <= was) continue;
