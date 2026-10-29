@@ -619,8 +619,10 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   // carries on, fading slowly, never below the base speed.
   const level = onLake || gl < TUNE.flatSlope;
   const target = level ? Math.max(TUNE.baseSpeed * mass, Math.min(TUNE.maxSpeed * mass, r.speed * TUNE.levelGlide))
-    : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, TUNE.baseSpeed * mass + TUNE.slopeSpeed * along));
-  r.speed += (target - r.speed) * (TUNE.speedEase / r.size); // momentum: heavy water changes speed slowly
+    : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + TUNE.slopeSpeed * along) * mass));
+  // Momentum: more water surges up to speed just as fast, but holds it
+  // longer, slowing down only slowly.
+  r.speed += (target - r.speed) * (target > r.speed ? TUNE.speedEase : TUNE.speedEase / r.size);
   r.depth = depthOf(r);
 
   // More water stands taller at the head: rises that would stop a small river
@@ -1025,7 +1027,7 @@ export function isLive(world, k) {
 // How tall the water stands at the head, metres: it grows with volume (as
 // size, the fourth root), so a bigger river pushes over rises a small one can't.
 export function headOf(r) {
-  return TUNE.headPerSize * r.size;
+  return TUNE.headPerSize * r.size * r.size; // grows fast: a big river plows over banks a small one can't
 }
 
 export function depthOf(r) {

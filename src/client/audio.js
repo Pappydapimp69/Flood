@@ -203,8 +203,8 @@ export function createAudio() {
     // size: river size (1 at the start); fall01: 1 at the top of the drop, 0 landed.
     update(speed01, flowing, size = 1, fall01 = 0) {
       if (!bed) return;
-      const t = ctx.currentTime, on = !muted && flowing, big = Math.min(1, (size - 1) / 2);
-      bed.rumble.gain.gain.setTargetAtTime(on ? 0.1 + 0.16 * big + 0.05 * speed01 : 0, t, 0.4);
+      const t = ctx.currentTime, on = !muted && flowing, big = Math.min(1, (size - 1) / 0.8); // the roar grows fast with size
+      bed.rumble.gain.gain.setTargetAtTime(on ? 0.1 + 0.22 * big + 0.06 * speed01 * (1 + big) : 0, t, 0.4);
       bed.rush.gain.gain.setTargetAtTime(on ? 0.035 + 0.12 * speed01 : 0, t, 0.3);
       bed.rush.filter.frequency.setTargetAtTime(600 + 1100 * speed01, t, 0.3);
       bed.gurgle.gain.gain.setTargetAtTime(on ? 0.015 + 0.03 * speed01 : 0, t, 0.3);

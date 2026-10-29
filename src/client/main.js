@@ -149,11 +149,12 @@ controls.minDistance = 2000;
 controls.maxDistance = 48000 * 2.5;
 controls.enabled = false;
 
+let baseFov = 55;
 function fitCamera() {
   const aspect = window.innerWidth / window.innerHeight;
   camera.aspect = aspect;
   // Keep the horizontal view wide in portrait, so phones see the banks too.
-  camera.fov = aspect < 1 ? Math.min(85, (2 * Math.atan(Math.tan((55 * Math.PI) / 360) / aspect) * 180) / Math.PI) : 55;
+  camera.fov = baseFov = aspect < 1 ? Math.min(85, (2 * Math.atan(Math.tan((55 * Math.PI) / 360) / aspect) * 180) / Math.PI) : 55;
   camera.updateProjectionMatrix();
   // Re-read the pixel ratio: zoom, OS scaling or a new monitor change it after load.
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxRatio));
@@ -841,7 +842,7 @@ renderer.setAnimationLoop(() => {
       e.surge.scale.set(95 * s, 46 * s, 120 * s);
       e.surge.rotation.set(0, Math.atan2(e.mx / ml, e.mz / ml), 0);
     }
-    updateSpray(e.spray, hx, hy, hz, e.mx, e.mz, r.size, Math.min(1, r.speed / 200), frameDt, flowing && !r.finished);    e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
+    updateSpray(e.spray, hx, hy, hz, e.mx, e.mz, 1 + (r.size - 1) * 2, Math.min(1, r.speed / 200), frameDt, flowing && !r.finished);    e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
     e.ribbon.update(world, r, hx, hz, now / 1000);
     // Nothing stands in the water: clear trees and boulders along each new stretch.
     while ((e.cleared ?? 0) < r.path.length) {
@@ -900,7 +901,9 @@ renderer.setAnimationLoop(() => {
     const sz = focus.size ?? 1;
     // Reaching the sea, it rises high over the surf, as in the trailer's ending.
     const done = !!focus.finished;
-    const back = falling ? 1300 : done ? 700 : 560 + 160 * sz, up = falling ? 1100 : done ? 2600 : 300 + 110 * sz;
+    // Pulls back only a little as the river grows, so a big river fills more
+    // of the screen and the ground rushes past faster.
+    const back = falling ? 1300 : done ? 700 : 560 + 50 * sz, up = falling ? 1100 : done ? 2600 : 300 + 40 * sz;
     const want = new THREE.Vector3(fx - view.x * back, Math.max(fy, 0) + up, fz - view.y * back);
     // Stay above the ground along the whole sightline, not just at the camera.
     for (let f = 0.25; f <= 1; f += 0.25) {
@@ -916,6 +919,16 @@ renderer.setAnimationLoop(() => {
     const ahead = falling ? 600 : done ? 2200 : 380 + 80 * sz;
     camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
+    // Power: the view widens with speed, and a big, fast river shakes it.
+    const fast = falling || done ? 0 : Math.min(1, (focus.speed ?? 0) / 260);
+    const fov = baseFov * (1 + 0.22 * fast);
+    if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * (1 - Math.exp(-frameDt * 3)); camera.updateProjectionMatrix(); }
+    const shake = falling || done ? 0 : Math.min(18, 14 * Math.max(0, sz - 1) * fast + 3 * fast * fast);
+    if (shake > 0.5) {
+      camera.position.x += (Math.random() - 0.5) * shake;
+      camera.position.y += (Math.random() - 0.5) * shake;
+      camera.position.z += (Math.random() - 0.5) * shake;
+    }
   }
 
   const table = standings(world);
