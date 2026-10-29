@@ -673,7 +673,7 @@ function resolveContacts(world) {
     const k = cellIndex(world.terrain, a.x, a.z);
     const o = owner[k];
     if (o >= 0 && o !== a.idx && live.has(o) && carve[k] > TUNE.contactDepth && isLive(world, k)) {
-      cuts.push([a, a.depth, world.rivers[o], world.rivers[o].depth]); // the same test as heads: which river cuts deeper now
+      cuts.push([a, a.depth, world.rivers[o], carve[k]]); // head depth vs the channel as cut right here
     }
     // Heads touching.
     for (const b of rs) {
