@@ -34,6 +34,13 @@
       color: #ffd23f; text-shadow: 0 6px 0 #a66d00, 0 10px 30px #000a; pointer-events: none; opacity: 0; transition: opacity 0.3s, transform 0.5s cubic-bezier(.2,1.6,.4,1); }
     #finish.on { opacity: 1; transform: translate(-50%, -50%) scale(1); }
     #finish.other { color: #fff; text-shadow: 0 6px 0 #6b7b88, 0 10px 30px #000a; }
+    /* Drag stick while falling: a ring where the finger went down, a knob under it. */
+    #stick { position: fixed; left: 0; top: 0; width: 140px; height: 140px; margin: -70px 0 0 -70px; border-radius: 50%;
+      border: 3px solid #ffffffb0; background: #0e344233; box-shadow: 0 0 12px #0006; pointer-events: none; display: none; }
+    #stick.on { display: block; }
+    #stick i { position: absolute; left: 50%; top: 50%; width: 54px; height: 54px; margin: -27px 0 0 -27px; border-radius: 50%;
+      background: #ffe36be6; box-shadow: 0 2px 8px #0008; }
+    #stick.far i { background: #ff9d3fe6; }
     #build { position: fixed; left: 6px; bottom: 4px; font: 10px system-ui, sans-serif; color: #10303d66; pointer-events: none; }
     body.intro #caption { opacity: 0; }
     #banner {
@@ -120,6 +127,7 @@
   <div id="caption"></div>
   <div id="finish"></div>
   <div id="build"></div>
+  <div id="stick"><i></i></div>
   <div id="banner" hidden></div>
   <div id="drain"><span id="drain-text"></span></div>
   <div id="tags"></div>

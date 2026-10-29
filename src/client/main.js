@@ -402,11 +402,51 @@ function handleActions() {
 
 // This tick's input: steer, plus hurry / slow while falling.
 function sampleSteer() {
-  const steer = dbg.forceSteer ?? input.sample();
+  let steer = dbg.forceSteer ?? input.sample();
+  let f = river?.dropping ? (dbg.forceFwd ?? input.forward()) : 0;
+  // Falling, a drag aims the drop: it turns toward the dragged direction on
+  // screen; a long drag dives faster, a short one glides slower.
+  const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
+  if (aim) { steer = aim.s; f = aim.f; }
   dbg.steers.push(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
-  const f = river?.dropping ? (dbg.forceFwd ?? input.forward()) : 0;
   return f ? { s: steer, f } : steer;
+}
+
+// Draw the drag stick while it aims the drop.
+const stickEl = document.getElementById('stick'), knobEl = stickEl.firstElementChild;
+function showStick() {
+  const d = river?.dropping && !mapView ? input.drag() : null;
+  stickEl.classList.toggle('on', !!d);
+  if (!d) return;
+  const len = Math.hypot(d.dx, d.dy), k = Math.min(1, 56 / (len || 1));
+  stickEl.style.transform = `translate(${d.x0}px, ${d.y0}px)`;
+  knobEl.style.transform = `translate(${d.dx * k}px, ${d.dy * k}px)`;
+  stickEl.classList.toggle('far', len > STICK_FAR);
+}
+
+// The drag stick, read against the camera: screen up is the way the camera looks.
+// The aim is locked on the ground when the drag points somewhere new (the camera
+// swings round behind the drop as it turns, so re-reading it every tick would
+// keep turning); the drop turns until it faces the locked aim, then holds.
+const STICK_MIN = 18, STICK_FAR = 70; // pixels
+let aimLock = null; // { ang (screen angle of the drag), x, z (world direction) }
+function dragAim() {
+  const d = input.drag();
+  if (!d) { aimLock = null; return null; }
+  const len = Math.hypot(d.dx, d.dy);
+  if (len < STICK_MIN) return { s: 0, f: -1 }; // finger down, barely moved: hold course and glide slow
+  const ang = Math.atan2(d.dx, -d.dy);
+  if (!aimLock || Math.abs(Math.atan2(Math.sin(ang - aimLock.ang), Math.cos(ang - aimLock.ang))) > 0.17) {
+    const fx = camTarget.x - camera.position.x, fz = camTarget.z - camera.position.z, fl = Math.hypot(fx, fz) || 1;
+    const ux = fx / fl, uz = fz / fl; // screen up, on the ground; screen right is (-uz, ux)
+    const wx = -uz * d.dx + ux * -d.dy, wz = ux * d.dx + uz * -d.dy, wl = Math.hypot(wx, wz) || 1;
+    aimLock = { ang, x: wx / wl, z: wz / wl };
+  }
+  const cross = river.dx * aimLock.z - river.dz * aimLock.x, dot = river.dx * aimLock.x + river.dz * aimLock.z;
+  // Steering left (-1) turns the heading toward negative cross; within ~6 degrees, hold.
+  const s = dot > 0.995 ? 0 : cross < 0 ? -1 : 1;
+  return { s, f: len > STICK_FAR ? 1 : 0 };
 }
 
 function soloTick() {
@@ -787,6 +827,7 @@ renderer.setAnimationLoop(() => {
   tickWater([sea, lakesMesh, ...entries.map((e) => e.surge)], now / 1000);
   showMarker(now, fx, fy, fz);
   showDownhill(now);
+  showStick();
   const intro = now < introUntil && !mapView && !!river?.dropping;
   document.body.classList.toggle('intro', intro);
   updateMapLines(now);
@@ -868,7 +909,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake >= 0 && world.lakeVol[me.inLake] < world.lakeCap[me.inLake] * TUNE.fullAt ? me.inLake : -1;
-  hud.depth.textContent = me.dropping ? '← → steer · ↑ ↓ speed · land on the glowing ring'
+  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · drag far to dive faster · land on the glowing ring' : '← → steer · ↑ ↓ speed (or drag) · land on the glowing ring')
     : basin >= 0
     ? `pouring into a basin · ${Math.min(99, Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin]))}% full`
     : `pouring ${fmtL(dischargeOf(me) * TICK_HZ + me.inflow * TICK_HZ)}/s · head ${headOf(me).toFixed(1)} m · cutting ${me.depth.toFixed(1)} m` + (fedBy ? ` · fed by ${fedBy}` : '');

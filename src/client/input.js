@@ -58,13 +58,24 @@ export function createInput(target) {
   addEventListener('blur', () => { keys.left = keys.right = keys.fwd = keys.back = pad.left = pad.right = false; pad.fwd = pad.look = 0; pointers.clear(); sync(); });
 
   // Touch / mouse: hold the left or right half of the screen.
+  // A drag stick too: where the first finger went down and where it is now.
+  // The game uses it while falling (aim where you drag); halves steer on the ground.
+  let stick = null; // { id, x0, y0, x, y }
   target.addEventListener('pointerdown', (e) => {
     const side = e.clientX < innerWidth / 2 ? 'left' : 'right';
     pointers.set(e.pointerId, side);
     press(side);
     actions.push('tap');
+    if (!stick) stick = { id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY };
   });
-  const up = (e) => { pointers.delete(e.pointerId); sync(); };
+  target.addEventListener('pointermove', (e) => {
+    if (stick && e.pointerId === stick.id) { stick.x = e.clientX; stick.y = e.clientY; }
+  });
+  const up = (e) => {
+    pointers.delete(e.pointerId);
+    if (stick && e.pointerId === stick.id) stick = null;
+    sync();
+  };
   target.addEventListener('pointerup', up);
   target.addEventListener('pointercancel', up);
 
@@ -80,6 +91,9 @@ export function createInput(target) {
     // Right stick x, -1..1: turns the camera. 0 inside the dead zone.
     look: () => pad.look,
     takeActions() { return actions.splice(0); },
+    // The drag stick: offset from where the finger went down, in screen pixels,
+    // with its start point; null while no finger (or mouse button) is down.
+    drag: () => (stick ? { dx: stick.x - stick.x0, dy: stick.y - stick.y0, x0: stick.x0, y0: stick.y0 } : null),
     // Read gamepads; call once per frame. Steering is the left stick or D-pad,
     // its up / down hurries or slows the drop; the right stick turns the camera.
     // Button presses become actions: A 'confirm' (and 'restart'), X 'mute',

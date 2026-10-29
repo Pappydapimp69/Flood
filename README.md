@@ -4,7 +4,7 @@ A browser battle royale where every player is a river. Race downhill across an i
 lakes to grow, cut rivals off, and be the first to reach the sea.
 
 ## Play
-Steer with ← → (or A D); ↑ ↓ (W S) hurry or slow your fall. On a phone, hold the left or right side of the screen. With a controller: left stick or D-pad steers, right stick turns the camera, A selects / races again, Y opens the map, X toggles sound. `M` toggles the map on a keyboard.
+Steer with ← → (or A D); ↑ ↓ (W S) hurry or slow your fall. On a phone, hold the left or right side of the screen to steer; while falling, drag to aim the drop where you point (drag far to dive faster). With a controller: left stick or D-pad steers, right stick turns the camera, A selects / races again, Y opens the map, X toggles sound. `M` toggles the map on a keyboard.
 
 - Every race is a new island. It starts with a 30 s drop from the sky: steer toward the ring to
   pick your landing. Every start sits at the same height.
