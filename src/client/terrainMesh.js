@@ -28,9 +28,9 @@ function colorAt(h, slope, lakeDepth, out) {
   if (lakeDepth > LAKE_MIN_DEPTH) return out.copy(C.lake);
   if (h <= SEA_LEVEL) return out.copy(C.shallow).lerp(C.deep, ss(0, 120, -h)).lerp(C.sand, ss(-8, 0, h) * 0.6);
   out.copy(C.sand).lerp(C.maquis, ss(4, 30, h));
-  out.lerp(C.forest, ss(250, 700, h) * (1 - ss(1300, 1600, h)));
-  out.lerp(C.rock, Math.max(ss(1100, 1500, h), ss(0.45, 0.9, slope)));
-  return out.lerp(C.snow, ss(1600, 1780, h) * (1 - ss(0.7, 1.1, slope)));
+  out.lerp(C.forest, ss(250, 700, h) * (1 - ss(1700, 2100, h)));
+  out.lerp(C.rock, Math.max(ss(1900, 2400, h), ss(0.45, 0.9, slope)));
+  return out.lerp(C.snow, ss(2700, 2850, h) * (1 - ss(0.7, 1.1, slope)));
 }
 
 const BED = new THREE.Color('#7a6a55');

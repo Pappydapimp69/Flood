@@ -46,7 +46,9 @@ export const TUNE = {
   erodeK: 0.0028, // metres of outlet erosion per 1000 L that flow through it, times size
   outletMax: 12, // metres
   shallowWater: 0.3, // metres of standing water that count as under water (no digging)
-  overflow: 2, // metres a river's water stands over a lake's brim where it runs (times size)
+  overflow: 2, // metres a river's water stands over a lake's brim where it runs (times size)...
+  overflowRise: 1.5, // ...rising this much per second you keep pouring in...
+  overflowMax: 60, // ...up to this
   levelGlide: 0.997, // on level water or flats, speed fades only this much per tick: momentum carries
   joinShare: 0, // nothing taken at once on joining: only what flows out is added
   lakeFlowPerCell: 30, // litres per tick a lake puts out per cell of its area...
@@ -72,7 +74,7 @@ export const TUNE = {
   settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
   zoneSlack: 300, // metres a falling drop may stray from the landing ring
   glideTurn: 0.1, // radians per tick while falling: a full circle in about 3 s
-  startElevation: 0.6, // share of the highest peak
+  startElevation: 1, // the flat summit: every start at the very top // share of the highest peak
   startTolerance: 0.006, // starts within ±0.6% of the peak's height of each other
   fairReach: 0.025, // and within ±2.5% of the same route length to the sea // +- share of the peak
   // Lava: a few flows down from the high ground. Water crossing lava boils off
@@ -93,12 +95,18 @@ export const TUNE = {
   liveTicks: 300, // a drained river's channel stays live this long, then it's a dry bed
   graceTicks: 100,
   gracePerRiver: 2,
-  spawnGap: 1000,
+  spawnGap: 600,
 };
 
 // Size from volume without transcendental Math: two square roots.
+// Size is the cube root of relative volume, as for real water: eight times the
+// water is twice the size. Newton's method from sqrt, a fixed number of steps,
+// so every machine gets the same bits (no cbrt/pow).
 export function sizeOf(volume) {
-  return Math.sqrt(Math.sqrt(volume / TUNE.startVolume));
+  const v = Math.max(1e-9, volume / TUNE.startVolume);
+  let x = v > 1 ? Math.sqrt(v) : 1;
+  for (let i = 0; i < 12; i++) x = (2 * x + v / (x * x)) / 3;
+  return x;
 }
 
 export function lakeGain(lake) {
@@ -546,7 +554,13 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   // A river flowing into a lake makes it overflow where it runs: its water
   // stands over the brim, so it skates across and leaves over whatever bank
   // it reaches, unless that bank stands higher than the overflow.
-  if (onLake) r.low = Math.max(r.low, world.lakeBrim[world.lakeOf[cHere]] + TUNE.overflow * r.size);
+  if (onLake) {
+    // The longer you pour in, the higher your water stands over the brim, until
+    // it tops whatever bank you're against and you spill out over it.
+    r.lakeTicks = (r.lakeTicks ?? 0) + 1;
+    const rise = Math.min(TUNE.overflowMax, (TUNE.overflow + TUNE.overflowRise * (r.lakeTicks / TICK_HZ)) * r.size);
+    r.low = Math.max(r.low, world.lakeBrim[world.lakeOf[cHere]] + rise);
+  } else r.lakeTicks = 0;
   // Off the route again once it has run clearly lower and the heading no longer
   // points back up the slope (or the player steers): otherwise a heading aimed
   // uphill would climb, block and fall back forever.

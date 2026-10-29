@@ -8,7 +8,7 @@ export const SEA_LEVEL = 0;
 export const LAKE_MIN_DEPTH = 2;
 const FILL_EPS = 0.01; // metres; keeps every filled cell strictly above its outlet
 
-// Defaults: a 64 km square map, an island up to ~58 km long, a summit near 2.4 km.
+// Defaults: a 64 km square map, a ski-slope island about 40 km long, a summit near 3 km.
 export const DEFAULTS = { size: 640, worldSize: 64000, maxHeight: 2400, seaDepth: 220 };
 
 const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
@@ -54,58 +54,60 @@ function ridged(x, y, seed, octaves) {
   return sum / norm;
 }
 
-// Island shape, drawn from the seed: which way it points, how long and wide,
-// how ragged the coast, where a cape runs out. No trig (rotation is a unit
-// vector from sqrt), so every machine builds the same island.
+// Island shape, drawn from the seed: a long, narrow ski slope. Which way it
+// points, its length, its width and how it tapers. No trig (the direction is a
+// unit vector from sqrt), so every machine builds the same island.
 function shapeOf(seed) {
   const r = stream(seed, 'shape');
   let ax = r() * 2 - 1, ay = r() * 2 - 1;
   const len = Math.sqrt(ax * ax + ay * ay) || 1;
   ax /= len; ay /= len;
   return {
-    ax, ay, // long axis
-    long: 0.8 + 0.12 * r(), // half-length along the axis
-    wide: 0.45 + 0.3 * r(), // half-width across it
-    cape: r() < 0.6 ? (r() < 0.5 ? -1 : 1) : 0, // a finger at one end, or none
-    capeW: 0.14 + 0.12 * r(),
-    coast: 0.35 + 0.35 * r(), // coastline raggedness
-    warp: 0.12 + 0.14 * r(),
-    ridge: 0.5 + 0.3 * r(), // how far the ridges run from the summit
+    ax, ay, // down the slope: summit end at -long, sea end at +long
+    long: 0.62 + 0.06 * r(), // half-length along the axis (fits the map in any direction)
+    wide: 0.17 + 0.05 * r(), // half-width of the corridor
+    taper: 0.25 + 0.2 * r(), // how much the width wanders along the slope
+    warp: 0.05 + 0.04 * r(),
+    wall: 0.08 + 0.03 * r(), // side walls, as a share of the top height
   };
 }
 
-// Raw height field: one central summit with ridges running out along the
-// island's long axis, then noisy hills down to the coast.
+// Raw height field: a long corridor falling from a summit at one end to the
+// sea at the other, walled along both sides so every river runs the same way
+// and meets the others, with hills, dips and gullies down its floor.
 function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
-  // x, y in [-1, 1]; rotate into the island's frame: u along the long axis.
+  // x, y in [-1, 1]; u runs down the slope, v across it.
   const u = x * S.ax + y * S.ay, v = -x * S.ay + y * S.ax;
   const wu = u + S.warp * (fbm(x * 2.2, y * 2.2, seed + 11, 4) - 0.5);
   const wv = v + S.warp * (fbm(x * 2.2 + 5, y * 2.2 - 3, seed + 23, 4) - 0.5);
-
-  // Cape: one end narrows to a finger.
-  const capeK = S.cape ? smooth(0.35, 0.95, wu * S.cape) : 0;
-  const halfW = lerp(S.wide, S.capeW, capeK);
-  const ex = wu / S.long, ey = wv / halfW;
-  let d2 = ex * ex + ey * ey;
-  d2 += S.coast * 1.6 * (fbm(x * 5, y * 5, seed + 31, 5) - 0.5);
-  const land = smooth(1.0, 0.55, d2);
-
-  // Summit at the centre; ridges along the long axis, fading to the coasts.
-  const c2 = (wu * wu + wv * wv) / 0.09;
-  const summit = clamp01(1 - c2);
-  const ridge = clamp01(1 - (wv * wv) / 0.03) * smooth(S.ridge, 0.05, Math.abs(wu));
+  const t = (wu + S.long) / (2 * S.long); // 0 at the summit end, 1 at the sea end
+  // Width wanders and tapers at both ends.
+  const halfW = S.wide * (1 + S.taper * (fbm(t * 3.1, 0.5, seed + 31, 3) - 0.5) * 2) * (0.75 + 0.25 * smooth(0.0, 0.2, t)) * (1 - 0.3 * smooth(0.85, 1.0, t));
+  const side = Math.abs(wv) / halfW; // 0 down the middle, 1 at the wall tops
+  if (side > 1 || t < -0.03 || t > 1.08) {
+    // Outside the slope: cliffs into deep sea.
+    const out = Math.max(side - 1, -t, t - 1.08, 0);
+    return -seaDepth * lerp(0.35, 1, smooth(0, 0.25, out));
+  }
   const peaks = ridged(x * 3.1, y * 3.1, seed + 47, 6);
-  const hills = fbm(x * 6, y * 6, seed + 59, 5);
-
-  // A dome under everything tilts the interior seaward, so only a few basins
-  // survive the fill as lakes instead of every valley floor.
-  const dome = clamp01(1 - d2);
-  const elev = 0.02 + 0.1 * hills * dome + 0.28 * dome + 0.4 * ridge * peaks + 0.45 * summit * summit * (0.6 + 0.4 * peaks);
-  // Both branches meet at -0.15 * seaDepth where land reaches 0.
-  if (land > 0) return lerp(-seaDepth * 0.15, elev * maxHeight, smooth(0.0, 0.35, land));
-  // Reach full depth before the map edge so the seabed outside matches.
-  const deep = Math.max(smooth(1.0, 2.2, d2), smooth(0.75, 0.97, Math.max(Math.abs(x), Math.abs(y))));
-  return -seaDepth * lerp(0.15, 1, deep);
+  const hills = fbm(x * 7, y * 7, seed + 59, 5);
+  // The floor falls the whole way to the sea, a little steeper near the top.
+  const tt = clamp01(t);
+  const a = 1 - tt; // no pow (transcendental): a blend of a and a squared
+  let floor = maxHeight * 0.9 * a * (0.7 + 0.3 * a) - 40 * smooth(0.9, 1.05, t);
+  // Hills, dips and gullies down the floor, stronger high up.
+  floor += (hills - 0.5) * (90 + 140 * (1 - tt)) + (peaks - 0.4) * 120 * (1 - tt);
+  // A gentle trough down the middle so water gathers toward the centre line.
+  floor += 60 * side * side;
+  // Walls along both sides, high enough that no river climbs out.
+  const wall = smooth(0.62, 0.97, side) * maxHeight * S.wall * (1 + 0.8 * (1 - tt)) * (0.8 + 0.4 * peaks);
+  // The summit: a small flat-topped peak at the top end, above the walls: the
+  // start, every spot on it the same height.
+  const su = (t - 0.06) * (2 * S.long), sv = wv;
+  const c = clamp01(1 - (su * su + sv * sv) / 0.006);
+  const top = maxHeight * 1.2;
+  const h = floor + wall;
+  return c > 0.6 ? top : lerp(h, top, smooth(0, 0.6, c));
 }
 
 // Priority-flood (Barnes 2014) with epsilon: raises every inland pit to its

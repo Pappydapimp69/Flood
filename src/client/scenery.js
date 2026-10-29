@@ -47,10 +47,10 @@ export function buildTrees(world, max) {
   const pines = [], broad = [];
   for (let y = 2; y < n - 2; y++) for (let x = 2; x < n - 2; x++) {
     const k = y * n + x, h = t.height[k];
-    if (h < 20 || h > 1350 || world.lakeOf[k] >= 0 || world.lava[k] || t.filled[k] - h > 0.5) continue;
+    if (h < 20 || h > 2100 || world.lakeOf[k] >= 0 || world.lava[k] || t.filled[k] - h > 0.5) continue;
     const slope = Math.hypot(t.height[k + 1] - t.height[k - 1], t.height[k + n] - t.height[k - n]) / (2 * t.cell);
     if (slope > 0.5) continue;
-    const dens = forestAt(t, x, y) * (h > 1000 ? (1350 - h) / 350 : 1);
+    const dens = forestAt(t, x, y) * (h > 1700 ? (2100 - h) / 400 : 1);
     const r = hash2(x, y, t.seed + 13);
     if (dens > 0.56 && r < (dens - 0.5) * 2.2) pines.push(k);
     else if (h < 700 && r < 0.035) broad.push(k);
