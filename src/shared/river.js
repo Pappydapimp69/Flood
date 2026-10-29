@@ -75,7 +75,7 @@ export const TUNE = {
   settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
   zoneSlack: 300, // metres a falling drop may stray from the landing ring
   glideTurn: 0.1, // radians per tick while falling: a full circle in about 3 s
-  startElevation: 1, // the flat summit: every start at the very top // share of the highest peak
+  startElevation: 0.89, // starts ring each summit cone this far up its peak
   startTolerance: 0.006, // starts within ±0.6% of the peak's height of each other
   fairReach: 0.025, // and within ±2.5% of the same route length to the sea // +- share of the peak
   // Lava: a few flows down from the high ground. Water crossing lava boils off
@@ -251,58 +251,65 @@ export function surfaceAt(world, wx, wz, self = -1) {
   return (a + (b - a) * fx) + ((d + (e - d) * fx) - (a + (b - a) * fx)) * fy;
 }
 
-// Start contour: every start sits at the same elevation (a share of the
-// highest peak, within a small tolerance), on open ground. Cached per world.
+// Start contours: one round each of the three summits, every start at the
+// same elevation (a share of the peak, within a small tolerance), on open
+// ground, on the downhill side of its peak. Cached per world.
 export function spawnBand(world) {
   if (world.band) return world.band;
-  const t = world.terrain, n = t.size, h = t.height;
-  let top = 0;
-  for (let i = 1; i < n * n; i++) if (h[i] > h[top]) top = i;
-  const peak = h[top];
-  const target = peak * TUNE.startElevation;
-  let tol = peak * TUNE.startTolerance, cells;
-  do {
-    // The highest summit's own slopes: everything connected to the top that
-    // stays above the start contour. Starts ring the summit, nowhere else.
-    const near = new Uint8Array(n * n), queue = [top];
-    near[top] = 1;
-    cells = [];
-    while (queue.length) {
-      const c = queue.pop(), cx = c % n, cy = (c - cx) / n;
-      if (Math.abs(h[c] - target) <= tol && t.filled[c] - h[c] < 0.5) cells.push(c);
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const x = cx + dx, y = cy + dy;
-        if (x < 8 || y < 8 || x >= n - 8 || y >= n - 8) continue;
-        const k = y * n + x;
-        if (!near[k] && h[k] >= target - tol) { near[k] = 1; queue.push(k); }
+  const t = world.terrain, n = t.size, h = t.height, ax = t.axis.x, ay = t.axis.y;
+  const groups = [], ring = [];
+  for (const top of t.summits) {
+    const peak = h[top], tx = top % n, ty = (top - tx) / n;
+    const target = peak * TUNE.startElevation;
+    let tol = peak * TUNE.startTolerance, cells;
+    do {
+      // The summit's own slopes: everything connected to its top that stays
+      // above the start contour.
+      const near = new Uint8Array(n * n), queue = [top];
+      near[top] = 1;
+      cells = [];
+      while (queue.length) {
+        const c = queue.pop(), cx = c % n, cy = (c - cx) / n;
+        if (Math.abs(h[c] - target) <= tol && t.filled[c] - h[c] < 0.5 && (cx - tx) * ax + (cy - ty) * ay >= 0) cells.push(c);
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+          const x = cx + dx, y = cy + dy;
+          if (x < 8 || y < 8 || x >= n - 8 || y >= n - 8) continue;
+          const k = y * n + x;
+          if (!near[k] && h[k] >= target - tol) { near[k] = 1; queue.push(k); }
+        }
       }
-    }
-    tol *= 1.5;
-  } while (cells.length < 120 && tol < peak * 0.02);
-  cells.sort((a, b) => a - b);
-  // Fair paths: of those, keep the ones as far from the sea as the median, by
-  // the shortest route water can take. No widening: a ring too thin to seat
-  // everyone gets its island rerolled instead (rollIsland).
-  const reach = world.reach;
-  const sorted = cells.map((c) => reach[c]).sort((a, b) => a - b);
-  const mid = sorted[sorted.length >> 1];
-  const fair = cells.filter((c) => Math.abs(reach[c] - mid) <= mid * TUNE.fairReach);
-  // ring: the whole contour round the summit, which falling drops glide along;
-  // cells: its fair spots, where they touch down.
-  world.band = { target, cells: fair, wide: fair, ring: cells, reach: mid, top };
+      tol *= 1.5;
+    } while (cells.length < 40 && tol < peak * 0.02);
+    cells.sort((a, b) => a - b);
+    // Fair paths: of those, the ones as far from the sea as this summit's
+    // median, by the shortest route water can take.
+    const reach = world.reach;
+    const sorted = cells.map((c) => reach[c]).sort((a, b) => a - b);
+    const mid = sorted[sorted.length >> 1];
+    groups.push(cells.filter((c) => Math.abs(reach[c] - mid) <= mid * TUNE.fairReach));
+    ring.push(...cells);
+  }
+  const fair = groups.flat().sort((a, b) => a - b);
+  // ring: the contours, which falling drops glide along; cells: their fair
+  // spots, where they touch down; groups: those spots per summit.
+  world.band = { target: h[t.summits[1]] * TUNE.startElevation, cells: fair, wide: fair, groups, ring, top: t.summits[1] };
   return world.band;
 }
 
-// How many rivers the start ring can seat at least spawnGap apart (greedy, in
-// index order). A map that can't seat everyone gets rerolled.
+// How many rivers the start rings can seat at least spawnGap apart (greedy, in
+// index order), split evenly over the three summits. A map that can't seat
+// everyone gets rerolled.
 export function seats(world) {
   const t = world.terrain, n = t.size, gap2 = TUNE.spawnGap * TUNE.spawnGap;
-  const placed = [];
-  for (const c of spawnBand(world).cells) {
-    const x = ((c % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(c / n) / (n - 1) - 0.5) * t.worldSize;
-    if (placed.every((p) => (p.x - x) ** 2 + (p.z - z) ** 2 >= gap2)) placed.push({ x, z });
-  }
-  return placed.length;
+  const per = spawnBand(world).groups.map((cells) => {
+    const placed = [];
+    for (const c of cells) {
+      const x = ((c % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(c / n) / (n - 1) - 0.5) * t.worldSize;
+      if (placed.every((p) => (p.x - x) ** 2 + (p.z - z) ** 2 >= gap2)) placed.push({ x, z });
+    }
+    return placed.length;
+  });
+  return Math.min(...per) * per.length;
 }
 
 // The island for a race: from `seed`, the next seed and the next until the
@@ -323,9 +330,10 @@ export function spawnPoint(world, id) {
   const band = spawnBand(world);
   const r = stream(t.seed, `spawn:${id}`);
   const others = world.rivers.map((o) => o.spawn);
+  // Rivers are dealt round the three summits in the order they're added.
+  const cells = band.groups[world.rivers.length % band.groups.length];
   let best = null, bestGap = -1;
   for (let tries = 0; tries < 120; tries++) {
-    const cells = band.cells;
     const i = cells[Math.floor(r() * cells.length)];
     const p = { x: ((i % n) / (n - 1) - 0.5) * t.worldSize, z: (Math.floor(i / n) / (n - 1) - 0.5) * t.worldSize };
     let gap = Infinity;
