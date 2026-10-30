@@ -12,6 +12,8 @@ const vertex = /* glsl */ `
   attribute float along;
   attribute float side;
   attribute float born;
+  uniform vec2 uPulse[16]; // pulses running down the channel: metres along it, strength
+  varying float vPulse;
   varying float vAlong;
   varying float vSide;
   varying float vBorn;
@@ -20,6 +22,13 @@ const vertex = /* glsl */ `
     vAlong = along;
     vSide = side;
     vBorn = born;
+    // Pulse glow, per vertex (points are ~75 m apart; a pulse is wider).
+    float pulse = 0.0;
+    for (int i = 0; i < 16; i++) {
+      float d = (along - uPulse[i].x) / 90.0;
+      pulse += uPulse[i].y * exp(-d * d);
+    }
+    vPulse = pulse;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mvPosition;
     #include <fog_vertex>
@@ -32,7 +41,7 @@ const fragment = /* glsl */ `
   uniform float uTick;
   uniform float uLive;
   uniform float uMine;
-  uniform vec2 uPulse[16]; // pulses running down the channel: metres along it, strength
+  varying float vPulse;
   varying float vAlong;
   varying float vSide;
   varying float vBorn;
@@ -53,12 +62,7 @@ const fragment = /* glsl */ `
     col = mix(col, uFoam, clamp(streak * 0.55 + bank * 0.85, 0.0, 1.0) * live);
     col *= 0.92 + 0.16 * n;
     // Pulses: a bright foaming bulge rolling down the channel.
-    float pulse = 0.0;
-    for (int i = 0; i < 16; i++) {
-      float d = (vAlong - uPulse[i].x) / 90.0;
-      pulse += uPulse[i].y * exp(-d * d);
-    }
-    col = mix(col, uFoam, clamp(pulse, 0.0, 0.85) * live);
+    col = mix(col, uFoam, clamp(vPulse, 0.0, 0.85) * live);
     // A drained river's bed: still and grey.
     col = mix(vec3(0.34, 0.37, 0.36), col, live);
     col += uMine * live * 0.04;

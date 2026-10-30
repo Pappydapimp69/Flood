@@ -38,31 +38,42 @@ export function buildTrees(world, max) {
   const thin = (list, cap) => (list.length > cap ? list.filter((_, i) => (i * cap) % list.length < cap) : list);
   const pk = thin(pines, Math.round(max * 0.85)), bk = thin(broad, Math.round(max * 0.15));
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color();
-  const place = (mesh, list, scale, tint) => {
-    const byCell = new Map();
-    list.forEach((k, i) => {
-      const [x, z] = cellPos(t, k);
-      const size = 0.7 + hash2(k, 7, t.seed) * 0.6;
-      p.set(x + (hash2(k, 1, t.seed) - 0.5) * t.cell, t.height[k] * VERT - 3, z + (hash2(k, 2, t.seed) - 0.5) * t.cell);
-      s.set(scale[0] * size, scale[1] * size, scale[0] * size);
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash2(k, 5, t.seed) * 6.283);
-      mesh.setMatrixAt(i, m.compose(p, q, s));
-      tint(c, k);
-      mesh.setColorAt(i, c);
-      byCell.set(k, i);
-    });
-    mesh.userData.byCell = byCell;
-    return mesh;
+  // One instanced mesh per map chunk and kind, each with its own bounds, so
+  // the stands off screen are culled instead of all drawn every frame.
+  const group = new THREE.Group(), parts = [], CHUNKS = 8, size = Math.ceil(n / CHUNKS);
+  const pineGeo = pineGeometry(), leafGeo = new THREE.IcosahedronGeometry(1, 1).translate(0, 1.1, 0);
+  const pineMat = new THREE.MeshLambertMaterial({ color: '#ffffff' }), leafMat = new THREE.MeshLambertMaterial({ color: '#ffffff' });
+  const place = (list, geo, mat, scale, tint) => {
+    const chunks = new Map();
+    for (const k of list) {
+      const ck = Math.floor(Math.floor(k / n) / size) * CHUNKS + Math.floor((k % n) / size);
+      if (!chunks.has(ck)) chunks.set(ck, []);
+      chunks.get(ck).push(k);
+    }
+    for (const ck of [...chunks.keys()].sort((a, b) => a - b)) {
+      const cells = chunks.get(ck), mesh = new THREE.InstancedMesh(geo, mat, cells.length), byCell = new Map();
+      cells.forEach((k, i) => {
+        const [x, z] = cellPos(t, k);
+        const sz = 0.7 + hash2(k, 7, t.seed) * 0.6;
+        p.set(x + (hash2(k, 1, t.seed) - 0.5) * t.cell, t.height[k] * VERT - 3, z + (hash2(k, 2, t.seed) - 0.5) * t.cell);
+        s.set(scale[0] * sz, scale[1] * sz, scale[0] * sz);
+        q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash2(k, 5, t.seed) * 6.283);
+        mesh.setMatrixAt(i, m.compose(p, q, s));
+        tint(c, k);
+        mesh.setColorAt(i, c);
+        byCell.set(k, i);
+      });
+      mesh.computeBoundingSphere();
+      mesh.userData.byCell = byCell;
+      group.add(mesh);
+      parts.push(mesh);
+    }
   };
-  const pine = place(new THREE.InstancedMesh(pineGeometry(), new THREE.MeshLambertMaterial({ color: '#ffffff' }), Math.max(1, pk.length)), pk, [80, 290],
-    (col, k) => col.setHSL(0.3 + hash2(k, 3, t.seed) * 0.05, 0.38, 0.13 + hash2(k, 4, t.seed) * 0.07));
-  const leaf = place(new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1).translate(0, 1.1, 0), new THREE.MeshLambertMaterial({ color: '#ffffff' }), Math.max(1, bk.length)), bk, [85, 120],
-    (col, k) => col.setHSL(0.22 + hash2(k, 3, t.seed) * 0.06, 0.4, 0.2 + hash2(k, 4, t.seed) * 0.08));
-  pine.count = pk.length; leaf.count = bk.length;
-  pine.add(leaf);
-  pine.name = 'trees';
-  pine.userData.parts = [pine, leaf];
-  return pine;
+  place(pk, pineGeo, pineMat, [80, 290], (col, k) => col.setHSL(0.3 + hash2(k, 3, t.seed) * 0.05, 0.38, 0.13 + hash2(k, 4, t.seed) * 0.07));
+  place(bk, leafGeo, leafMat, [85, 120], (col, k) => col.setHSL(0.22 + hash2(k, 3, t.seed) * 0.06, 0.4, 0.2 + hash2(k, 4, t.seed) * 0.08));
+  group.name = 'trees';
+  group.userData.parts = parts;
+  return group;
 }
 
 // Boulders: low-poly rocks scattered over rocky and steep ground and the

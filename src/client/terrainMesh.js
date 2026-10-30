@@ -158,17 +158,24 @@ export function applyCarve(mesh, carve, dirty, rock) {
     tmp.fromArray(baseColors, k * 3).lerp(BED, w).toArray(col.array, k * 3);
     for (const o of [0, -1, 1, -n, n]) touched.add(k + o);
   }
+  const ks = [];
   for (const k of touched) {
     if (k < 0 || k >= n * n) continue;
     setNormal(mesh, k);
-    if (k < lo) lo = k;
-    if (k > hi) hi = k;
+    ks.push(k);
   }
-  // Ranges accumulate across ticks; three clears them after each upload.
-  for (const a of [pos, col, geo.attributes.normal]) {
-    a.addUpdateRange(lo * a.itemSize, (hi - lo + 1) * a.itemSize);
-    a.needsUpdate = true;
+  // Upload only the runs that changed (merged when close), not one span from
+  // the first to the last: channels all over the map would otherwise resend
+  // most of the terrain every tick. Ranges accumulate across ticks; three
+  // clears them after each upload.
+  ks.sort((a, b) => a - b);
+  for (let i = 0; i < ks.length;) {
+    let j = i;
+    while (j + 1 < ks.length && ks[j + 1] - ks[j] <= 64) j++;
+    for (const a of [pos, col, geo.attributes.normal]) a.addUpdateRange(ks[i] * a.itemSize, (ks[j] - ks[i] + 1) * a.itemSize);
+    i = j + 1;
   }
+  for (const a of [pos, col, geo.attributes.normal]) a.needsUpdate = true;
 }
 
 const MUD = new THREE.Color('#8f7f5c');
