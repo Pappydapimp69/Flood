@@ -36,13 +36,15 @@ test('a head in a lake raises it and keeps its own volume', () => {
   const r = addRiver(w, 'a', inside);
   step(w, new Map());
   const l0 = w.lakeVol[lake.id];
-  for (let k = 0; k < 20 && r.inLake === lake.id; k++) {
+  let poured = 0;
+  for (let k = 0; k < 40 && r.inLake === lake.id; k++) {
     const v = r.volume;
     step(w, new Map());
+    poured = Math.max(poured, w.lakeIn[lake.id]);
     if (r.inLake === lake.id) assert.equal(r.volume, v, 'the river grew while its head was in the lake');
   }
   assert.ok(w.lakeVol[lake.id] > l0, 'the lake did not rise');
-  assert.ok(w.lakeIn[lake.id] > 0, 'no inflow from the river in it');
+  assert.ok(poured > 0, 'no inflow from the river in it'); // in pulses, not every tick
 });
 
 test('leaving a lake: mass jumps at once, an outlet opens, water keeps coming and erodes it', () => {

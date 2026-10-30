@@ -61,8 +61,8 @@ export const TUNE = {
   maxPoolTicks: 200, // guaranteed exit: after 10 s pooled, the basin tops up and spills
   trailErode: 0.0004, // metres a channel tile erodes per tick, per metre of water over it, times size...
   slopeErode: 0.04, // ...and once more for every this much slope (steep ground cuts canyons)
-  trailPasses: 20,
-  headSpared: 4,
+  trailPasses: 20, // ticks between outlet recuts
+  headSpared: 4, // path points nearest the head that pulses don't erode
   stallTicks: 20, stallMin: 30, stallNet: 0.35, // moved over 30 m in 1 s but under 35% of it net: going nowhere
   routeDrop: 1.5, // metres a head following the fill route must fall before it goes back to its heading // path points nearest the head that don't erode // ticks to sweep a whole trail once (a slice of it each tick)
   // Dry basins: a few lakes start empty and must be filled by the rivers that
@@ -95,11 +95,20 @@ export const TUNE = {
   treeBreak: 1.3,
   treeHeight: 14,
   // The heat front: from heatStart ticks (counted from the start of the drop)
-  // a heat wave rolls down the mountain at heatSpeed m/s. Water behind it
-  // boils off heatRate of its volume per tick; dry, the river is out.
+  // a heat wave rolls down the mountain at heatSpeed m/s. It never touches a
+  // river: the lakes behind it slowly dry out.
   heatStart: 600 + 20 * 50,
   heatSpeed: 155,
-  heatRate: 0.004,
+  heatEvery: 60, // every 3 s...
+  heatLake: 40_000, // ...each lake behind the front loses this many litres (inflow still fills it)
+  // Pulses: a river's water comes down its channel in waves. Every
+  // pulseEvery ticks (more for bigger rivers) a pulse leaves the source with
+  // the water gathered since the last; it runs down the channel at pulseSpeed
+  // times the river's speed, eroding every stretch it passes, filling any low
+  // lake on the way and losing a share wherever a rival has cut in, and the
+  // river grows by what reaches its head.
+  pulseEvery: [[3_000_000, 20], [8_000_000, 40], [Infinity, 60]], // [below this volume, ticks]
+  pulseSpeed: 3,
   // Storms: every stormEvery ticks from stormStart, a storm opens over the
   // slope ahead of the pack for stormTicks, raining stormRain litres per tick
   // into every river head (and lake) under it.
@@ -109,7 +118,6 @@ export const TUNE = {
   stormRadius: 1300,
   stormRain: 9000,
   // Contact is a depth tug-of-war: the deeper water siphons the shallower.
-  junctionK: 0.3, // share of a cut river's discharge that flows on into the river that cut it
   siphonRate: 0.012,
   siphonCap: 0.015,
   siphonDeadband: 0.05,
@@ -149,6 +157,7 @@ export function createWorld(terrain, { forest = true } = {}) {
     lakeOf, lakes,
     lakeCap: Float64Array.from(lakes, (l) => lakeGain(l)), // litres when full
     lakeVol: Float64Array.from(lakes, (l) => lakeGain(l) * TUNE.lakeStart), // litres now
+    lakeFlow: new Float64Array(lakes.length), // litres of rivers' water poured in and not yet out again
     lakePending: new Float64Array(lakes.length), // litres arriving next tick (outlets and spills into lakes)
     spills: new Map(), // lake -> { path: [cells], flow, on }: overflow over the rim, owned by nobody
     lakeIn: new Float64Array(lakes.length), // litres per tick flowing in, last tick
@@ -173,7 +182,7 @@ export function createWorld(terrain, { forest = true } = {}) {
 // The forest, planted once the island is settled (rerolls skip it).
 export function addForest(world) {
   const band = spawnBand(world);
-  world.trees = plantForest(world, band.ring, band.cells, TUNE.climb);
+  ({ trees: world.trees, round: world.roundReach } = plantForest(world, band.ring, band.cells, TUNE.climb));
   world.felled = []; // cells whose trees a river knocked down, for presentation
   world.treeRock = Float32Array.from(world.rock, (v, k) => v + (world.trees[k] ? TUNE.treeHeight : 0)); // the ground as a small river feels it
   return world;
@@ -405,6 +414,9 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     leftLake: -1, // the last lake the head left
     cut: 0, cutTicks: 0, cutAt: -1, cutLake: -1, // a head on a lake cutting its way out through a bank
     exitPath: null, exitStep: 0,
+    pulses: [], // { s (metres down the path), i (next path point), amount, flow, every, erode, lakes passed }
+    feeds: new Map(), // path index -> litres waiting to leave there with the next pulse
+    pulseAt: 0, // tick the next pulse leaves
     exit: -1, // cell of the lake exit a blocked head on a lake is making for, or -1
     route: null, // level where the head was blocked: it's following the fill route out until it runs lower
     netAt: 0, netX: 0, netZ: 0, netT: 0, // where it was a moment ago, to tell going nowhere from flowing
@@ -553,6 +565,7 @@ export function step(world, inputs) {
   resolveContacts(world);
   weather(world);
   hydrology(world);
+  pulses(world);
   erodeTrails(world);
   applyDigs(world);
   world.tick++;
@@ -617,7 +630,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     r.netAt = world.tick; r.netX = r.x; r.netZ = r.z; r.netT = r.travelled;
   }
   const routeDir = () => {
-    const n = tt.size, d = downhill(tt, cellIndex(tt, r.x, r.z));
+    const n = tt.size, d = wayOut(world, r, cellIndex(tt, r.x, r.z));
     if (d < 0) return null;
     const ex = ((d % n) / (n - 1) - 0.5) * tt.worldSize - r.x, ez = (Math.floor(d / n) / (n - 1) - 0.5) * tt.worldSize - r.z;
     const el = Math.sqrt(ex * ex + ez * ez);
@@ -716,7 +729,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
       k = r.exitPath[++r.exitStep];
     }
     if (el > tt.cell * 0.75) {
-      v = Math.max(TUNE.baseSpeed * mass * 2, r.speed); // the lake's current carries it to the exit
+      v = Math.max(TUNE.baseSpeed * mass * 3, r.speed); // the lake's current carries it to the exit
       r.speed = v;
       const s = Math.min(v * DT, el);
       moveTo(world, r, r.x + (ex / el) * s, r.z + (ez / el) * s);
@@ -797,7 +810,7 @@ function resolveContacts(world) {
     const k = cellIndex(world.terrain, a.x, a.z);
     const o = owner[k];
     if (o >= 0 && o !== a.idx && live.has(o) && carve[k] > TUNE.contactDepth && isLive(world, k)) {
-      cuts.push([a, a.depth, world.rivers[o], carve[k]]); // head depth vs the channel as cut right here
+      cuts.push([a, a.depth, world.rivers[o], carve[k], k]); // head depth vs the channel as cut right here
     }
     // Heads touching.
     for (const b of rs) {
@@ -822,20 +835,19 @@ function resolveContacts(world) {
   }
   // A cut through a rival's channel joins the two: water runs on from the
   // shallower into the deeper for as long as the cut stays live.
-  for (const [a, da, b, db] of cuts) {
+  // The cut point on each river's channel: pulses coming down the shallower
+  // one lose a share there to the deeper (see pulses()).
+  for (const [a, da, b, db, k] of cuts) {
     const [win, dw, lose, dl] = da >= db ? [a, da, b, db] : [b, db, a, da];
     if ((dw - dl) / Math.max(dl, 0.5) < TUNE.siphonDeadband) continue;
     const jk = `${lose.id}|${win.id}`;
     world.junctions.delete(`${win.id}|${lose.id}`); // the deeper side flipped: water runs one way only
     if (!world.junctions.has(jk)) world.events.push({ type: 'junction', from: lose.idx, to: win.idx, tick: world.tick });
-    world.junctions.set(jk, { from: lose, to: win, until: world.tick + TUNE.liveTicks });
+    world.junctions.set(jk, { from: lose, to: win, until: world.tick + TUNE.liveTicks, share: dw / (dw + dl), s: nearestS(world, lose, k), at: nearestIndex(world, win, k) });
   }
   for (const jk of [...world.junctions.keys()].sort()) {
     const j = world.junctions.get(jk);
-    if (world.tick >= j.until || !start.has(j.from) || !start.has(j.to)) { world.junctions.delete(jk); continue; }
-    const amount = dischargeOf(j.from) * TUNE.junctionK;
-    flows.push({ win: j.to, lose: j.from, amount, how: 'junction' });
-    lost.set(j.from, (lost.get(j.from) ?? 0) + amount);
+    if (world.tick >= j.until || !isRacing(j.from) || !isRacing(j.to)) world.junctions.delete(jk);
   }
   if (!flows.length) return;
   // Net each pair to one flow, so a pair never trades water both ways in a tick.
@@ -888,22 +900,22 @@ export function heatFront(world) {
   return -0.02 + (ticks * TUNE.heatSpeed * DT) / (2 * t.long * (t.worldSize / 2));
 }
 
-// Weather, once per tick: the heat front boils off what it has caught up
-// with; storms rain into whatever is under them. Placed from the state of
+// Weather, once per tick: the heat front dries the lakes it has passed;
+// storms rain into whatever is under them. Placed from the state of
 // the race and a seeded stream, so every machine agrees.
 function weather(world) {
   const front = heatFront(world);
   const racing = world.rivers.filter((r) => isRacing(r) && !r.dropping).sort(byId);
   if (front > -Infinity) {
     if (world.tick === TUNE.heatStart) world.events.push({ type: 'heat', tick: world.tick });
-    for (const r of racing) {
-      if (slopeT(world, r.x, r.z) >= front) continue;
-      const boil = r.volume * TUNE.heatRate;
-      grow(r, -boil);
-      world.events.push({ type: 'scorch', river: r.idx, amount: boil, tick: world.tick });
-      if (r.volume < TUNE.floor * TUNE.startVolume) {
-        r.out = { by: null, tick: world.tick, how: 'heat' };
-        world.events.push({ type: 'merge', winner: -1, loser: r.idx, gain: 0, how: 'heat', tick: world.tick });
+    if ((world.tick - TUNE.heatStart) % TUNE.heatEvery === 0) {
+      const t = world.terrain, n = t.size;
+      for (const l of world.lakes) {
+        const x = (l.gx / (n - 1) - 0.5) * t.worldSize, z = (l.gy / (n - 1) - 0.5) * t.worldSize;
+        if (slopeT(world, x, z) >= front || world.lakeVol[l.id] <= 0) continue;
+        const dry = Math.min(world.lakeVol[l.id], TUNE.heatLake);
+        world.lakeVol[l.id] -= dry;
+        world.events.push({ type: 'evaporate', lake: l.id, amount: dry, tick: world.tick });
       }
     }
   }
@@ -963,11 +975,9 @@ function hydrology(world) {
   const flowing = world.rivers.filter((r) => isRacing(r) && !r.dropping).sort(byId);
   for (const r of flowing) {
     r.inflow = 0;
-    const q = dischargeOf(r);
-    if (r.inLake >= 0) inflow[r.inLake] += q;
+    // (Rivers pour into lakes in pulses, see pulses().)
     for (const [lake, o] of r.via) {
       if (lake === r.inLake) continue; // your own head is in it: you don't drain it
-      inflow[lake] += q;
       outlets.push([lake, r, o]);
     }
   }
@@ -1002,10 +1012,15 @@ function hydrology(world) {
     if (q <= 0) continue;
     vol[lake] -= q;
     out[lake] += q;
-    // Your own water passing through the lake is already yours: only what
-    // drains out beyond it (stored water, rivals' inflow) makes you bigger.
-    const gain = q - dischargeOf(r);
-    if (gain > 0) give(r, gain);
+    // Rivers' water passing through is already theirs: only what drains out
+    // beyond it (the lake's stored water, rain) makes you bigger.
+    // (Rivers' water passing through is on account at the lake: it flows
+    // out again first, and only the lake's own water beyond it is a gain.)
+    const through = Math.min(q, world.lakeFlow[lake]);
+    world.lakeFlow[lake] -= through;
+    const gain = q - through;
+    // It joins the river at the outlet and comes down with the next pulse.
+    if (gain > 0) { feed(r, o.at ?? 0, gain); r.inflow += gain; }
     // Erosion follows the water over the lip and the river's volume: a high
     // lake and a big river cut fast; as the lake drops to the lip it slows.
     o.e = Math.min(t.filled[o.cell] - SEA_LEVEL - 0.5, o.e + TUNE.erodeK * h * r.size);
@@ -1063,48 +1078,139 @@ function spillChannel(world, lake) {
   return { path, cells, into, flow: 0, on: false };
 }
 
-// Erosion is forever: every river's whole trail keeps deepening as long as it
-// pours, never below sea level. Each tile cuts by the water running over it
-// (the river's flow depth, shallower at the banks), the river's size (its
-// volume) and the slope there: big rivers on steep ground carve canyons, small
-// ones on the flats barely scour. A drained river's channel stops eroding. A trail is swept a
-// slice per tick, all of it every trailPasses ticks. Outlets are recut to how
-// far they have eroded. Cells are marked for redraw every quarter metre.
-function erodeTrails(world) {
-  const t = world.terrain, n = t.size, ticks = TUNE.trailPasses;
-  const phase = world.tick % ticks;
-  // Each cell erodes once per sweep, however many path points cross it.
-  if (!world.erodedAt) world.erodedAt = new Int32Array(n * n);
-  const sweep = Math.floor(world.tick / ticks) + 1;
-  for (const r of world.rivers.filter((o) => !o.out && !o.dropping).sort(byId)) {
-    const flow = 0.7 * depthOf(r); // water stands this deep over the bed
-    // The head itself doesn't erode: water erodes where it flows past, so a
-    // head that stops can't dig itself into a pit.
-    const len = Math.max(0, r.path.length - TUNE.headSpared);
-    const per = Math.ceil(len / ticks);
-    const end = Math.min(len, (phase + 1) * per);
-    for (let i = phase * per; i < end; i++) {
-      const p = r.path[i];
-      const c = cellIndex(t, p.x, p.z), cx = c % n, cy = (c - cx) / n;
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const k = (cy + dy) * n + cx + dx;
-        if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL || world.erodedAt[k] === sweep) continue;
-        if (underWater(world, k)) continue;
-        world.erodedAt[k] = sweep;
-        const was = world.carve[k];
-        const f = t.filled, kx = k % n;
-        const sx = (f[kx < n - 1 ? k + 1 : k] - f[kx > 0 ? k - 1 : k]) / (2 * t.cell);
-        const sz = (f[k + n < n * n ? k + n : k] - f[k - n >= 0 ? k - n : k]) / (2 * t.cell);
-        const slope = Math.sqrt(sx * sx + sz * sz);
-        const add = TUNE.trailErode * ticks * Math.min(flow, was) * r.size * (1 + slope / TUNE.slopeErode);
-        // Deep canyons cut slower, but never stop.
-        const v = Math.min(t.height[k] + world.rock[k] - SEA_LEVEL - 0.5, was + add / (1 + was / (TUNE.depth * 3)));
-        if (v <= was) continue;
-        world.carve[k] = v;
-        if (Math.floor(v * 4) !== Math.floor(was * 4)) world.dirty.push(k);
+// Water waiting at a point of a river's channel for the next pulse.
+function feed(r, at, litres) {
+  if (litres > 0) r.feeds.set(at, (r.feeds.get(at) ?? 0) + litres);
+}
+
+// The path point of river r nearest cell k (searching back from the head).
+function nearestIndex(world, r, k) {
+  const t = world.terrain, n = t.size;
+  const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+  let best = Math.max(0, r.path.length - 1), bd = Infinity;
+  for (let i = r.path.length - 1; i >= 0; i--) {
+    const d = (r.path[i].x - kx) ** 2 + (r.path[i].z - kz) ** 2;
+    if (d < bd) { bd = d; best = i; }
+    if (bd < t.cell * t.cell && d > bd * 100) break;
+  }
+  return best;
+}
+const nearestS = (world, r, k) => r.path[nearestIndex(world, r, k)]?.s ?? 0;
+
+export function pulseEvery(r) {
+  for (const [below, ticks] of TUNE.pulseEvery) if (r.volume < below) return ticks;
+  return TUNE.pulseEvery[TUNE.pulseEvery.length - 1][1];
+}
+
+// Pulses, once per tick: release, run down the channel, arrive.
+function pulses(world) {
+  const t = world.terrain, n = t.size;
+  const cutsOf = new Map();
+  for (const jk of [...world.junctions.keys()].sort()) {
+    const j = world.junctions.get(jk);
+    if (!cutsOf.has(j.from)) cutsOf.set(j.from, []);
+    cutsOf.get(j.from).push(j);
+  }
+  for (const r of world.rivers.filter((o) => isRacing(o) && !o.dropping && o.path.length).sort(byId)) {
+    const head = r.path[r.path.length - 1].s;
+    // Release: the source's pulse carries the river's flow for the interval
+    // (what it pours into lakes) and the water gathered since the last one;
+    // water waiting further down (lake outlets, rivals' cuts) leaves there.
+    if (world.tick >= r.pulseAt) {
+      const every = pulseEvery(r);
+      r.pulseAt = world.tick + every;
+      r.pulses.push({ s: 0, i: 0, amount: r.feeds.get(0) ?? 0, flow: dischargeOf(r) * every, every, erode: true, lakes: [] });
+      for (const [at, litres] of [...r.feeds].sort((a, b) => a[0] - b[0])) {
+        if (at === 0) continue;
+        const p = r.path[Math.min(at, r.path.length - 1)];
+        r.pulses.push({ s: p.s, i: Math.min(at, r.path.length - 1), amount: litres, flow: 0, every, erode: false, lakes: [] });
       }
+      r.feeds.clear();
+      world.events.push({ type: 'pulse', river: r.idx, tick: world.tick });
     }
-    if (phase || !isRacing(r)) continue;
+    const v = TUNE.pulseSpeed * Math.max(r.speed, TUNE.baseSpeed);
+    const cuts = cutsOf.get(r) ?? [];
+    const flow = 0.7 * depthOf(r);
+    const keep = [];
+    for (const p of r.pulses) {
+      const s0 = p.s, s1 = s0 + v * DT;
+      // Every path point passed this tick.
+      while (p.i < r.path.length && r.path[p.i].s <= s1) {
+        const q = r.path[p.i++], c = cellIndex(t, q.x, q.z);
+        // (The head itself doesn't erode: a head that stops can't dig itself a pit.)
+        if (p.erode && p.i <= r.path.length - TUNE.headSpared) erodeAt(world, r, c, flow, p.every);
+        const lake = world.lakeOf[c];
+        if (lake >= 0 && !p.lakes.includes(lake) && lake !== r.inLake) {
+          // Into a lake on the way: it pours the river's flow in, and if
+          // the lake stands below this river's outlet it soaks up the pulse
+          // until it's back up to the lip.
+          p.lakes.push(lake);
+          world.lakePending[lake] += p.flow;
+          world.lakeFlow[lake] += p.flow; // river water passing through, no one's gain
+          const o = r.via.get(lake);
+          if (o && p.amount > 0) {
+            const short = lakeVolAt(world, lake, t.filled[o.cell] - o.e) - world.lakeVol[lake] - world.lakePending[lake];
+            if (short > 0) {
+              const take = Math.min(p.amount, short);
+              p.amount -= take;
+              world.lakePending[lake] += take;
+              world.events.push({ type: 'soak', river: r.idx, lake, amount: take, tick: world.tick });
+            }
+          }
+        }
+      }
+      // A rival's cut on the way takes its share.
+      for (const j of cuts) {
+        if (j.s <= s0 || j.s > s1 || p.amount <= 0) continue;
+        const take = p.amount * j.share;
+        p.amount -= take;
+        feed(j.to, j.at, take);
+        world.events.push({ type: 'siphon', from: r.idx, to: j.to.idx, amount: take, how: 'junction', tick: world.tick });
+      }
+      p.s = s1;
+      if (s1 < head) { keep.push(p); continue; }
+      // At the head: the river swells (or, with its head in a lake, the lake does).
+      if (r.inLake >= 0) { world.lakePending[r.inLake] += p.flow + p.amount; world.lakeFlow[r.inLake] += p.flow; }
+      else if (p.amount > 0) grow(r, p.amount);
+      world.events.push({ type: 'swell', river: r.idx, amount: p.amount, tick: world.tick });
+    }
+    r.pulses = keep;
+  }
+}
+
+// A pulse passing erodes the channel: by the water over each cell (the
+// river's flow depth, shallower at the banks), the river's size and the slope
+// there, for the whole interval since the last pulse. Big rivers on steep
+// ground carve canyons; small ones on the flats barely scour.
+function erodeAt(world, r, c, flow, every) {
+  const t = world.terrain, n = t.size, cx = c % n, cy = (c - cx) / n;
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const k = (cy + dy) * n + cx + dx;
+    if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL || underWater(world, k)) continue;
+    if (world.erodedBy?.[k] === world.tick) continue; // once a tick, however many points cross it
+    (world.erodedBy ??= new Int32Array(n * n).fill(-1))[k] = world.tick;
+    const was = world.carve[k];
+    const f = t.filled, kx = k % n;
+    const sx = (f[kx < n - 1 ? k + 1 : k] - f[kx > 0 ? k - 1 : k]) / (2 * t.cell);
+    const sz = (f[k + n < n * n ? k + n : k] - f[k - n >= 0 ? k - n : k]) / (2 * t.cell);
+    const slope = Math.sqrt(sx * sx + sz * sz);
+    const add = TUNE.trailErode * every * Math.min(flow, was) * r.size * (1 + slope / TUNE.slopeErode);
+    // Deep canyons cut slower, but never stop.
+    const v = Math.min(t.height[k] + world.rock[k] - SEA_LEVEL - 0.5, was + add / (1 + was / (TUNE.depth * 3)));
+    if (v <= was) continue;
+    world.carve[k] = v;
+    if (Math.floor(v * 4) !== Math.floor(was * 4)) world.dirty.push(k);
+  }
+}
+
+// Erosion is forever: every river's whole channel keeps deepening as long as
+// it pours, a pulse at a time, never below sea level.
+function erodeTrails(world) {
+  // The channel erodes as pulses pass (see erodeAt). Outlets are recut to
+  // how far they have eroded, every trailPasses ticks.
+  if (world.tick % TUNE.trailPasses) return;
+  const t = world.terrain, n = t.size;
+  for (const r of world.rivers.filter((o) => isRacing(o) && !o.dropping).sort(byId)) {
     for (const [, o] of r.via) {
       const x = ((o.cell % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(o.cell / n) / (n - 1) - 0.5) * t.worldSize;
       world.digs.push({ r, x, z, width: widthOf(r), depth: o.e, bed: t.filled[o.cell] - o.e });
@@ -1161,7 +1267,8 @@ function moveTo(world, r, nx, nz) {
   r.travelled += moved;
   r.x = nx; r.z = nz;
   // In a lake the river's volume holds: its water goes into the lake.
-  if (world.lakeOf[cellIndex(world.terrain, nx, nz)] < 0) grow(r, moved * TUNE.trickle);
+  // What a longer channel gathers comes down it from the source, in pulses.
+  if (world.lakeOf[cellIndex(world.terrain, nx, nz)] < 0) feed(r, 0, moved * TUNE.trickle);
 }
 
 // Send a head on a lake to its lowest exit, by a path over the lake's water
@@ -1191,6 +1298,24 @@ function setExit(world, r, lake) {
   r.exit = goal; r.exitPath = path; r.exitStep = 0;
 }
 
+// Where water blocked at cell c runs next: down the fill's downhill tree, or,
+// for a river too small to knock trees down, down the shortest way to the
+// sea round the stands (the fill's tree runs straight through them).
+function wayOut(world, r, c) {
+  const t = world.terrain, round = world.roundReach;
+  if (!round || r.size >= TUNE.treeBreak || round[c] < 0) return downhill(t, c);
+  const n = t.size, cx = c % n, cy = (c - cx) / n;
+  let best = -1, bd = round[c];
+  for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+    const x = cx + dx, y = cy + dy;
+    if ((!dx && !dy) || x < 0 || y < 0 || x >= n || y >= n) continue;
+    const k = y * n + x;
+    if (round[k] < 0 || round[k] >= bd || t.filled[k] > t.filled[c] + TUNE.climb) continue;
+    bd = round[k]; best = k;
+  }
+  return best >= 0 ? best : downhill(t, c);
+}
+
 // A lake's lowest way out: its spill point or the lip of any outlet cut from it.
 function lowestExit(world, lake, self) {
   const f = world.terrain.filled;
@@ -1211,7 +1336,7 @@ function joinLake(world, r, lake, cell) {
   // deepens it.
   const ground = world.terrain.filled[cell];
   const lip = Math.max(SEA_LEVEL + 0.5, Math.min(ground, lakeLevel(world, lake)) - r.depth);
-  r.via.set(lake, { cell, e: Math.max(0, ground - lip), w: widthOf(r), born: world.tick });
+  r.via.set(lake, { cell, e: Math.max(0, ground - lip), w: widthOf(r), born: world.tick, at: Math.max(0, r.path.length - 1) });
   r.lakes++;
   // Joining a lake adds its water to yours at once, then keeps flowing.
   // A full lake's surge comes off the brim: it doesn't lower the lake (a lake
@@ -1273,7 +1398,9 @@ function pushPathPoint(world, r) {
   const centre = surfaceAt(world, r.x, r.z, r.idx);
   const width = widthOf(r), depth = r.depth;
   const bed = Math.min(centre, sampleFilled(t, r.x, r.z)) - depth;
-  r.path.push({ x: r.x, z: r.z, water: centre - depth * 0.3, w: width, tick: world.tick });
+  const last = r.path[r.path.length - 1];
+  const s = last ? last.s + Math.sqrt((r.x - last.x) ** 2 + (r.z - last.z) ** 2) : 0;
+  r.path.push({ x: r.x, z: r.z, water: centre - depth * 0.3, w: width, tick: world.tick, s });
   world.digs.push({ r, x: r.x, z: r.z, width, depth, bed });
 }
 

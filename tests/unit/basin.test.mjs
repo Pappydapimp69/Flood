@@ -15,11 +15,10 @@ test('lakes are reservoirs: they start part full and drain through a low outlet,
   assert.equal(w.basins.length, 0);
   for (const l of w.lakes) assert.equal(w.lakeVol[l.id], w.lakeCap[l.id] * TUNE.lakeStart);
   const lake = w.lakes.reduce((a, b) => (b.cells > a.cells ? b : a));
-  const r = addRiver(w, 'a', cellPos(w, w.lakeOf.indexOf(lake.id)));
-  step(w, new Map());
-  // An outlet cut 6 m below the water: stored water drains out to the river.
+  // A river starting at the lake's spill point with an outlet cut 6 m below
+  // the water: stored water drains out to it.
   const cell = w.lakeOutlet[lake.id], lip = lakeLevel(w, lake.id) - 6;
-  Object.assign(r, cellPos(w, cell)); // the head out through the spill point
+  const r = addRiver(w, 'a', cellPos(w, cell));
   step(w, new Map());
   r.via.set(lake.id, { cell, e: w.terrain.filled[cell] - lip, w: TUNE.width, born: 0 });
   const v0 = r.volume, l0 = w.lakeVol[lake.id], e0 = r.via.get(lake.id).e;

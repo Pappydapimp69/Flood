@@ -82,7 +82,9 @@ test('digging stays on land and never cuts below sea level', () => {
     assert.ok(t.filled[i] > 0, 'dug the sea');
     assert.ok(t.height[i] + w.rock[i] - w.carve[i] >= -0.01, `cell ${i} cut below sea level`);
   }
-  assert.ok(dug > 100, `only ${dug} cells dug`);
+  // (Enough digging that the checks above mean something; a wiggling river
+  // that circles a lake grows slowly now that only new water counts.)
+  assert.ok(dug > 50, `only ${dug} cells dug`);
 });
 
 // Water runs downhill on its own: a river nobody steers keeps flowing, it

@@ -204,7 +204,7 @@ function heatGap(r) {
 
 // Weather: the heat front as a glowing wall of shimmering air across the
 // island, and a storm as a dark cloud with a curtain of rain under it.
-let heatWall = null, stormCloud = null, scorchedAt = -1e9;
+let heatWall = null, stormCloud = null;
 function updateWeather(time) {
   const t = world.terrain;
   if (!heatWall) {
@@ -624,18 +624,18 @@ function advance(inputs) {
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
     } else if (e.type === 'heat') {
-      showPop('A heat wave is rolling down the mountain — stay ahead of it');
-      feed('The heat front is coming');
+      showPop('A heat wave is rolling down the mountain — the lakes behind it are drying up');
+      feed('The heat front is coming: lakes behind it dry out');
     } else if (e.type === 'storm') {
       showStorm(e);
       if (e.on) { feed('A storm breaks over the slope ahead — free water'); if (river && isRacing(river)) showPop('Storm ahead! Get under it to soak up the rain'); }
-    } else if (e.type === 'scorch' && river && e.river === river.idx) {
-      scorchedAt = world.tick;
-    } else if (e.type === 'merge' && e.how === 'heat') {
-      const l = world.rivers[e.loser];
-      feed(`${nameOf(l)} boiled away in the heat`);
-      if (l === river) audio.merge(false);
-      if (l === focus) focus = standings(world).find(isRacing) ?? focus;
+    } else if (e.type === 'swell') {
+      // A pulse reached a head: it swells, more for a bigger slug of water.
+      const en = entries[e.river];
+      if (en && e.amount > 0) { en.swellAt = performance.now(); en.swell = Math.min(0.5, e.amount / (en.r.volume * 0.04 + 1)); }
+    } else if (e.type === 'soak') {
+      const en = entries[e.river];
+      if (en && river && e.river === river.idx && e.amount > 50_000) showPop('A low lake on your channel is soaking up your water');
     } else if (e.type === 'merge') {
       const w = world.rivers[e.winner], l = world.rivers[e.loser];
       if (w === river) { showPop(`You drained ${nameOf(l)} dry`); audio.merge(true); }
@@ -665,11 +665,10 @@ function showResults(table, final) {
   const place = river ? table.indexOf(river) + 1 : 0;
   let head = 'Race over';
   if (river?.finished) head = place === 1 ? 'You reached the sea first!' : `You reached the sea ${ordinal(place)}`;
-  else if (river?.out?.how === 'heat') head = 'Boiled away by the heat front';
   else if (river?.out) head = `Drained dry by ${nameOf(world.rivers.find((r) => r.id === river.out.by))}`;
   else if (river && final) head = `Time's up — ${ordinal(place)}`;
   const status = (r) => r.finished ? `sea · ${fmtTime(r.finishTick / TICK_HZ)}`
-    : r.out?.how === 'heat' ? 'boiled away' : r.out ? `drained by ${nameOf(world.rivers.find((o) => o.id === r.out.by))}` : 'still flowing';
+    : r.out ? `drained by ${nameOf(world.rivers.find((o) => o.id === r.out.by))}` : 'still flowing';
   const rows = table.slice(0, 5);
   if (river && place > 5) rows.push(river);
   const list = rows.map((r) => `<li class="${r === river ? 'me' : ''}"><span>${ordinal(table.indexOf(r) + 1)} ${escapeHtml(nameOf(r))}</span><span>${status(r)}</span></li>`).join('');
@@ -887,7 +886,11 @@ renderer.setAnimationLoop(() => {
       e.streak.scale.set(wide, 1900, wide);
     }
     if (r.dropping) e.head.scale.set((intro0 ? 120 : 40) * big, (intro0 ? 120 : 40) * big, (intro0 ? 120 : 40) * big);
-    else e.head.scale.set(55 * r.size * big, 30 * r.size * big, 55 * r.size * big);
+    else {
+      // A pulse arriving swells the head for a moment.
+      const sw = e.swellAt ? Math.max(0, 1 - (now - e.swellAt) / 700) * (e.swell ?? 0) : 0;
+      e.head.scale.set(55 * r.size * big * (1 + sw), 30 * r.size * big * (1 + 1.6 * sw), 55 * r.size * big * (1 + sw));
+    }
     const flowing = !r.dropping && !r.out && !mapView;
     e.surge.visible = flowing;
     if (flowing) {
@@ -1015,8 +1018,7 @@ renderer.setAnimationLoop(() => {
   hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · drag far to dive faster · land on the glowing ring' : '← → steer · ↑ ↓ speed (or drag) · land on the glowing ring')
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
-    : world.tick - scorchedAt < 10 ? 'BOILING OFF — the heat front has caught you, get ahead of it!'
-    : heatGap(me) < 3000 ? `heat front ${(heatGap(me) / 1000).toFixed(1)} km behind you · keep moving`
+    : me.inLake >= 0 && heatGap(me) < 0 ? 'the heat front is drying this lake'
     : `pouring ${fmtL(dischargeOf(me) * TICK_HZ + me.inflow * TICK_HZ)}/s · head ${headOf(me).toFixed(1)} m · cutting ${me.depth.toFixed(1)} m` + (fedBy ? ` · fed by ${fedBy}` : '');
   watchCaptions(now, place);
   tugFeedback(now);

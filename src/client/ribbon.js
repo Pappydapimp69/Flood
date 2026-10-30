@@ -32,6 +32,7 @@ const fragment = /* glsl */ `
   uniform float uTick;
   uniform float uLive;
   uniform float uMine;
+  uniform vec2 uPulse[16]; // pulses running down the channel: metres along it, strength
   varying float vAlong;
   varying float vSide;
   varying float vBorn;
@@ -51,6 +52,13 @@ const fragment = /* glsl */ `
     float bank = smoothstep(0.62, 0.98, across + (n - 0.5) * 0.25);
     col = mix(col, uFoam, clamp(streak * 0.55 + bank * 0.85, 0.0, 1.0) * live);
     col *= 0.92 + 0.16 * n;
+    // Pulses: a bright foaming bulge rolling down the channel.
+    float pulse = 0.0;
+    for (int i = 0; i < 16; i++) {
+      float d = (vAlong - uPulse[i].x) / 90.0;
+      pulse += uPulse[i].y * exp(-d * d);
+    }
+    col = mix(col, uFoam, clamp(pulse, 0.0, 0.85) * live);
     // A drained river's bed: still and grey.
     col = mix(vec3(0.34, 0.37, 0.36), col, live);
     col += uMine * live * 0.04;
@@ -90,6 +98,7 @@ export class Ribbon {
       uTick: { value: 0 },
       uLive: { value: TUNE.liveTicks },
       uMine: { value: mine ? 1 : 0 },
+      uPulse: { value: Array.from({ length: 16 }, () => new THREE.Vector2(-1e9, 0)) },
     }]);
     this.mesh = new THREE.Mesh(geo, new THREE.ShaderMaterial({
       uniforms: this.uniforms, vertexShader: vertex, fragmentShader: fragment,
@@ -121,6 +130,14 @@ export class Ribbon {
     this.uniforms.uTick.value = world.tick;
     // The whole trail stays live while the river pours; drained, it dries.
     this.uniforms.uLive.value = river.out ? TUNE.liveTicks : 1e9;
+    // The pulses nearest the head (the ones worth seeing), strength by how
+    // much water each carries against the river's size.
+    const ps = river.pulses ?? [], slots = this.uniforms.uPulse.value;
+    for (let i = 0; i < 16; i++) {
+      const p = ps[ps.length - 1 - i];
+      if (!p) { slots[i].set(-1e9, 0); continue; }
+      slots[i].set(p.s, 0.35 + Math.min(0.5, (p.amount + p.flow) / (river.volume * 0.02 + 1)));
+    }
   }
 
   writePoint(world, river, i, x, z, water, born, live = false) {

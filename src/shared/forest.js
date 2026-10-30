@@ -55,13 +55,17 @@ export function plantForest(world, ring, starts, climb) {
   // The density alone can't promise a way through, so check it: every start
   // must reach the sea round the trees, not much further than over open
   // ground. Where one can't, cut a lane down its shortest route and check again.
+  let round;
   for (let pass = 0; pass < 6; pass++) {
-    const round = reachRound(t, trees, climb);
+    round = reachRound(t, trees, climb);
     const stuck = starts.filter((s) => !(round[s] <= world.reach[s] * FOREST.detour));
     if (!stuck.length) break;
     for (const s of stuck) lane(world, trees, s, climb);
+    round = reachRound(t, trees, climb);
   }
-  return trees;
+  // round: each cell's shortest way to the sea round the trees, the way out
+  // a small river follows when it's blocked.
+  return { trees, round: Float32Array.from(round, (d) => (Number.isFinite(d) ? d : -1)) };
 }
 
 // Shortest water route to the sea from every cell, never through a stand.

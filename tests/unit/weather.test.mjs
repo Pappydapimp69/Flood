@@ -5,33 +5,37 @@ import { createWorld, addRiver, step, heatFront, slopeT, riverFingerprint, cellI
 
 const t5 = generateIsland(5);
 
-test('the heat front rolls down the mountain and boils off a river it catches', () => {
+test('the heat front never touches a river: every 3 s each lake behind it loses a set amount', async () => {
+  const { lakeLevel } = await import('../../src/shared/river.js');
   const w = createWorld(t5);
   const r = addRiver(w, 'a');
   assert.equal(heatFront(w), -Infinity);
-  // Hold the river at its start while the front comes down.
-  const at = { x: r.x, z: r.z };
-  let first = -1;
-  for (let k = 0; k < TUNE.heatStart + 20 * 60 && !r.out; k++) {
-    Object.assign(r, at, { speed: 0 });
-    step(w, new Map());
-    if (first < 0 && w.events.some((e) => e.type === 'scorch' && e.river === r.idx)) first = w.tick;
-    w.events.length = 0;
-  }
-  assert.ok(first >= TUNE.heatStart, 'scorched before the heat started');
-  assert.ok(heatFront(w) > slopeT(w, at.x, at.z), 'front did not pass the river');
-  assert.equal(r.out?.how, 'heat', 'the river held at the summit was not boiled away');
+  // Far enough on that the front has passed some lakes.
+  w.tick = TUNE.heatStart + TUNE.heatEvery * 40;
+  const t = w.terrain, n = t.size;
+  const behind = w.lakes.filter((l) => slopeT(w, (l.gx / (n - 1) - 0.5) * t.worldSize, (l.gy / (n - 1) - 0.5) * t.worldSize) < heatFront(w));
+  const ahead = w.lakes.filter((l) => !behind.includes(l));
+  assert.ok(behind.length > 0 && ahead.length > 0, `${behind.length} lakes behind, ${ahead.length} ahead`);
+  void lakeLevel;
+  const before = Float64Array.from(w.lakeVol);
+  const v0 = r.volume;
+  r.out = { by: 'test', tick: 0 }; // out of the race, so it pours nothing in
+  for (let k = 0; k < TUNE.heatEvery; k++) step(w, new Map());
+  for (const l of behind) assert.equal(before[l.id] - w.lakeVol[l.id], Math.min(before[l.id], TUNE.heatLake), `lake ${l.id} behind the front`);
+  for (const l of ahead) assert.equal(w.lakeVol[l.id], before[l.id], `lake ${l.id} ahead of the front dried`);
+  assert.equal(r.volume, v0, 'the heat touched a river');
+  assert.ok(!r.out?.how, 'the heat knocked a river out');
 });
 
-test('a river ahead of the heat front is untouched by it', () => {
+test('water pouring in still counts against the heat: a fed lake behind the front holds up', () => {
   const w = createWorld(t5);
-  const r = addRiver(w, 'a');
-  w.tick = TUNE.heatStart + 20;
-  const v0 = r.volume;
-  step(w, new Map());
-  assert.ok(slopeT(w, r.x, r.z) > heatFront(w));
-  assert.ok(!w.events.some((e) => e.type === 'scorch'), 'scorched ahead of the front');
-  assert.ok(r.volume >= v0);
+  w.tick = TUNE.heatStart + TUNE.heatEvery * 40;
+  const t = w.terrain, n = t.size;
+  const lake = w.lakes.find((l) => slopeT(w, (l.gx / (n - 1) - 0.5) * t.worldSize, (l.gy / (n - 1) - 0.5) * t.worldSize) < heatFront(w));
+  w.lakeVol[lake.id] = w.lakeCap[lake.id] * 0.5; // well under its rim, so nothing spills
+  const v0 = w.lakeVol[lake.id];
+  for (let k = 0; k < TUNE.heatEvery; k++) { w.lakePending[lake.id] += 2000; step(w, new Map()); }
+  assert.equal(Math.round(w.lakeVol[lake.id] - v0), TUNE.heatEvery * 2000 - Math.min(v0, TUNE.heatLake));
 });
 
 test('storms open ahead of the pack and rain into rivers under them', () => {
