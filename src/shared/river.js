@@ -120,12 +120,13 @@ export const TUNE = {
   surgeCap: 1.35, // ...up to this many times its usual top speed
   surgeLift: 1.5, // metres a head running at base speed can carry up a rise (grows with speed squared)...
   surgeLiftMax: 25, // ...up to this
-  // Storms: every stormEvery ticks from stormStart, a storm blows in from one
-  // side of the island ahead of the pack and sweeps across to the other,
+  // Storms: one at a time, from stormStart and then stormGap after each has
+  // gone, a storm blows in from one side of the island ahead of the pack and
+  // sweeps across to the other,
   // raining stormRain litres per tick into every river head under it and
   // filling every lake it passes over.
   stormStart: 600 + 20 * 40,
-  stormEvery: 20 * 35,
+  stormGap: 20 * 12,
   stormRadius: 1300,
   stormRain: 9000,
   stormLakeRain: 15, // litres per tick per lake cell for a lake under a storm
@@ -981,7 +982,8 @@ function weather(world) {
   // Storms: each one blows in from one side of the island ahead of the pack
   // and sweeps right across it to the other, drifting down the slope as it
   // goes, raining into every river head and lake under it.
-  if (world.tick >= TUNE.stormStart && (world.tick - TUNE.stormStart) % TUNE.stormEvery === 0 && racing.length) {
+  // One storm at a time: the next blows in stormGap after the last has gone.
+  if (!world.storms.length && world.tick >= (world.stormNext ?? TUNE.stormStart) && racing.length) {
     const rng = stream(world.terrain.seed, `storm:${world.tick}`);
     const ts = racing.map((r) => slopeT(world, r.x, r.z)).sort((a, b) => a - b);
     const tAt = Math.min(0.95, ts[ts.length >> 1] + 0.05 + 0.12 * rng());
@@ -1000,6 +1002,7 @@ function weather(world) {
   for (const s of [...world.storms]) {
     if (world.tick >= s.until) {
       world.storms.splice(world.storms.indexOf(s), 1);
+      world.stormNext = world.tick + TUNE.stormGap;
       world.events.push({ type: 'storm', on: false, id: s.id, tick: world.tick });
       continue;
     }
