@@ -103,6 +103,13 @@ function terrainMaterial() {
           // Close-up grit and scree.
           float grit = tn(vWPos.xz * 0.06) * 0.5 + tn(vWPos.xz * 0.17) * 0.5;
           col *= mix(1.0, 0.74 + 0.5 * grit, near);
+          // Contour lines every 10 m of height (every 50 m a little stronger),
+          // close up, so rises and dips read at a glance.
+          float hm = vWPos.y / ${VERT.toFixed(2)} / 10.0;
+          float cl = 1.0 - min(1.0, abs(fract(hm - 0.5) - 0.5) / max(fwidth(hm), 1e-4));
+          float major = step(0.5, 1.0 - abs(fract(hm / 5.0 + 0.1) - 0.1) * 10.0);
+          float contour = cl * (0.12 + 0.1 * major) * (1.0 - smoothstep(2000.0, 7000.0, dist)) * (1.0 - wet);
+          col *= 1.0 - contour;
           diffuseColor.rgb = col;
         }`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>

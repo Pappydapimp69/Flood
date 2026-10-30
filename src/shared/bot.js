@@ -4,17 +4,17 @@
 // randomness comes from its own id-keyed stream.
 
 import { stream } from './rng.js';
-import { surfaceAt, cellIndex, isRacing, isLive, widthOf, headOf, TUNE } from './river.js';
+import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, TUNE } from './river.js';
 
 const OFFSETS = [-1.6, -0.7, -0.35, 0, 0.35, 0.7, 1.6]; // sideways share added to heading; + = left
 export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10 };
 
-// Trace the water from r holding heading (hx, hz): each step runs down the
+// Trace the water from r holding heading (hx, hz) (the player's flow guide uses it too): each step runs down the
 // local fall line bent toward the heading, until it would climb out of reach.
-function flowFrom(world, r, hx, hz) {
+export function flowFrom(world, r, hx, hz) {
   const h = world.terrain.cell * 2, out = [];
   let x = r.x, z = r.z, d = 0;
-  const ceiling = r.low + TUNE.climb + headOf(r) + 4;
+  const ceiling = r.low + TUNE.climb + liftOf(r) + 4;
   for (let i = 0; i < TUNE_BOT.steps; i++) {
     const gx = (surfaceAt(world, x + h, z, r.idx) - surfaceAt(world, x - h, z, r.idx)) / (2 * h);
     const gz = (surfaceAt(world, x, z + h, r.idx) - surfaceAt(world, x, z - h, r.idx)) / (2 * h);
@@ -25,7 +25,7 @@ function flowFrom(world, r, hx, hz) {
     const k = cellIndex(world.terrain, x, z), lake = world.lakeOf[k];
     if (gl >= TUNE.flatSlope && !(lake >= 0 && world.lakeVol[lake] > 0)) {
       const wf = Math.min(1, gl / TUNE.fallSlope), fx = -gx / gl, fz = -gz / gl, up = hx * fx + hz * fz;
-      const over = up < 0 && (-up * gl * TUNE.headLook > headOf(r) || r.speed < TUNE.climbSpeed);
+      const over = up < 0 && (-up * gl * TUNE.headLook > liftOf(r) || r.speed < TUNE.climbSpeed);
       if (over) { mx -= up * fx; mz -= up * fz; }
       if (up >= 0 || over) {
         mx += fx * wf * (over ? TUNE.fallUphill : TUNE.fallDrift);

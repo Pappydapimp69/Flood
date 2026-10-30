@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
 import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, DT, TICK_HZ, TUNE } from '../shared/river.js';
-import { createBot, botSteer } from '../shared/bot.js';
+import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
 import { buildSea, buildLakes, makeSurge, makeSpray, updateSpray, burstSpray, tickWater } from './water.js';
@@ -747,6 +747,39 @@ chevron.renderOrder = 3;
 chevron.visible = false;
 scene.add(chevron);
 let downAt = 0, downTurn = 0;
+// Flow guide: where your water will actually run, holding your heading, for
+// the next ~1.2 km (the same trace the bots read). White while it runs on,
+// turning red where it would be stopped by a rise it can't get over.
+const flowLine = (() => {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12 * 3), 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(12 * 3), 3));
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.8, depthTest: false }));
+  line.renderOrder = 5;
+  line.frustumCulled = false;
+  line.visible = false;
+  scene.add(line);
+  return line;
+})();
+let flowAt = 0;
+function showFlow(now) {
+  const me = river;
+  const on = !!me && isRacing(me) && !me.dropping && !mapView;
+  flowLine.visible = on;
+  if (!on || now - flowAt < 100) return;
+  flowAt = now;
+  const path = [{ x: me.x, z: me.z }, ...flowFrom(world, me, me.dx, me.dz)].slice(0, 12);
+  const pos = flowLine.geometry.attributes.position, col = flowLine.geometry.attributes.color;
+  const blocked = path[path.length - 1].blocked;
+  path.forEach((p, i) => {
+    pos.setXYZ(i, p.x, surfaceAt(world, p.x, p.z) * VERT + 12, p.z);
+    const end = blocked && i >= path.length - 2;
+    col.setXYZ(i, 1, end ? 0.25 : 1, end ? 0.2 : 1);
+  });
+  flowLine.geometry.setDrawRange(0, path.length);
+  pos.needsUpdate = col.needsUpdate = true;
+}
+
 function showDownhill(now) {
   const me = river;
   const on = !!me && isRacing(me) && !me.dropping && me.pooled < 0 && !mapView;
@@ -942,6 +975,7 @@ renderer.setAnimationLoop(() => {
   tickWater([sea, lakesMesh, ...entries.map((e) => e.surge)], now / 1000);
   showMarker(now, fx, fy, fz);
   showDownhill(now);
+  showFlow(now);
   showStick();
   const intro = now < introUntil && !mapView && !!river?.dropping;
   document.body.classList.toggle('intro', intro);

@@ -114,6 +114,8 @@ export const TUNE = {
   surge: 1.2, // a pulse reaching the head adds up to this many times base speed...
   surgeShare: 0.03, // ...the full surge once it brings this share of the river's volume...
   surgeCap: 1.35, // ...up to this many times its usual top speed
+  surgeLift: 1.5, // metres a head running at base speed can carry up a rise (grows with speed squared)...
+  surgeLiftMax: 25, // ...up to this
   // Storms: every stormEvery ticks from stormStart, a storm opens over the
   // slope ahead of the pack for stormTicks, raining stormRain litres per tick
   // into every river head (and lake) under it.
@@ -665,7 +667,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     // Aimed uphill, a rise the head stands taller than is no obstacle while the
     // water still has the speed to run up it: it goes where it's aimed. A rise
     // above the head, or running out of speed, drops the uphill part.
-    const over = up < 0 && (-up * gl * TUNE.headLook > headOf(r) || r.speed < TUNE.climbSpeed);
+    const over = up < 0 && (-up * gl * TUNE.headLook > liftOf(r) || r.speed < TUNE.climbSpeed);
     let bx = mx, bz = mz;
     if (over) { bx -= up * fx; bz -= up * fz; } // drop the uphill part
     if (up >= 0 || over) {
@@ -692,7 +694,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
 
   // More water stands taller at the head: rises that would stop a small river
   // don't stop a big one.
-  let ceiling = r.low + TUNE.climb + headOf(r);
+  let ceiling = r.low + TUNE.climb + liftOf(r);
   let v = r.speed;
   let nx = r.x + mx * v * DT, nz = r.z + mz * v * DT;
   // On a lake with no bank low enough to climb, the head makes for the lake's
@@ -721,8 +723,8 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
       setExit(world, r, shore); r.cut = 0; r.cutTicks = 0; r.cutAt = -1; r.cutLake = -1;
     } else if (r.cut >= ahead - ceiling) {
       // Through: the water runs out over the cut.
-      r.low = ahead - TUNE.climb - headOf(r) + 0.01;
-      ceiling = r.low + TUNE.climb + headOf(r);
+      r.low = ahead - TUNE.climb - liftOf(r) + 0.01;
+      ceiling = r.low + TUNE.climb + liftOf(r);
       mx = r.dx; mz = r.dz; nx = px; nz = pz; // out through the cut, the way it's aimed
       r.cutLake = shore;
       r.cut = 0; r.cutTicks = 0; r.cutAt = -1;
@@ -1268,6 +1270,13 @@ export function isLive(world, k) {
 // top speed. Linear, so it stays deterministic everywhere.
 // How tall the water stands at the head, metres: it grows with volume (as
 // size, the fourth root), so a bigger river pushes over rises a small one can't.
+// How high the water can run up a rise: the head's height plus what its
+// speed carries it (fast water surges over bumps, slow water stops at them).
+export function liftOf(r) {
+  const v = (r.speed ?? 0) / TUNE.baseSpeed;
+  return headOf(r) + Math.min(TUNE.surgeLiftMax, TUNE.surgeLift * v * v);
+}
+
 export function headOf(r) {
   return TUNE.headPerSize * r.size * r.size; // grows fast: a big river plows over banks a small one can't
 }
