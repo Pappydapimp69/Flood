@@ -160,7 +160,7 @@ export function applyCarve(mesh, carve, dirty, rock) {
   let lo = Infinity, hi = -Infinity;
   for (const k of dirty) {
     pos.setY(k, (base[k] + (rock?.[k] ?? 0) - carve[k]) * VERT);
-    if (rock?.[k]) { ROCK.toArray(baseColors, k * 3); }
+    if (rock?.[k] > 0) { ROCK.toArray(baseColors, k * 3); } // cooled lava (worn ground keeps its colour)
     const w = Math.min(1, Math.max(0, carve[k] - 1.5) / 4);
     tmp.fromArray(baseColors, k * 3).lerp(BED, w).toArray(col.array, k * 3);
     for (const o of [0, -1, 1, -n, n]) touched.add(k + o);

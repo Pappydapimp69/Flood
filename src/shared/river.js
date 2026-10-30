@@ -63,7 +63,10 @@ export const TUNE = {
   slopeErode: 0.04, // ...and once more for every this much slope (steep ground cuts canyons)
   trailPasses: 20, // ticks between outlet recuts
   headSpared: 4, // path points nearest the head that pulses don't erode
-  stuckNet: 8, // metres: moved less than this in stallTicks, it's stuck and its water fills the hollow
+  stuckNet: 4, // metres: moved less than this in stuckTicks, it's stuck...
+  stuckTicks: 6, // ...(0.3 s)...
+  stuckWear: 0.5, // ...and its pool wears the ground round it down this many metres a tick, times size
+  stuckWearMax: 40, // metres the ground can be worn down
   massEase: 0.04, // share of the way a river's momentum moves to its new size each tick
   stallTicks: 20, stallMin: 30, stallNet: 0.35, // moved over 30 m in 1 s but under 35% of it net: going nowhere
   routeDrop: 1.5, // metres a head following the fill route must fall before it goes back to its heading // path points nearest the head that don't erode // ticks to sweep a whole trail once (a slice of it each tick)
@@ -421,7 +424,8 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     low: Infinity, // lowest surface reached; water can't climb far above it
     ponded: 0, // metres the local pool has risen above the ground
     leftLake: -1, // the last lake the head left
-    cut: 0, cutTicks: 0, cutAt: -1, cutLake: -1, // a head on a lake cutting its way out through a bank
+    cut: 0, cutTicks: 0, cutAt: -1, cutLake: -1,
+    stuck: false, stuckAt: 0, stuckX: 0, stuckZ: 0, // a head on a lake cutting its way out through a bank
     exitPath: null, exitStep: 0,
     pulses: [], // { s (metres down the path), i (next path point), amount, flow, every, erode, lakes passed }
     feeds: new Map(), // path index -> litres waiting to leave there with the next pulse
@@ -636,16 +640,15 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   if (world.tick - r.netAt >= TUNE.stallTicks) {
     const moved = r.travelled - r.netT, net = Math.sqrt((r.x - r.netX) ** 2 + (r.z - r.netZ) ** 2);
     if (r.route === null && moved > TUNE.stallMin && net < moved * TUNE.stallNet) r.route = here;
-    // Barely gone anywhere for a second, however it's steered: it's stuck in
-    // a hollow, and a rushing river can't stop, so its water starts filling
-    // the hollow (below) until it spills out.
-    r.stuck = net < TUNE.stuckNet;
     r.netAt = world.tick; r.netX = r.x; r.netZ = r.z; r.netT = r.travelled;
   }
-  if (r.stuck && !onLake) {
-    r.low = Math.max(r.low, here) + TUNE.pool * r.size;
-    if (!r.filling) world.events.push({ type: 'pond', river: r.idx, tick: world.tick });
-    r.filling = true;
+  // Barely gone anywhere in a moment, however it's steered: it's stuck. A
+  // rushing river can't stop, so it holds still while its water pools and
+  // wears the ground round it down (see below), until a way opens.
+  if (world.tick - r.stuckAt >= TUNE.stuckTicks) {
+    const net = Math.sqrt((r.x - r.stuckX) ** 2 + (r.z - r.stuckZ) ** 2);
+    if (!r.stuck && net < TUNE.stuckNet && !onLake && r.exit < 0 && !r.cut) r.stuck = true;
+    r.stuckAt = world.tick; r.stuckX = r.x; r.stuckZ = r.z;
   }
   const routeDir = () => {
     const n = tt.size, d = wayOut(world, r, cellIndex(tt, r.x, r.z));
@@ -697,6 +700,29 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   let ceiling = r.low + TUNE.climb + liftOf(r);
   let v = r.speed;
   let nx = r.x + mx * v * DT, nz = r.z + mz * v * DT;
+  if (r.stuck) {
+    // Free as soon as the way it's aimed, or the way out, is open: it goes
+    // that way (the heading first) and the pool runs out after it.
+    const step = Math.max(TUNE.minSpeed, TUNE.baseSpeed * mass) * DT * 3, d = routeDir();
+    const ways = [{ x: r.dx, z: r.dz }, d].filter(Boolean);
+    const open = ways.find((w) => surfaceAt(world, r.x + w.x * step, r.z + w.z * step, me) <= ceiling);
+    if (open) {
+      r.stuck = false;
+      r.stuckAt = world.tick; r.stuckX = r.x; r.stuckZ = r.z;
+      mx = open.x; mz = open.z;
+      v = r.speed = Math.max(r.speed, TUNE.baseSpeed * mass);
+      nx = r.x + mx * v * DT; nz = r.z + mz * v * DT;
+    } else {
+      // Held: the pool rises and wears the ground round it down.
+      r.low = Math.max(r.low, here) + TUNE.pool * r.size;
+      wearAround(world, r);
+      r.speed = TUNE.minSpeed;
+      if (!r.filling) world.events.push({ type: 'pond', river: r.idx, tick: world.tick });
+      r.filling = true;
+      r.depth = depthOf(r);
+      return;
+    }
+  }
   // On a lake with no bank low enough to climb, the head makes for the lake's
   // lowest exit, its natural spill point or any river's outlet (a rival's too:
   // riding it out cuts into their channel). Nobody is trapped by a lake that
@@ -801,7 +827,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     }
     if (rise > 0) r.low += rise;
   }
-  r.filling = !!r.stuck && !onLake;
+  r.filling = false;
   moveTo(world, r, nx, nz);
   afterMove(world, r);
 }
@@ -1491,6 +1517,30 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
       // Refresh the live-water clock where this river still owns the cell.
       if (world.owner[k] === r.idx && want > TUNE.contactDepth) world.dugAt[k] = world.tick;
     }
+  }
+}
+
+// A stuck river's pool wears the ground round its head down: everything
+// within its width standing above the pool's floor, deepest in the middle,
+// never below the sea. Worn ground is lower for everyone (it's the land, not
+// a channel), so the head can get out.
+function wearAround(world, r) {
+  const t = world.terrain, n = t.size, k0 = cellIndex(t, r.x, r.z), cx = k0 % n, cy = (k0 - cx) / n;
+  const rad = Math.max(1, Math.ceil(widthOf(r) / t.cell)), floor = r.low - TUNE.climb;
+  for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+    const x = cx + dx, y = cy + dy, d2 = dx * dx + dy * dy;
+    if (x < 1 || y < 1 || x >= n - 1 || y >= n - 1 || d2 > rad * rad) continue;
+    const k = y * n + x;
+    if (world.lakeOf[k] >= 0 || t.filled[k] <= SEA_LEVEL) continue;
+    const ground = t.filled[k] + world.rock[k];
+    if (ground <= floor) continue;
+    const wear = Math.min(ground - floor, TUNE.stuckWear * r.size * (1 - d2 / (rad * rad + 1)));
+    const lowest = Math.max(-TUNE.stuckWearMax, SEA_LEVEL + 0.5 - t.filled[k]);
+    const was = world.rock[k], now = Math.max(lowest, was - wear);
+    if (now >= was) continue;
+    world.rock[k] = now;
+    world.treeRock[k] += now - was;
+    world.dirty.push(k);
   }
 }
 
