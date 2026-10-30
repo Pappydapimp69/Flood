@@ -63,7 +63,7 @@ export const TUNE = {
   slopeErode: 0.04, // ...and once more for every this much slope (steep ground cuts canyons)
   trailPasses: 20, // ticks between outlet recuts
   headSpared: 4, // path points nearest the head that pulses don't erode
-  stuckNet: 25, // metres: moved less than this in stallTicks, it's stuck and its water fills the hollow
+  stuckNet: 8, // metres: moved less than this in stallTicks, it's stuck and its water fills the hollow
   massEase: 0.04, // share of the way a river's momentum moves to its new size each tick
   stallTicks: 20, stallMin: 30, stallNet: 0.35, // moved over 30 m in 1 s but under 35% of it net: going nowhere
   routeDrop: 1.5, // metres a head following the fill route must fall before it goes back to its heading // path points nearest the head that don't erode // ticks to sweep a whole trail once (a slice of it each tick)
@@ -111,6 +111,9 @@ export const TUNE = {
   // river grows by what reaches its head.
   pulseEvery: [[3_000_000, 20], [8_000_000, 40], [Infinity, 60]], // [below this volume, ticks]
   pulseSpeed: 3,
+  surge: 1.2, // a pulse reaching the head adds up to this many times base speed...
+  surgeShare: 0.03, // ...the full surge once it brings this share of the river's volume...
+  surgeCap: 1.35, // ...up to this many times its usual top speed
   // Storms: every stormEvery ticks from stormStart, a storm opens over the
   // slope ahead of the pack for stormTicks, raining stormRain litres per tick
   // into every river head (and lake) under it.
@@ -1191,7 +1194,15 @@ function pulses(world) {
       if (s1 < head) { keep.push(p); continue; }
       // At the head: the river swells (or, with its head in a lake, the lake does).
       if (r.inLake >= 0) { world.lakePending[r.inLake] += p.flow + p.amount; world.lakeFlow[r.inLake] += p.flow; }
-      else if (p.amount > 0) grow(r, p.amount);
+      else if (p.amount > 0) {
+        grow(r, p.amount);
+        // The wave hits the head and shoves it on: a surge of speed, bigger
+        // the more water the pulse brings against what the river already
+        // carries, past its usual top speed for a moment; its momentum then
+        // carries it (heavy water slows only slowly).
+        const shove = TUNE.surge * TUNE.baseSpeed * Math.min(1, p.amount / (r.volume * TUNE.surgeShare));
+        r.speed = Math.min(r.speed + shove, TUNE.maxSpeed * (r.mass ?? 1) * TUNE.surgeCap);
+      }
       world.events.push({ type: 'swell', river: r.idx, amount: p.amount, tick: world.tick });
     }
     r.pulses = keep;
