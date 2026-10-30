@@ -1243,7 +1243,11 @@ function pulses(world) {
       p.s = s1;
       if (s1 < head) { keep.push(p); continue; }
       // At the head: the river swells (or, with its head in a lake, the lake does).
-      if (r.inLake >= 0) { world.lakePending[r.inLake] += p.flow + p.amount; world.lakeFlow[r.inLake] += p.flow; }
+      // With its head in a lake below its rim, the pulse fills the lake; a
+      // full lake passes it straight on to the head (what flows into a full
+      // reservoir flows out), so the head still swells and surges.
+      const L = r.inLake;
+      if (L >= 0 && lakeLevel(world, L) < world.lakeBrim[L]) { world.lakePending[L] += p.flow + p.amount; world.lakeFlow[L] += p.flow; }
       else if (p.amount > 0) {
         grow(r, p.amount);
         // The wave hits the head and shoves it on: a surge of speed, bigger
