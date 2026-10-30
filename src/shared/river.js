@@ -119,6 +119,8 @@ export const TUNE = {
   stormTicks: 20 * 16,
   stormRadius: 1300,
   stormRain: 9000,
+  stormDrift: [25, 55], // m/s a storm drifts down the slope...
+  stormWander: 20, // ...and up to this much sideways
   // Contact is a depth tug-of-war: the deeper water siphons the shallower.
   siphonRate: 0.012,
   siphonCap: 0.015,
@@ -946,7 +948,9 @@ function weather(world) {
       const k = cellIndex(t, x, z);
       if (t.filled[k] > SEA_LEVEL && world.lakeOf[k] < 0) break;
     }
-    world.storm = { x, z, until: world.tick + TUNE.stormTicks, radius: TUNE.stormRadius };
+    // It drifts with the wind down the mountain, wandering a little sideways.
+    const along = TUNE.stormDrift[0] + (TUNE.stormDrift[1] - TUNE.stormDrift[0]) * rng(), across = (rng() * 2 - 1) * TUNE.stormWander;
+    world.storm = { x, z, vx: ax * along - az * across, vz: az * along + ax * across, until: world.tick + TUNE.stormTicks, radius: TUNE.stormRadius };
     world.events.push({ type: 'storm', on: true, x, z, radius: TUNE.stormRadius, tick: world.tick });
   }
   const s = world.storm;
@@ -955,6 +959,8 @@ function weather(world) {
       world.storm = null;
       world.events.push({ type: 'storm', on: false, tick: world.tick });
     } else {
+      s.x += s.vx * DT;
+      s.z += s.vz * DT;
       const r2 = s.radius * s.radius;
       for (const r of racing) {
         if ((r.x - s.x) ** 2 + (r.z - s.z) ** 2 > r2) continue;

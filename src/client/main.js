@@ -223,6 +223,13 @@ function updateWeather(time) {
     heatWall.material.opacity = 0.18 + 0.06 * Math.sin(time * 3);
   }
 }
+// The cloud follows the storm as it drifts.
+function followStorm() {
+  const s = world.storm;
+  if (!stormCloud || !s) return;
+  const ground = surfaceAt(world, s.x, s.z) * VERT, y = stormCloud.position.y;
+  stormCloud.position.set(s.x, y + (ground + 2600 - y) * 0.03, s.z); // height eases over the hills
+}
 function showStorm(e) {
   if (!stormCloud) {
     stormCloud = new THREE.Group();
@@ -931,6 +938,7 @@ renderer.setAnimationLoop(() => {
   pulseLava(lava, now / 1000);
   updateSpills(now / 1000);
   updateWeather(now / 1000);
+  followStorm();
   tickWater([sea, lakesMesh, ...entries.map((e) => e.surge)], now / 1000);
   showMarker(now, fx, fy, fz);
   showDownhill(now);
