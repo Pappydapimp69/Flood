@@ -132,7 +132,7 @@ await check('race: rank shows, and a drained player spectates the winner', async
   // Shrink the player and drop a bot on its head: next tick it must be absorbed.
   await page.evaluate(() => {
     const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out && !r.finished);
-    me.volume = 1;
+    me.volume = 1; me.size = 0.01; // (size follows volume when water arrives; set both)
     bot.x = me.x + 5; bot.z = me.z;
     window.__absorber = bot.id;
   });
@@ -297,7 +297,7 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   // Finish the run by force (after the spawn grace), then A on the results card starts a new one.
   const t0 = (await state(page)).tick;
   await until(page, (st) => st.tick > Math.max(t0, 140), 'past spawn grace');
-  await page.evaluate(() => { const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out); me.volume = 1; bot.x = me.x + 5; bot.z = me.z; });
+  await page.evaluate(() => { const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out); me.volume = 1; me.size = 0.01; bot.x = me.x + 5; bot.z = me.z; });
   for (let i = 0; i < 100 && !(await page.evaluate(() => !!document.getElementById('again'))); i++) await page.waitForTimeout(100);
   const before = (await state(page)).tick;
   await tap(0);
