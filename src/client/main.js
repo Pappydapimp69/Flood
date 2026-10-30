@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, spawnBand, heatFront, slopeT, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -267,6 +267,7 @@ let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 function beginRace(seed, raceIds, me, rolled) {
   for (const e of entries) {
     scene.remove(e.ribbon.mesh, e.head, e.streak, e.surge, e.spray, e.line);
+    if (e.pond) { scene.remove(e.pond); e.pond.geometry.dispose(); e.pond.material.dispose(); }
     e.line.geometry.dispose(); e.line.material.dispose();
     e.ribbon.geo.dispose(); e.head.material.dispose(); e.streak.material.dispose();
     e.surge.material.dispose(); e.spray.geometry.dispose(); e.spray.material.dispose();
@@ -905,6 +906,18 @@ renderer.setAnimationLoop(() => {
     }
     updateSpray(e.spray, hx, hy, hz, e.mx, e.mz, 1 + (r.size - 1) * 2, Math.min(1, r.speed / 200), frameDt, flowing && !r.finished);    e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
     e.ribbon.update(world, r, hx, hz, now / 1000);
+    // A stuck river's water pools round its head, rising until it spills.
+    if (r.filling && !r.dropping) {
+      if (!e.pond) {
+        e.pond = new THREE.Mesh(new THREE.CircleGeometry(1, 28).rotateX(-Math.PI / 2), new THREE.MeshLambertMaterial({ color: '#3fb6cf', transparent: true, opacity: 0.85 }));
+        scene.add(e.pond);
+      }
+      const depth = Math.max(0, r.low - surfaceAt(world, r.x, r.z, r.idx));
+      const rad = widthOf(r) * (0.8 + Math.min(2.5, depth / 6));
+      e.pond.visible = true;
+      e.pond.position.set(hx, r.low * VERT + 1, hz);
+      e.pond.scale.set(rad, 1, rad);
+    } else if (e.pond) e.pond.visible = false;
     // Nothing stands in the water: clear trees and boulders along each new stretch.
     while ((e.cleared ?? 0) < r.path.length) {
       const q = r.path[e.cleared ?? 0];

@@ -63,6 +63,8 @@ export const TUNE = {
   slopeErode: 0.04, // ...and once more for every this much slope (steep ground cuts canyons)
   trailPasses: 20, // ticks between outlet recuts
   headSpared: 4, // path points nearest the head that pulses don't erode
+  stuckNet: 25, // metres: moved less than this in stallTicks, it's stuck and its water fills the hollow
+  massEase: 0.04, // share of the way a river's momentum moves to its new size each tick
   stallTicks: 20, stallMin: 30, stallNet: 0.35, // moved over 30 m in 1 s but under 35% of it net: going nowhere
   routeDrop: 1.5, // metres a head following the fill route must fall before it goes back to its heading // path points nearest the head that don't erode // ticks to sweep a whole trail once (a slice of it each tick)
   // Dry basins: a few lakes start empty and must be filled by the rivers that
@@ -627,7 +629,16 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   if (world.tick - r.netAt >= TUNE.stallTicks) {
     const moved = r.travelled - r.netT, net = Math.sqrt((r.x - r.netX) ** 2 + (r.z - r.netZ) ** 2);
     if (r.route === null && moved > TUNE.stallMin && net < moved * TUNE.stallNet) r.route = here;
+    // Barely gone anywhere for a second, however it's steered: it's stuck in
+    // a hollow, and a rushing river can't stop, so its water starts filling
+    // the hollow (below) until it spills out.
+    r.stuck = net < TUNE.stuckNet;
     r.netAt = world.tick; r.netX = r.x; r.netZ = r.z; r.netT = r.travelled;
+  }
+  if (r.stuck && !onLake) {
+    r.low = Math.max(r.low, here) + TUNE.pool * r.size;
+    if (!r.filling) world.events.push({ type: 'pond', river: r.idx, tick: world.tick });
+    r.filling = true;
   }
   const routeDir = () => {
     const n = tt.size, d = wayOut(world, r, cellIndex(tt, r.x, r.z));
@@ -659,7 +670,10 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     const bl = Math.sqrt(bx * bx + bz * bz);
     if (bl > 1e-6) { mx = bx / bl; mz = bz / bl; }
   }
-  const mass = 1 + TUNE.speedPerSize * (r.size - 1);
+  // Momentum takes up new water over a second or two, so a pulse arriving
+  // swells the river's pace instead of jolting it.
+  r.mass = (r.mass ?? 1) + (1 + TUNE.speedPerSize * (r.size - 1) - (r.mass ?? 1)) * TUNE.massEase;
+  const mass = r.mass;
   const along = onLake ? 0 : -(g.x * mx + g.z * mz); // downhill slope along the way the water goes; a lake is level
   // Level water (a lake, a flat) doesn't push or brake: what you carry in
   // carries on, fading slowly, never below the base speed.
@@ -780,7 +794,7 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     }
     if (rise > 0) r.low += rise;
   }
-  r.filling = false;
+  r.filling = !!r.stuck && !onLake;
   moveTo(world, r, nx, nz);
   afterMove(world, r);
 }
