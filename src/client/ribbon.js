@@ -134,11 +134,11 @@ export class Ribbon {
     this.uniforms.uTick.value = world.tick;
     // The whole trail stays live while the river pours; drained, it dries.
     this.uniforms.uLive.value = river.out ? TUNE.liveTicks : 1e9;
-    // The pulses nearest the head (the ones worth seeing), strength by how
-    // much water each carries against the river's size.
+    // The pulses nearest the head (the oldest, furthest down the channel),
+    // strength by how much water each carries against the river's size.
     const ps = river.pulses ?? [], slots = this.uniforms.uPulse.value;
     for (let i = 0; i < 16; i++) {
-      const p = ps[ps.length - 1 - i];
+      const p = ps[i];
       if (!p) { slots[i].set(-1e9, 0); continue; }
       slots[i].set(p.s, 0.35 + Math.min(0.5, (p.amount + p.flow) / (river.volume * 0.02 + 1)));
     }

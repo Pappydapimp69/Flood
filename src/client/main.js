@@ -204,7 +204,7 @@ function heatGap(r) {
 
 // Weather: the heat front as a glowing wall of shimmering air across the
 // island, and a storm as a dark cloud with a curtain of rain under it.
-let heatWall = null, stormCloud = null;
+let heatWall = null;
 function updateWeather(time) {
   const t = world.terrain;
   if (!heatWall) {
@@ -223,27 +223,31 @@ function updateWeather(time) {
     heatWall.material.opacity = 0.18 + 0.06 * Math.sin(time * 3);
   }
 }
-// The cloud follows the storm as it drifts.
+// Storm clouds follow their storms across the island (height easing over the hills).
+const stormClouds = new Map();
 function followStorm() {
-  const s = world.storm;
-  if (!stormCloud || !s) return;
-  const ground = surfaceAt(world, s.x, s.z) * VERT, y = stormCloud.position.y;
-  stormCloud.position.set(s.x, y + (ground + 2600 - y) * 0.03, s.z); // height eases over the hills
-}
-function showStorm(e) {
-  if (!stormCloud) {
-    stormCloud = new THREE.Group();
-    const cloud = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.1, 0.18, 32), new THREE.MeshLambertMaterial({ color: '#3d4652', transparent: true, opacity: 0.85 }));
-    const rain = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.92, 1, 32, 1, true), new THREE.MeshBasicMaterial({ color: '#9fc6e8', transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }));
-    rain.position.y = -0.5;
-    stormCloud.add(cloud, rain);
-    scene.add(stormCloud);
+  for (const s of world.storms) {
+    let c = stormClouds.get(s.id);
+    if (!c) {
+      c = new THREE.Group();
+      const cloud = new THREE.Mesh(new THREE.CylinderGeometry(1, 1.1, 0.18, 32), new THREE.MeshLambertMaterial({ color: '#3d4652', transparent: true, opacity: 0.85 }));
+      const rain = new THREE.Mesh(new THREE.CylinderGeometry(0.92, 0.92, 1, 32, 1, true), new THREE.MeshBasicMaterial({ color: '#9fc6e8', transparent: true, opacity: 0.16, side: THREE.DoubleSide, depthWrite: false }));
+      rain.position.y = -0.5;
+      c.add(cloud, rain);
+      c.scale.set(s.radius, 2600, s.radius);
+      c.position.set(s.x, surfaceAt(world, s.x, s.z) * VERT + 2600, s.z);
+      scene.add(c);
+      stormClouds.set(s.id, c);
+    }
+    const ground = surfaceAt(world, s.x, s.z) * VERT, y = c.position.y;
+    c.position.set(s.x, y + (ground + 2600 - y) * 0.03, s.z);
   }
-  stormCloud.visible = !!e.on;
-  if (!e.on) return;
-  const ground = surfaceAt(world, e.x, e.z) * VERT, top = ground + 2600;
-  stormCloud.position.set(e.x, top, e.z);
-  stormCloud.scale.set(e.radius, 2600, e.radius);
+  for (const [id, c] of stormClouds) {
+    if (world.storms.some((s) => s.id === id)) continue;
+    scene.remove(c);
+    c.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+    stormClouds.delete(id);
+  }
 }
 
 // Lake overflow: one water strip per spill channel, shown while it runs.
@@ -280,7 +284,7 @@ function beginRace(seed, raceIds, me, rolled) {
     e.surge.material.dispose(); e.spray.geometry.dispose(); e.spray.material.dispose();
   }
   for (const sr of spillRibbons.values()) { scene.remove(sr.ribbon.mesh); sr.ribbon.geo.dispose(); }
-  if (stormCloud) stormCloud.visible = false;
+
   spillRibbons.clear();
   useIsland(seed, rolled?.terrain);
   world = rolled?.terrain === terrain ? rolled : createWorld(terrain);
@@ -635,7 +639,6 @@ function advance(inputs) {
       showPop('A heat wave is rolling down the mountain — the lakes behind it are drying up');
       feed('The heat front is coming: lakes behind it dry out');
     } else if (e.type === 'storm') {
-      showStorm(e);
       if (e.on) { feed('A storm breaks over the slope ahead — free water'); if (river && isRacing(river)) showPop('Storm ahead! Get under it to soak up the rain'); }
     } else if (e.type === 'swell') {
       // A pulse reached a head: it swells, more for a bigger slug of water.

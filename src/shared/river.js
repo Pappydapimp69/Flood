@@ -120,16 +120,18 @@ export const TUNE = {
   surgeCap: 1.35, // ...up to this many times its usual top speed
   surgeLift: 1.5, // metres a head running at base speed can carry up a rise (grows with speed squared)...
   surgeLiftMax: 25, // ...up to this
-  // Storms: every stormEvery ticks from stormStart, a storm opens over the
-  // slope ahead of the pack for stormTicks, raining stormRain litres per tick
-  // into every river head (and lake) under it.
+  // Storms: every stormEvery ticks from stormStart, a storm blows in from one
+  // side of the island ahead of the pack and sweeps across to the other,
+  // raining stormRain litres per tick into every river head under it and
+  // filling every lake it passes over.
   stormStart: 600 + 20 * 40,
   stormEvery: 20 * 35,
-  stormTicks: 20 * 16,
   stormRadius: 1300,
   stormRain: 9000,
-  stormDrift: [25, 55], // m/s a storm drifts down the slope...
-  stormWander: 20, // ...and up to this much sideways
+  stormLakeRain: 15, // litres per tick per lake cell for a lake under a storm
+  stormSpan: 9000, // metres either side of the slope's centre line a storm starts and ends
+  stormSpeed: [100, 150], // m/s a storm sweeps across the island...
+  stormDrift: [15, 40], // ...while drifting this fast down the slope
   // Contact is a depth tug-of-war: the deeper water siphons the shallower.
   siphonRate: 0.012,
   siphonCap: 0.015,
@@ -179,7 +181,7 @@ export function createWorld(terrain, { forest = true } = {}) {
     ...lakeLevels(terrain, lakeOf, lakes), // lakeBrim, lakeBed: surface when full, lowest point
     events: [], // for presentation, see step()
     digs: [], // channel digs queued during a tick, applied together at its end
-    storm: null, // { x, z, radius, until } while a storm rains
+    storms: [], // { id, x, z, vx, vz, radius, until }: storms sweeping across the island
     junctions: new Map(), // 'from|to' -> { from, to, until }: a cut channel's water flowing on into the cutter
     carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), dugAt: new Int32Array(n * n), tick: 0, rivers: [], dirty: [],
   };
@@ -805,9 +807,9 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     const d = routeDir();
     if (d) {
       r.route = here;
-      // On a lake it slides along the shore at full speed; on land a blocked
-      // head slows to find its way out.
-      v = onLake ? Math.max(TUNE.baseSpeed * mass, r.speed) : Math.max(TUNE.minSpeed, Math.min(r.speed, TUNE.baseSpeed * mass));
+      // Momentum carries on: blocked, the water swings off along its way out
+      // at the speed it had (on a lake, at least base speed).
+      v = onLake ? Math.max(TUNE.baseSpeed * mass, r.speed) : Math.max(TUNE.minSpeed, r.speed);
       r.speed = v;
       nx = r.x + d.x * v * DT; nz = r.z + d.z * v * DT;
     } else {
@@ -830,6 +832,14 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     if (rise > 0) r.low += rise;
   }
   r.filling = false;
+  // Running up a rise spends momentum (what lets it top the rise, see
+  // liftOf): every metre climbed costs speed, so a long climb slows it
+  // right down, and running down gives it back through the slope.
+  const rise = surfaceAt(world, nx, nz, me) - here;
+  if (rise > 0 && !onLake) {
+    const v2 = r.speed * r.speed - (rise * TUNE.baseSpeed * TUNE.baseSpeed) / TUNE.surgeLift;
+    r.speed = Math.max(TUNE.minSpeed, Math.sqrt(Math.max(0, v2)));
+  }
   moveTo(world, r, nx, nz);
   afterMove(world, r);
 }
@@ -968,39 +978,46 @@ function weather(world) {
       }
     }
   }
-  // Storms.
-  if (!world.storm && world.tick >= TUNE.stormStart && (world.tick - TUNE.stormStart) % TUNE.stormEvery === 0 && racing.length) {
+  // Storms: each one blows in from one side of the island ahead of the pack
+  // and sweeps right across it to the other, drifting down the slope as it
+  // goes, raining into every river head and lake under it.
+  if (world.tick >= TUNE.stormStart && (world.tick - TUNE.stormStart) % TUNE.stormEvery === 0 && racing.length) {
     const rng = stream(world.terrain.seed, `storm:${world.tick}`);
     const ts = racing.map((r) => slopeT(world, r.x, r.z)).sort((a, b) => a - b);
-    const tAt = Math.min(0.97, ts[ts.length >> 1] + 0.07 + 0.1 * rng());
+    const tAt = Math.min(0.95, ts[ts.length >> 1] + 0.05 + 0.12 * rng());
     const t = world.terrain, ax = t.axis.x, az = t.axis.y, half = t.worldSize / 2;
     const u = (tAt * 2 * t.long - t.long) * half;
-    let side = (rng() * 2 - 1) * 4000, x = 0, z = 0;
-    for (let i = 0; i < 6; i++, side *= 0.5) {
-      x = ax * u - az * side; z = az * u + ax * side;
-      const k = cellIndex(t, x, z);
-      if (t.filled[k] > SEA_LEVEL && world.lakeOf[k] < 0) break;
-    }
-    // It drifts with the wind down the mountain, wandering a little sideways.
-    const along = TUNE.stormDrift[0] + (TUNE.stormDrift[1] - TUNE.stormDrift[0]) * rng(), across = (rng() * 2 - 1) * TUNE.stormWander;
-    world.storm = { x, z, vx: ax * along - az * across, vz: az * along + ax * across, until: world.tick + TUNE.stormTicks, radius: TUNE.stormRadius };
-    world.events.push({ type: 'storm', on: true, x, z, radius: TUNE.stormRadius, tick: world.tick });
+    const from = rng() < 0.5 ? -1 : 1, span = TUNE.stormSpan;
+    const x = ax * u - az * span * from, z = az * u + ax * span * from;
+    const across = -from * (TUNE.stormSpeed[0] + (TUNE.stormSpeed[1] - TUNE.stormSpeed[0]) * rng());
+    const along = TUNE.stormDrift[0] + (TUNE.stormDrift[1] - TUNE.stormDrift[0]) * rng();
+    const ticks = Math.ceil(((2 * span) / Math.abs(across)) * TICK_HZ);
+    const s = { id: world.tick, x, z, vx: ax * along - az * across, vz: az * along + ax * across, until: world.tick + ticks, radius: TUNE.stormRadius };
+    world.storms.push(s);
+    world.events.push({ type: 'storm', on: true, id: s.id, x, z, radius: s.radius, tick: world.tick });
   }
-  const s = world.storm;
-  if (s) {
+  const t = world.terrain, n = t.size;
+  for (const s of [...world.storms]) {
     if (world.tick >= s.until) {
-      world.storm = null;
-      world.events.push({ type: 'storm', on: false, tick: world.tick });
-    } else {
-      s.x += s.vx * DT;
-      s.z += s.vz * DT;
-      const r2 = s.radius * s.radius;
-      for (const r of racing) {
-        if ((r.x - s.x) ** 2 + (r.z - s.z) ** 2 > r2) continue;
-        if (r.inLake >= 0) world.lakePending[r.inLake] += TUNE.stormRain;
-        else grow(r, TUNE.stormRain);
-        r.rained = world.tick;
-      }
+      world.storms.splice(world.storms.indexOf(s), 1);
+      world.events.push({ type: 'storm', on: false, id: s.id, tick: world.tick });
+      continue;
+    }
+    s.x += s.vx * DT;
+    s.z += s.vz * DT;
+    const r2 = s.radius * s.radius;
+    for (const r of racing) {
+      if ((r.x - s.x) ** 2 + (r.z - s.z) ** 2 > r2) continue;
+      if (r.inLake >= 0) world.lakePending[r.inLake] += TUNE.stormRain;
+      else grow(r, TUNE.stormRain);
+      r.rained = world.tick;
+    }
+    // Lakes under it fill, more the more of them it covers.
+    for (const l of world.lakes) {
+      const lx = (l.gx / (n - 1) - 0.5) * t.worldSize, lz = (l.gy / (n - 1) - 0.5) * t.worldSize;
+      const reach = s.radius + Math.sqrt(l.cells) * t.cell * 0.5;
+      if ((lx - s.x) ** 2 + (lz - s.z) ** 2 > reach * reach) continue;
+      world.lakePending[l.id] += TUNE.stormLakeRain * Math.min(l.cells, TUNE.lakeCellCap);
     }
   }
 }
