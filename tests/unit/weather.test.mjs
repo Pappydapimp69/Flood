@@ -38,23 +38,26 @@ test('water pouring in still counts against the heat: a fed lake behind the fron
   assert.equal(Math.round(w.lakeVol[lake.id] - v0), TUNE.heatEvery * 2000 - Math.min(v0, TUNE.heatLake));
 });
 
-test('storms open ahead of the pack and rain into rivers under them', () => {
+test('storms sweep across the island ahead of the pack and rain into rivers under them', () => {
   const w = createWorld(t5);
   const r = addRiver(w, 'a');
   w.tick = TUNE.stormStart;
   step(w, new Map());
-  const s = w.storm;
+  const s = w.storms[0];
   assert.ok(s, 'no storm at stormStart');
   assert.ok(slopeT(w, s.x, s.z) > slopeT(w, r.x, r.z), 'storm opened behind the pack');
-  assert.ok(w.terrain.filled[cellIndex(w.terrain, s.x, s.z)] > 0, 'storm over the sea');
-  // Under it, a river gains the rain on top of what it gathers anyway.
-  Object.assign(r, { x: s.x, z: s.z });
+  // It blows in from one side and sweeps across: halfway through its life it's over the island.
+  const mid = { x: s.x + s.vx * ((s.until - w.tick) / 2) / 20, z: s.z + s.vz * ((s.until - w.tick) / 2) / 20 };
+  assert.ok(w.terrain.filled[cellIndex(w.terrain, mid.x, mid.z)] > 0, 'storm never crosses the island');
+  // Under it, a river gains the rain on top of what it gathers anyway (put
+  // the storm over the river, out on the slope, for this).
+  Object.assign(s, { x: r.x, z: r.z });
   const v0 = r.volume;
   step(w, new Map());
   assert.ok(r.volume - v0 >= TUNE.stormRain * 0.99 || r.inLake >= 0, `gained ${r.volume - v0}`);
   // It ends on time.
   while (w.tick < s.until + 1) step(w, new Map());
-  assert.equal(w.storm, null);
+  assert.equal(w.storms.length, 0);
 });
 
 test('weather is deterministic', () => {
@@ -63,7 +66,7 @@ test('weather is deterministic', () => {
     for (let i = 0; i < 4; i++) addRiver(w, `p${i}`);
     w.tick = TUNE.stormStart - 40;
     for (let k = 0; k < 400; k++) step(w, new Map());
-    return riverFingerprint(w) + JSON.stringify(w.storm);
+    return riverFingerprint(w) + JSON.stringify(w.storms);
   };
   assert.equal(run(), run());
 });

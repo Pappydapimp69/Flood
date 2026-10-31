@@ -49,7 +49,7 @@ function duel() {
   for (let k = 0; k < grace; k++) step(w, new Map());
   assert.ok(!w.events.some((e) => e.type === 'siphon'), 'water moved during the spawn grace');
   // Park b exactly on a: same place, heading and speed, so only volume differs.
-  const park = () => Object.assign(b, { x: a.x, z: a.z, dx: a.dx, dz: a.dz, speed: a.speed, low: a.low, guided: a.guided, stall: a.stall, filling: a.filling });
+  const park = () => Object.assign(b, { x: a.x, z: a.z, dx: a.dx, dz: a.dz, speed: a.speed, mass: a.mass, low: a.low, guided: a.guided, stall: a.stall, filling: a.filling });
   return { w, a, b, park };
 }
 

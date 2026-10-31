@@ -11,9 +11,9 @@ export const DT = 1 / TICK_HZ;
 export const TUNE = {
   turnStep: 0.06, // radians per tick at full steer, at starting size
   minSpeed: 18, // m/s, water always creeps
-  baseSpeed: 45, // m/s on level ground at starting size
-  slopeSpeed: 1400, // extra m/s per unit downhill slope
-  maxSpeed: 200,
+  baseSpeed: 55, // m/s on level ground at starting size
+  slopeSpeed: 1800, // extra m/s per unit downhill slope
+  maxSpeed: 240,
   speedEase: 0.12, // share of the way to target speed per tick, at starting size
   climb: 1.5, // metres any head can rise over before it is blocked, before its head height
   headPerSize: 2, // metres the water stands at the head per unit of size: what it can push over
@@ -43,7 +43,7 @@ export const TUNE = {
   // outlet deeper, slower as it deepens. Above its rim a lake spills into an
   // ownerless channel that dries up once the level drops back.
   lakeBase: 120_000, // capacity of any lake, litres...
-  lakePerCell: 9_000, // ...plus this per lake cell...
+  lakePerCell: 25_000, // ...plus this per lake cell...
   lakeCellCap: 400, // ...counting at most this many cells
   lakeStart: 0.95, // every lake starts this full
   discharge: 3000, // litres per tick a river delivers downstream, times size squared
@@ -69,7 +69,9 @@ export const TUNE = {
   stuckWearCells: 3, // ...this many cells out along its heading
   stuckWearMax: 40, // metres the ground can be worn down
   massEase: 0.04, // share of the way a river's momentum moves to its new size each tick
-  stallTicks: 20, stallMin: 30, stallNet: 0.35, // moved over 30 m in 1 s but under 35% of it net: going nowhere
+  stallTicks: 20, stallMin: 30, stallNet: 0.35,
+  routeHold: 10, // ticks a head keeps to the way out once it takes it
+  pairHold: 20, // ticks a pair's water keeps running one way before it may turn round // moved over 30 m in 1 s but under 35% of it net: going nowhere
   routeDrop: 1.5, // metres a head following the fill route must fall before it goes back to its heading // path points nearest the head that don't erode // ticks to sweep a whole trail once (a slice of it each tick)
   // Dry basins: a few lakes start empty and must be filled by the rivers that
   // run into them before anyone can flow across.
@@ -183,6 +185,7 @@ export function createWorld(terrain, { forest = true } = {}) {
     events: [], // for presentation, see step()
     digs: [], // channel digs queued during a tick, applied together at its end
     storms: [], // { id, x, z, vx, vz, radius, until }: storms sweeping across the island
+    pairs: new Map(), // 'id|id' -> { win, tick }: which way water last ran between a pair
     junctions: new Map(), // 'from|to' -> { from, to, until }: a cut channel's water flowing on into the cutter
     carve: new Float32Array(n * n), owner: new Int32Array(n * n).fill(-1), dugAt: new Int32Array(n * n), tick: 0, rivers: [], dirty: [],
   };
@@ -435,6 +438,7 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     feeds: new Map(), // path index -> litres waiting to leave there with the next pulse
     pulseAt: 0, // tick the next pulse leaves
     exit: -1, // cell of the lake exit a blocked head on a lake is making for, or -1
+    routeAt: -1e9,
     route: null, // level where the head was blocked: it's following the fill route out until it runs lower
     netAt: 0, netX: 0, netZ: 0, netT: 0, // where it was a moment ago, to tell going nowhere from flowing
     travelled: 0,
@@ -637,13 +641,19 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   // uphill would climb, block and fall back forever.
   if (r.route !== null) {
     const aimUp = gl > 1e-6 ? (g.x * r.dx + g.z * r.dz) / gl : 0; // > 0: heading points uphill
-    if (steer || (here < r.route - TUNE.routeDrop && aimUp < 0.2)) r.route = null;
+    // (Held at least routeHold ticks once taken: re-choosing every tick
+    // between the route and the heading only rocks the head back and forth.)
+    if (world.tick - r.routeAt >= TUNE.routeHold && (steer || (here < r.route - TUNE.routeDrop && aimUp < 0.2))) r.route = null;
   }
   // Going nowhere (moving, but back and forth, as across a valley floor when
   // aimed up it): take the fill route out too.
   if (world.tick - r.netAt >= TUNE.stallTicks) {
     const moved = r.travelled - r.netT, net = Math.sqrt((r.x - r.netX) ** 2 + (r.z - r.netZ) ** 2);
-    if (r.route === null && moved > TUNE.stallMin && net < moved * TUNE.stallNet) r.route = here;
+    if (r.route === null && moved > TUNE.stallMin && net < moved * TUNE.stallNet) {
+      // On a lake, going nowhere means making for its lowest exit (the fill
+      // route there only creeps along the shore); on land, the fill route.
+      if (onLake) { if (r.exit < 0) setExit(world, r, world.lakeOf[cHere]); } else { r.route = here; r.routeAt = world.tick; }
+    }
     r.netAt = world.tick; r.netX = r.x; r.netZ = r.z; r.netT = r.travelled;
   }
   // Barely gone anywhere in a moment, however it's steered: it's stuck. A
@@ -804,10 +814,17 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
       nx = r.x + mx * v * DT; nz = r.z + mz * v * DT;
     }
   }
+  if (r.route === null && onLake && surfaceAt(world, nx, nz, me) > ceiling) {
+    // Blocked on a lake (a bank it couldn't cut, or one it topped with speed
+    // and lost it climbing): the lake's current carries it to the lowest exit
+    // rather than the fill route creeping along the shore.
+    setExit(world, r, world.lakeOf[cHere]);
+    if (r.exit >= 0) { r.depth = depthOf(r); return; }
+  }
   if (r.route === null && surfaceAt(world, nx, nz, me) > ceiling) {
     const d = routeDir();
     if (d) {
-      r.route = here;
+      { r.route = here; r.routeAt = world.tick; }
       // Momentum carries on: blocked, the water swings off along its way out
       // at the speed it had (on a lake, at least base speed).
       v = onLake ? Math.max(TUNE.baseSpeed * mass, r.speed) : Math.max(TUNE.minSpeed, r.speed);
@@ -900,10 +917,13 @@ function resolveContacts(world) {
   for (const [a, da, b, db, k] of cuts) {
     const [win, dw, lose, dl] = da >= db ? [a, da, b, db] : [b, db, a, da];
     if ((dw - dl) / Math.max(dl, 0.5) < TUNE.siphonDeadband) continue;
-    const jk = `${lose.id}|${win.id}`;
-    world.junctions.delete(`${win.id}|${lose.id}`); // the deeper side flipped: water runs one way only
+    const jk = `${lose.id}|${win.id}`, rev = world.junctions.get(`${win.id}|${lose.id}`);
+    // The deeper side flipped: water runs one way only, but a cut made moments
+    // ago holds for pairHold ticks first (hysteresis, so it can't flicker).
+    if (rev && world.tick - rev.made < TUNE.pairHold) continue;
+    world.junctions.delete(`${win.id}|${lose.id}`);
     if (!world.junctions.has(jk)) world.events.push({ type: 'junction', from: lose.idx, to: win.idx, tick: world.tick });
-    world.junctions.set(jk, { from: lose, to: win, until: world.tick + TUNE.liveTicks, share: dw / (dw + dl), s: nearestS(world, lose, k), at: nearestIndex(world, win, k) });
+    world.junctions.set(jk, { from: lose, to: win, made: world.junctions.get(jk)?.made ?? world.tick, until: world.tick + TUNE.liveTicks, share: dw / (dw + dl), s: nearestS(world, lose, k), at: nearestIndex(world, win, k) });
   }
   for (const jk of [...world.junctions.keys()].sort()) {
     const j = world.junctions.get(jk);
@@ -925,7 +945,16 @@ function resolveContacts(world) {
     const n = net.get(key);
     if (n.amount === 0) continue;
     const [win, lose] = n.amount > 0 ? [n.p, n.q] : [n.q, n.p];
-    const amount = Math.abs(n.amount);
+    // Hysteresis: a pair whose water ran the other way moments ago doesn't
+    // flip on a hair's change in depth; it holds until the new way has led
+    // for pairHold ticks.
+    const held = world.pairs.get(key);
+    if (held && held.win !== win && world.tick - held.tick < TUNE.pairHold) continue;
+    if (!held || held.win !== win) world.pairs.set(key, { win, tick: world.tick });
+    // Capped at half the gap between them, so one tick's transfer never
+    // overshoots and turns the contest round by itself.
+    const gap = (win.depth - lose.depth) / Math.max(win.depth, 0.5);
+    const amount = Math.min(Math.abs(n.amount), Math.max(0, gap) * 0.5 * lose.volume);
     flows.push({ win, lose, amount, how: n.how });
     lost.set(lose, (lost.get(lose) ?? 0) + amount);
   }
@@ -1235,6 +1264,10 @@ function pulses(world) {
       // A rival's cut on the way takes its share.
       for (const j of cuts) {
         if (j.s <= s0 || j.s > s1 || p.amount <= 0) continue;
+        // Not against the way water is running between the pair right now.
+        const pk = byId(r, j.to) < 0 ? `${r.id}|${j.to.id}` : `${j.to.id}|${r.id}`, held = world.pairs.get(pk);
+        if (held && held.win !== j.to && world.tick - held.tick < TUNE.pairHold * 3) continue;
+        if (!held || held.win !== j.to) world.pairs.set(pk, { win: j.to, tick: world.tick });
         const take = p.amount * j.share;
         p.amount -= take;
         feed(j.to, j.at, take);

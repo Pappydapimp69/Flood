@@ -96,9 +96,10 @@ export function botSteer(world, bot) {
       const k = cellIndex(t, p.x, p.z);
       const lake = world.lakeOf[k];
       if (lake >= 0 && !r.via.has(lake)) {
-        // A lake you haven't joined pays at once and keeps paying, more the
-        // fuller it is (nobody waits in a basin; it just pays little).
-        score += ((0.6 + bot.skill) * w * Math.min(1, world.lakeVol[lake] / world.lakeCap[lake])) / path.length * 3;
+        // A full lake pays (its stored water drains out to you through your
+        // outlet); a low one costs, since your water goes into filling it first.
+        const full = world.lakeVol[lake] / world.lakeCap[lake];
+        score += ((0.6 + bot.skill) * w * Math.max(-1, Math.min(1, (full - 0.85) * 6))) / path.length * 3;
       }
       if (world.lava[k]) score -= (3 * w) / path.length * 3; // lava boils water off
       const o = world.owner[k];

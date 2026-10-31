@@ -38,14 +38,15 @@ test('water never climbs: the head stays within its climb and head height of the
   const w = createWorld(islands.get(2));
   const r = addRiver(w, 'p1');
   for (let t = 0; t < TICK_HZ * 120 && !r.finished; t++) {
-    const low = r.low;
+    // At most its height plus the most its speed can ever carry it up.
+    const low = r.low, lift = headOf(r) + TUNE.surgeLiftMax;
     step(w, new Map([['p1', (t >> 6) & 1 ? 1 : -1]]));
     // On a lake (or carried along its water to the exit) it floats on the
     // water, wherever its level stands.
     if (w.lakeOf[cellIndex(w.terrain, r.x, r.z)] >= 0 || r.exit >= 0) continue;
     const h = surfaceAt(w, r.x, r.z, r.idx);
     // r.low only rises as a hollow fills or a lake rises under the head.
-    assert.ok(h <= Math.max(low, r.low) + TUNE.climb + headOf(r) + 0.5, `climbed to ${(h - r.low).toFixed(1)} m above its water`);
+    assert.ok(h <= Math.max(low, r.low) + TUNE.climb + lift + 0.5, `climbed to ${(h - r.low).toFixed(1)} m above its water`);
   }
 });
 
@@ -166,7 +167,8 @@ test('more water stands taller: a big river pushes over rises a small one is tur
   const climb = (size) => {
     const w = createWorld(islands.get(2));
     const r = addRiver(w, 'a', at);
-    r.volume = TUNE.startVolume * size ** 3; r.size = size;
+    r.volume = TUNE.startVolume * size ** 3; r.size = size; r.mass = 1 + TUNE.speedPerSize * (size - 1);
+    r.speed = 120; // both arrive at the rise at the same speed: only the water standing at the head differs
     r.dx = -fall.x; r.dz = -fall.z; // straight back up the slope it came down
     const h0 = surfaceAt(w, r.x, r.z, r.idx);
     let top = h0;

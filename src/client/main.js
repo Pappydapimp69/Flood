@@ -196,6 +196,14 @@ const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
 // A race: the world plus what draws it. `river` is null when spectating.
 let trees, rocks, lava; // scenery for the current race
 let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, endShown, mode, raceOver, finalShown;
+// The end of the race: once the first river reaches the sea, the rest have
+// FINISH_WINDOW to follow it; whole seconds left (null before that).
+const firstFinish = () => Math.min(...world.rivers.filter((r) => r.finished).map((r) => r.finishTick));
+function finishLeft() {
+  const f = firstFinish();
+  return Number.isFinite(f) ? Math.max(0, Math.ceil((FINISH_WINDOW - (world.tick - f)) / TICK_HZ)) : null;
+}
+
 // Metres between a river and the heat front behind it (Infinity before it starts).
 function heatGap(r) {
   const f = heatFront(world), t = world.terrain;
@@ -434,6 +442,35 @@ function placeTags() {
   });
 }
 
+// Lake markers: the lakes ahead, seen through the trees, with how full each
+// is and whether it already feeds you. (Bots read the same lakes.)
+const lakeTagPool = [];
+function placeLakeTags() {
+  const t = world.terrain, n = t.size, me = river;
+  const near = mapView || !me || me.dropping ? [] : world.lakes
+    .map((l) => ({ l, x: (l.gx / (n - 1) - 0.5) * t.worldSize, z: (l.gy / (n - 1) - 0.5) * t.worldSize }))
+    .map((o) => ({ ...o, d: Math.hypot(o.x - me.x, o.z - me.z) }))
+    .filter((o) => o.d < 4500 && o.d > 200 && (o.x - me.x) * me.dx + (o.z - me.z) * me.dz > 0)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 5);
+  while (lakeTagPool.length < near.length) {
+    const el = document.createElement('div');
+    tagBox.append(el);
+    lakeTagPool.push(el);
+  }
+  lakeTagPool.forEach((el, i) => {
+    const o = near[i];
+    if (!o) { el.hidden = true; return; }
+    tmpV.set(o.x, surfaceAt(world, o.x, o.z) * VERT + 60, o.z).project(camera);
+    if (tmpV.z > 1) { el.hidden = true; return; }
+    const full = world.lakeVol[o.l.id] / world.lakeCap[o.l.id], mine = me.via.has(o.l.id);
+    el.hidden = false;
+    el.className = `lake${full < 0.5 ? ' dry' : ''}${mine ? ' mine' : ''}`;
+    el.textContent = `${mine ? 'your lake' : 'lake'} ${Math.round(full * 100)}% · ${(o.d / 1000).toFixed(1)} km`;
+    el.style.transform = `translate(${((tmpV.x + 1) / 2) * innerWidth}px, ${((1 - tmpV.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
+  });
+}
+
 const nameOf = (r) => (r === river ? 'You' : names[r.id] ?? r.id);
 function feed(text) {
   const li = document.createElement('div');
@@ -547,7 +584,7 @@ function onlineTick() {
   }
 }
 
-// Same rule as the server: everyone stops once nobody is racing, or 90 s
+// Same rule as the server: everyone stops once nobody is racing, or 60 s
 // after the first river reaches the sea.
 function raceIsOver(w) {
   if (!w.rivers.some(isRacing)) return true;
@@ -971,6 +1008,7 @@ renderer.setAnimationLoop(() => {
   }
 
   placeTags();
+  placeLakeTags();
   pulseLava(lava, now / 1000);
   updateSpills(now / 1000);
   updateWeather(now / 1000);
@@ -1076,6 +1114,7 @@ renderer.setAnimationLoop(() => {
   hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · drag far to dive faster · land on the glowing ring' : '← → steer · ↑ ↓ speed (or drag) · land on the glowing ring')
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
+    : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`
     : me.inLake >= 0 && heatGap(me) < 0 ? 'the heat front is drying this lake'
     : `pouring ${fmtL(dischargeOf(me) * TICK_HZ + me.inflow * TICK_HZ)}/s · head ${headOf(me).toFixed(1)} m · cutting ${me.depth.toFixed(1)} m` + (fedBy ? ` · fed by ${fedBy}` : '');
   watchCaptions(now, place);
