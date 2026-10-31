@@ -81,8 +81,16 @@ export const TUNE = {
   // The drop: every river falls for 30 s from high above the island, steering
   // (turn, and faster or slower) to choose where it lands. It lands on the
   // nearest cell of the start contour: every start is at the same elevation.
-  dropTicks: 600,
+  dropTicks: 400, // a fall at the steady rate lasts this long (20 s)...
   dropAlt: 6000, // metres above the ground at the start
+  diveRate: 0.7, // ...diving falls up to this much faster (about 12 s)...
+  floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
+  // Rain clouds hang in the sky over the summits: fall through one and its
+  // water is yours, a bigger start; each can only be taken once.
+  skyClouds: 14,
+  cloudRadius: 500, // metres across the sky...
+  cloudDepth: 400, // ...and this far above or below its height
+  cloudWater: [150_000, 450_000],
   glideSpeed: 140, // m/s sideways while falling (x0.5 slowed, x1.5 hurried)
   settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
   zoneSlack: 300, // metres a falling drop may stray from the landing ring
@@ -476,6 +484,16 @@ function glide(world, r, steer, fwd) {
   const p = keepInZone(world, r.x + r.dx * v * DT, r.z + r.dz * v * DT);
   r.x = p.x;
   r.z = p.z;
+  // Dive to land sooner (a head start), or float to stay up for the clouds.
+  const rate = (TUNE.dropAlt / TUNE.dropTicks) * (fwd > 0 ? 1 + TUNE.diveRate * fwd : 1 + TUNE.floatRate * fwd);
+  r.alt = Math.max(0, r.alt - rate);
+  r.dropping = r.alt > 0 ? Math.max(1, Math.ceil(r.alt / rate)) : 1; // ticks left at the rate it's falling now
+  for (const c of skyClouds(world)) {
+    if (c.taken >= 0 || (c.x - r.x) ** 2 + (c.z - r.z) ** 2 > TUNE.cloudRadius ** 2 || Math.abs(c.alt - r.alt) > TUNE.cloudDepth) continue;
+    c.taken = r.idx;
+    grow(r, c.water);
+    world.events.push({ type: 'cloud', river: r.idx, amount: c.water, cloud: c.id, tick: world.tick });
+  }
   // The last seconds ease the drop onto the fair spot it will touch down on.
   if (r.dropping <= TUNE.settleTicks) {
     const t = world.terrain, n = t.size, k = landingSpot(world, r);
@@ -483,9 +501,26 @@ function glide(world, r, steer, fwd) {
     r.x += (kx - r.x) / r.dropping;
     r.z += (kz - r.z) / r.dropping;
   }
-  r.dropping--;
-  r.alt = (TUNE.dropAlt * r.dropping) / TUNE.dropTicks;
-  if (r.dropping <= 0) land(world, r);
+  if (r.alt <= 0) land(world, r);
+}
+
+// The rain clouds over the summits, seeded so every machine has the same sky:
+// near the start rings, at heights a fall passes through.
+export function skyClouds(world) {
+  if (world.clouds) return world.clouds;
+  const t = world.terrain, n = t.size, rng = stream(t.seed, 'sky-clouds'), ring = spawnBand(world).ring;
+  world.clouds = Array.from({ length: TUNE.skyClouds }, (_, id) => {
+    const k = ring[Math.floor(rng() * ring.length)], d = 600 + rng() * 2600, a = rng() * 2 - 1, b = rng() * 2 - 1, l = Math.sqrt(a * a + b * b) || 1;
+    return {
+      id,
+      x: ((k % n) / (n - 1) - 0.5) * t.worldSize + (a / l) * d,
+      z: (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize + (b / l) * d,
+      alt: 900 + rng() * (TUNE.dropAlt - 1800),
+      water: TUNE.cloudWater[0] + rng() * (TUNE.cloudWater[1] - TUNE.cloudWater[0]),
+      taken: -1,
+    };
+  });
+  return world.clouds;
 }
 
 // A falling drop stays over the landing ring: never more than zoneSlack from

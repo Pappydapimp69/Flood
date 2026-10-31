@@ -156,31 +156,47 @@ test('bots reach the sea faster than rivers that never steer, from the same star
   assert.ok(wins >= runs * 0.65 && botT < passiveT, `bots faster in ${wins}/${runs}, mean ${(botT / runs) | 0} s vs ${(passiveT / runs) | 0} s`);
 });
 
-test('drop: 30 s of fall, steerable anywhere, touchdown on the start contour with grace from then', async () => {
+test('drop: diving lands sooner and floating later, steerable anywhere, touchdown on the start contour with grace from then', async () => {
   const { dropZone, landingCell } = await import('../../src/shared/river.js');
   const w = createWorld(rolled(2));
   for (const id of ['a', 'b', 'c']) addRiver(w, id, undefined, { drop: true });
-  const zone = dropZone(w);
-  const start = w.rivers.map((r) => ({ x: r.x, z: r.z }));
-  for (let k = 0; k < TUNE.dropTicks; k++) {
+  const zone = dropZone(w), landed = {}, at = {};
+  for (let k = 0; k < TUNE.dropTicks * 2 && w.rivers.some((r) => r.dropping); k++) {
     step(w, new Map([['a', { s: k < 16 ? -1 : 0, f: 1 }], ['b', { s: 1, f: -1 }]]));
+    for (const e of w.events.splice(0)) if (e.type === 'land') { const r = w.rivers[e.river]; landed[r.id] = e.tick; at[r.id] = { x: r.x, z: r.z, born: r.born }; }
     for (const r of w.rivers) assert.equal(r.path.length > 0, r.dropping === 0, 'a channel before landing');
   }
-  assert.equal(TUNE.dropTicks, 600);
+  // a dived (about 12 s), c fell steadily (20 s), b floated (about 31 s).
+  assert.ok(landed.a < landed.c && landed.c < landed.b, `landed at ${JSON.stringify(landed)}`);
+  assert.ok(Math.abs(landed.c - TUNE.dropTicks) <= 2, `steady fall took ${landed.c} ticks`);
   const n = w.terrain.size;
   for (const r of w.rivers) {
     assert.equal(r.dropping, 0);
-    assert.equal(r.born, TUNE.dropTicks - 1, 'grace should count from touchdown');
-    const k = Math.round((r.z / w.terrain.worldSize + 0.5) * (n - 1)) * n + Math.round((r.x / w.terrain.worldSize + 0.5) * (n - 1));
+    const p = at[r.id];
+    assert.equal(p.born, landed[r.id], 'grace should count from touchdown');
+    const k = Math.round((p.z / w.terrain.worldSize + 0.5) * (n - 1)) * n + Math.round((p.x / w.terrain.worldSize + 0.5) * (n - 1));
     assert.ok(zone.has(k), `${r.id} landed off the start contour`);
   }
   // Steering moved the landing: the same drop with no input lands elsewhere.
   const w0 = createWorld(w.terrain);
   for (const id of ['a', 'b', 'c']) addRiver(w0, id, undefined, { drop: true });
-  for (let k = 0; k < TUNE.dropTicks; k++) step(w0, new Map());
-  assert.ok(Math.hypot(w.rivers[0].x - w0.rivers[0].x, w.rivers[0].z - w0.rivers[0].z) > 500, `steering moved the landing only ${Math.hypot(w.rivers[0].x - w0.rivers[0].x, w.rivers[0].z - w0.rivers[0].z) | 0} m`);
+  for (let k = 0; k < TUNE.dropTicks * 2 && w0.rivers.some((r) => r.dropping); k++) step(w0, new Map());
+  const land0 = w0.rivers[0].path[0];
+  assert.ok(Math.hypot(at.a.x - land0.x, at.a.z - land0.z) > 500, `steering moved the landing only ${Math.hypot(at.a.x - land0.x, at.a.z - land0.z) | 0} m`);
   assert.equal(landingCell(w, w.rivers[2].x, w.rivers[2].z) >= 0, true);
-  assert.equal(w.events.filter((e) => e.type === 'land').length, 3);
+});
+
+test('drop: a rain cloud flown through is yours, once', async () => {
+  const { skyClouds } = await import('../../src/shared/river.js');
+  const w = createWorld(rolled(2));
+  const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
+  const c = skyClouds(w)[0];
+  for (const r of [a, b]) Object.assign(r, { x: c.x, z: c.z, alt: c.alt + 5 });
+  const v0 = a.volume;
+  step(w, new Map());
+  assert.equal(c.taken, a.idx, 'the first river through did not take the cloud');
+  assert.ok(Math.abs(a.volume - v0 - c.water) < 1, 'the cloud\'s water did not reach it');
+  assert.equal(b.volume, v0, 'a second river took the same cloud');
 });
 
 test('drop: every drop stays over the landing ring and touches down where it is', async () => {
@@ -193,13 +209,15 @@ test('drop: every drop stays over the landing ring and touches down where it is'
   const ring = new Set(spawnBand(w).ring);
   const offRing = (r) => { const c = landingCell(w, r.x, r.z, ring); return Math.hypot(r.x - ((c % n) / (n - 1) - 0.5) * W, r.z - (Math.floor(c / n) / (n - 1) - 0.5) * W); };
   let worst = 0;
-  for (let k = 0; k < TUNE.dropTicks; k++) {
+  for (let k = 0; k < TUNE.dropTicks * 2 && w.rivers.some((r) => r.dropping); k++) {
     const before = w.rivers.map((r) => ({ x: r.x, z: r.z, dropping: r.dropping }));
     step(w, new Map(bots.map((b, i) => [b.river.id, i % 3 ? botSteer(w, b) : { s: 1, f: 1 }])));
     w.rivers.forEach((r, i) => {
       if (!before[i].dropping) return;
-      if (r.dropping) assert.ok(offRing(r) <= TUNE.zoneSlack + w.terrain.cell, `${r.id} strayed ${offRing(r)} m off the ring`);
-      else worst = Math.max(worst, Math.hypot(r.x - before[i].x, r.z - before[i].z));
+      // (In the last seconds it eases straight onto its claimed spot, which can
+      // cut across the ring's curve; before that it never leaves the zone.)
+      if (r.dropping > TUNE.settleTicks) assert.ok(offRing(r) <= TUNE.zoneSlack + w.terrain.cell, `${r.id} strayed ${offRing(r)} m off the ring`);
+      else if (!r.dropping) worst = Math.max(worst, Math.hypot(r.x - before[i].x, r.z - before[i].z));
     });
   }
   assert.ok(w.rivers.every((r) => !r.dropping));

@@ -4,7 +4,7 @@
 // randomness comes from its own id-keyed stream.
 
 import { stream } from './rng.js';
-import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, TUNE } from './river.js';
+import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, DT, TUNE } from './river.js';
 
 const OFFSETS = [-1.6, -0.7, -0.35, 0, 0.35, 0.7, 1.6]; // sideways share added to heading; + = left
 export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10 };
@@ -132,6 +132,17 @@ export function botSteer(world, bot) {
 // Falling: drift away from the nearest other drop, so bots land spread out.
 function botGlide(world, bot) {
   const r = bot.river;
+  // A rain cloud it can still reach on the way down: steer for it.
+  let cloud = null, cd = Infinity;
+  for (const c of skyClouds(world)) {
+    if (c.taken >= 0 || c.alt > r.alt) continue;
+    const d = Math.sqrt((c.x - r.x) ** 2 + (c.z - r.z) ** 2), reach = ((r.alt - c.alt) / (TUNE.dropAlt / TUNE.dropTicks)) * TUNE.glideSpeed * DT;
+    if (d < reach * 0.9 && d < cd) { cd = d; cloud = c; }
+  }
+  if (cloud) {
+    const cross = r.dx * (cloud.z - r.z) - r.dz * (cloud.x - r.x);
+    return Math.abs(cross) < cd * 0.1 ? 0 : cross < 0 ? -1 : 1;
+  }
   let near = null, best = Infinity;
   for (const o of world.rivers) {
     if (o === r || !isRacing(o)) continue;

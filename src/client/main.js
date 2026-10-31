@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -231,6 +231,32 @@ function updateWeather(time) {
     heatWall.material.opacity = 0.18 + 0.06 * Math.sin(time * 3);
   }
 }
+// Rain clouds in the sky during the drop: puffs of white, gone once taken.
+let skyMeshes = null, skyWorld = null;
+function updateSkyClouds() {
+  if (skyWorld !== world) {
+    if (skyMeshes) for (const m of skyMeshes) { scene.remove(m); m.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); }); }
+    skyWorld = world;
+    const mat = new THREE.MeshLambertMaterial({ color: '#f4f8ff', transparent: true, opacity: 0.92 });
+    skyMeshes = skyClouds(world).map((c, i) => {
+      const g = new THREE.Group();
+      for (let j = 0; j < 5; j++) {
+        const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), mat);
+        const a = (j / 5) * Math.PI * 2 + i;
+        puff.position.set(Math.cos(a) * 0.45, (j % 2) * 0.25, Math.sin(a) * 0.45);
+        puff.scale.setScalar(0.55 + 0.1 * (j % 3));
+        g.add(puff);
+      }
+      g.scale.set(TUNE.cloudRadius, TUNE.cloudDepth, TUNE.cloudRadius);
+      g.position.set(c.x, surfaceAt(world, c.x, c.z) * VERT + c.alt, c.z);
+      scene.add(g);
+      return g;
+    });
+  }
+  const falling = world.rivers.some((r) => r.dropping);
+  skyClouds(world).forEach((c, i) => { skyMeshes[i].visible = falling && c.taken < 0 && !mapView; });
+}
+
 // Storm clouds follow their storms across the island (height easing over the hills).
 const stormClouds = new Map();
 function followStorm() {
@@ -675,6 +701,8 @@ function advance(inputs) {
       if (e.to === river.idx) { tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount); audio.bubble(); }
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
+    } else if (e.type === 'cloud') {
+      if (river && e.river === river.idx) { showPop(`+${fmtL(e.amount)} from a rain cloud`); audio.splash(0.8); }
     } else if (e.type === 'heat') {
       showPop('A heat wave is rolling down the mountain — the lakes behind it are drying up');
       feed('The heat front is coming: lakes behind it dry out');
@@ -1021,6 +1049,7 @@ renderer.setAnimationLoop(() => {
   pulseLava(lava, now / 1000);
   updateSpills(now / 1000);
   updateWeather(now / 1000);
+  updateSkyClouds();
   followStorm();
   tickWater([sea, lakesMesh, ...entries.map((e) => e.surge)], now / 1000);
   showMarker(now, fx, fy, fz);
@@ -1120,7 +1149,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · drag far to dive faster · land on the glowing ring' : '← → steer · ↑ ↓ speed (or drag) · land on the glowing ring')
+  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · drag far to dive: land sooner · fly through clouds for water' : '← → steer · ↑ dive to land sooner · ↓ float to catch clouds · fly through a cloud for water')
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`
