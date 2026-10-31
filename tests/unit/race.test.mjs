@@ -131,22 +131,29 @@ test('standings are complete and ordered: finishers, then racers, then the drain
 
 // Doing nothing should not win: water flows downhill on its own, but steering
 // well (as the bots do) should place clearly better on average.
-test('bots place better than rivers that never steer', () => {
-  // Races as the game runs them: rerolled islands, everyone dropping in.
-  let bot = 0, botN = 0, passive = 0, passiveN = 0;
-  for (const seed of [11, 222, 3333, 44444]) {
-    const { world: w } = rollIsland(seed, ids.length);
-    const bots = new Map();
-    for (const id of ids) {
-      const r = addRiver(w, id, undefined, { drop: true });
-      if (!PASSIVE.has(id)) bots.set(id, createBot(w, r));
+// Bot skill, measured cleanly: each river alone on the map from the same
+// start, bot-steered or never steered, so other rivers' fights and where the
+// drops land can't decide it (in a full race those swamp a 12-river average).
+test('bots reach the sea faster than rivers that never steer, from the same start', async () => {
+  const { spawnBand } = await import('../../src/shared/river.js');
+  let wins = 0, runs = 0, botT = 0, passiveT = 0;
+  for (const seed of [11, 222, 3333]) {
+    const { world: base } = rollIsland(seed, ids.length);
+    const cells = spawnBand(base).cells, N = base.terrain.size, W = base.terrain.worldSize;
+    for (let s = 0; s < 4; s++) {
+      const c = cells[Math.floor(((s + 0.5) * cells.length) / 4)];
+      const at = { x: ((c % N) / (N - 1) - 0.5) * W, z: (Math.floor(c / N) / (N - 1) - 0.5) * W };
+      const time = (steered) => {
+        const w = createWorld(base.terrain), r = addRiver(w, 'a', at), b = createBot(w, r, 0.9);
+        for (let k = 0; k < TICK_HZ * 400 && !r.finished; k++) step(w, new Map([['a', steered ? botSteer(w, b) : 0]]));
+        return r.finished ? r.finishTick / TICK_HZ : 400;
+      };
+      const tb = time(true), tp = time(false);
+      runs++; botT += tb; passiveT += tp;
+      if (tb < tp) wins++;
     }
-    for (let k = 0; k < TICK_HZ * 330 && w.rivers.some(isRacing); k++) step(w, new Map([...bots].map(([id, b]) => [id, botSteer(w, b)])));
-    standings(w).forEach((r, i) => {
-      if (PASSIVE.has(r.id)) { passive += i; passiveN++; } else { bot += i; botN++; }
-    });
   }
-  assert.ok(bot / botN < passive / passiveN - 0.5, `bots avg place ${(bot / botN).toFixed(2)} vs passive ${(passive / passiveN).toFixed(2)}`);
+  assert.ok(wins >= runs * 0.65 && botT < passiveT, `bots faster in ${wins}/${runs}, mean ${(botT / runs) | 0} s vs ${(passiveT / runs) | 0} s`);
 });
 
 test('drop: 30 s of fall, steerable anywhere, touchdown on the start contour with grace from then', async () => {

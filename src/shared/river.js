@@ -447,6 +447,7 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     out: null, // { by, tick } once drained below the floor by a rival
     born: world.tick,
     dropping: opts.drop ? TUNE.dropTicks : 0, // ticks of fall left
+    claim: -1, // the start cell a falling drop will touch down on, once chosen
     alt: opts.drop ? TUNE.dropAlt : 0, // metres above the ground while falling
     path: [],
   };
@@ -455,9 +456,9 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     pushPathPoint(world, river);
     applyDigs(world);
   } else {
-    // Start the fall heading toward the island's middle.
-    const cl = Math.sqrt(at.x * at.x + at.z * at.z) || 1;
-    river.dx = -at.x / cl; river.dz = -at.z / cl;
+    // Start the fall heading down the slope: drops that don't steer fall
+    // side by side and keep apart, instead of all closing on one spot.
+    river.dx = world.terrain.axis.x; river.dz = world.terrain.axis.y;
   }
   return river;
 }
@@ -476,7 +477,7 @@ function glide(world, r, steer, fwd) {
   r.z = p.z;
   // The last seconds ease the drop onto the fair spot it will touch down on.
   if (r.dropping <= TUNE.settleTicks) {
-    const t = world.terrain, n = t.size, k = landingCell(world, r.x, r.z);
+    const t = world.terrain, n = t.size, k = landingSpot(world, r);
     const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
     r.x += (kx - r.x) / r.dropping;
     r.z += (kz - r.z) / r.dropping;
@@ -532,9 +533,30 @@ export function landingCell(world, x, z, zone = dropZone(world)) {
 }
 
 // Touchdown on the start contour: the river starts here, its grace from now.
+// Where a drop will touch down: the nearest fair start cell to where it is
+// that no other river has taken (none landed or about to land within
+// spawnGap), claimed as the last seconds of the fall begin and kept, so two
+// drops never land on one spot and start the race already fighting. In the
+// order rivers move (sorted ids), so every machine agrees.
+function landingSpot(world, r) {
+  if (r.claim >= 0) return r.claim;
+  const t = world.terrain, n = t.size, gap2 = TUNE.spawnGap * TUNE.spawnGap;
+  const pos = (k) => [((k % n) / (n - 1) - 0.5) * t.worldSize, (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize];
+  const taken = world.rivers.filter((o) => o !== r && (o.claim >= 0 || !o.dropping)).map((o) => (o.claim >= 0 && o.dropping ? pos(o.claim) : [o.x, o.z]));
+  const free = (k) => { const [x, z] = pos(k); return taken.every(([ox, oz]) => (ox - x) ** 2 + (oz - z) ** 2 >= gap2); };
+  let best = -1, bd = Infinity;
+  for (const k of dropZone(world)) {
+    if (!free(k)) continue;
+    const [x, z] = pos(k), d = (x - r.x) ** 2 + (z - r.z) ** 2;
+    if (d < bd || (d === bd && k < best)) { bd = d; best = k; }
+  }
+  r.claim = best >= 0 ? best : landingCell(world, r.x, r.z);
+  return r.claim;
+}
+
 function land(world, r) {
   const t = world.terrain, n = t.size;
-  const k = landingCell(world, r.x, r.z);
+  const k = landingSpot(world, r);
   r.x = ((k % n) / (n - 1) - 0.5) * t.worldSize;
   r.z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
   r.dropping = 0;
