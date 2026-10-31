@@ -587,7 +587,7 @@ function onlineTick() {
   }
 }
 
-// Same rule as the server: everyone stops once nobody is racing, or 60 s
+// Same rule as the server: everyone stops once nobody is racing, or 3 min
 // after the first river reaches the sea.
 function raceIsOver(w) {
   if (!w.rivers.some(isRacing)) return true;
