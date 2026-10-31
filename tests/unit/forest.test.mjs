@@ -56,31 +56,31 @@ function standAhead(w) {
   return null;
 }
 
-test('a small river is turned by a stand of trees; a big one knocks it flat', () => {
+test('a small river is slowed right down among trees (never walled in); a big one knocks them flat', () => {
   const w0 = createWorld(t7);
   const s = standAhead(w0);
   assert.ok(s, 'no stand found to aim at');
   const run = (size) => {
     const w = createWorld(t7);
     const r = addRiver(w, 'a', s.from);
-    r.volume = TUNE.startVolume * size ** 3; r.size = size;
-    r.dx = 1; r.dz = 0;
-    let entered = false;
-    for (let k = 0; k < 60; k++) {
+    r.volume = TUNE.startVolume * size ** 3; r.size = size; r.mass = 1 + TUNE.speedPerSize * (size - 1);
+    r.dx = 1; r.dz = 0; r.speed = 120;
+    let inTrees = 0, slowest = Infinity;
+    for (let k = 0; k < 80; k++) {
       step(w, new Map());
-      if (cellIndex(w.terrain, r.x, r.z) === s.stand) entered = true;
+      if (w.trees[cellIndex(w.terrain, r.x, r.z)]) { inTrees++; slowest = Math.min(slowest, r.speed); }
     }
-    return { entered, felled: !w.trees[s.stand] };
+    return { felled: !w.trees[s.stand], inTrees, slowest };
   };
   const small = run(1);
   assert.ok(!small.felled, 'a small river knocked the stand down');
-  assert.ok(!small.entered, 'a small river ran straight through the stand');
+  if (small.inTrees) assert.ok(small.slowest < 120 * 0.6, `a small river kept ${small.slowest | 0} m/s among the trees`);
   const big = run(TUNE.treeBreak + 0.3);
   assert.ok(big.felled, 'a big river left the stand standing');
-  // To the small river the stand stands treeHeight taller; to the big one it doesn't.
+  // Trees are rough ground, not a rise: the surface is the same to any river.
   const w = createWorld(t7);
   const a = addRiver(w, 'a', s.from), b = addRiver(w, 'b', s.pos(s.stand - 40 * w.terrain.size));
   b.size = TUNE.treeBreak + 0.3;
   const p = s.pos(s.stand);
-  assert.ok(Math.abs(surfaceAt(w, p.x, p.z, a.idx) - surfaceAt(w, p.x, p.z, b.idx) - TUNE.treeHeight) < 0.01);
+  assert.ok(Math.abs(surfaceAt(w, p.x, p.z, a.idx) - surfaceAt(w, p.x, p.z, b.idx)) < 0.01);
 });

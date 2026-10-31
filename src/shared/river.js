@@ -101,7 +101,8 @@ export const TUNE = {
   // Trees: what a river must be to knock a stand flat, and how tall a stand
   // stands to one that can't.
   treeBreak: 1.3,
-  treeHeight: 14,
+  treeHeight: 14, // (no longer a rise: see forestDrag)
+  forestDrag: 0.35, // a small river among trees runs at this share of its speed
   // The heat front: from heatStart ticks (counted from the start of the drop)
   // a heat wave rolls down the mountain at heatSpeed m/s. It never touches a
   // river: the lakes behind it slowly dry out.
@@ -235,7 +236,7 @@ export function lakeLevel(world, lake) {
 }
 const lakeSpan = (world, lake) => Math.max(0.5, world.lakeBrim[lake] - world.lakeBed[lake]);
 // Litres a lake holds at a given surface level.
-const lakeVolAt = (world, lake, level) => Math.max(0, world.lakeCap[lake] * (level - world.lakeBed[lake]) / lakeSpan(world, lake));
+export const lakeVolAt = (world, lake, level) => Math.max(0, world.lakeCap[lake] * (level - world.lakeBed[lake]) / lakeSpan(world, lake));
 
 // The cell each lake spills into: the first cell outside it on the fill's
 // downhill tree, from the lowest-lying lake cell that drains out.
@@ -308,7 +309,7 @@ export function surfaceAt(world, wx, wz, self = -1) {
   // costs water instead, see resolveContacts); old dry beds are ordinary ground.
   const cv = (k) => (self >= 0 && o[k] >= 0 && (o[k] === self || isLive(world, k)) ? 0 : c[k]);
   // To a river too small to knock them down, a stand of trees is a rise.
-  const rk = self >= 0 && world.rivers[self] && world.rivers[self].size < TUNE.treeBreak ? world.treeRock : world.rock;
+  const rk = world.rock;
   const a = f[i] + rk[i] - cv(i), b = f[i + 1] + rk[i + 1] - cv(i + 1), d = f[i + n] + rk[i + n] - cv(i + n), e = f[i + n + 1] + rk[i + n + 1] - cv(i + n + 1);
   return (a + (b - a) * fx) + ((d + (e - d) * fx) - (a + (b - a) * fx)) * fy;
 }
@@ -724,8 +725,12 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
   // Level water (a lake, a flat) doesn't push or brake: what you carry in
   // carries on, fading slowly, never below the base speed.
   const level = onLake || gl < TUNE.flatSlope;
-  const target = level ? Math.max(TUNE.baseSpeed * mass, Math.min(TUNE.maxSpeed * mass, r.speed * TUNE.levelGlide))
-    : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + TUNE.slopeSpeed * along) * mass));
+  // Forest is rough ground (Manning's n for a wooded floodplain runs 3-4x
+  // pasture's): a river too small to knock the trees down is slowed right
+  // down among them, but never walled in; a big one flattens them.
+  const drag = world.trees?.[cHere] && r.size < TUNE.treeBreak ? TUNE.forestDrag : 1;
+  const target = (level ? Math.max(TUNE.baseSpeed * mass, Math.min(TUNE.maxSpeed * mass, r.speed * TUNE.levelGlide))
+    : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + TUNE.slopeSpeed * along) * mass))) * drag;
   // Momentum: more water surges up to speed just as fast, but holds it
   // longer, slowing down only slowly.
   r.speed += (target - r.speed) * (target > r.speed ? TUNE.speedEase : TUNE.speedEase / r.size);
@@ -1144,7 +1149,11 @@ function hydrology(world) {
     world.lakeFlow[lake] -= through;
     const gain = q - through;
     // It joins the river at the outlet and comes down with the next pulse.
-    if (gain > 0) { feed(r, o.at ?? 0, gain); r.inflow += gain; }
+    if (gain > 0) {
+      feed(r, o.at ?? 0, gain);
+      r.inflow += gain;
+      (r.lakeFeeds ??= new Map()).set(o.at ?? 0, lake); // that pulse is this lake's water
+    }
     // Erosion follows the water over the lip and the river's volume: a high
     // lake and a big river cut fast; as the lake drops to the lip it slows.
     o.e = Math.min(t.filled[o.cell] - SEA_LEVEL - 0.5, o.e + TUNE.erodeK * h * r.size);
@@ -1247,9 +1256,10 @@ function pulses(world) {
       for (const [at, litres] of [...r.feeds].sort((a, b) => a[0] - b[0])) {
         if (at === 0) continue;
         const p = r.path[Math.min(at, r.path.length - 1)];
-        r.pulses.push({ s: p.s, i: Math.min(at, r.path.length - 1), amount: litres, flow: 0, every, erode: false, lakes: [] });
+        r.pulses.push({ s: p.s, i: Math.min(at, r.path.length - 1), amount: litres, flow: 0, every, erode: false, lakes: [], lake: r.lakeFeeds?.get(at) ?? -1 });
       }
       r.feeds.clear();
+      r.lakeFeeds?.clear();
       world.events.push({ type: 'pulse', river: r.idx, tick: world.tick });
     }
     const v = TUNE.pulseSpeed * Math.max(r.speed, TUNE.baseSpeed);
@@ -1312,7 +1322,7 @@ function pulses(world) {
         const shove = TUNE.surge * TUNE.baseSpeed * Math.min(1, p.amount / (r.volume * TUNE.surgeShare));
         r.speed = Math.min(r.speed + shove, TUNE.maxSpeed * (r.mass ?? 1) * TUNE.surgeCap);
       }
-      world.events.push({ type: 'swell', river: r.idx, amount: p.amount, tick: world.tick });
+      world.events.push({ type: 'swell', river: r.idx, amount: p.amount, lake: p.lake ?? -1, tick: world.tick });
     }
     r.pulses = keep;
   }

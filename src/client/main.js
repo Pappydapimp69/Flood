@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -464,9 +464,12 @@ function placeLakeTags() {
     tmpV.set(o.x, surfaceAt(world, o.x, o.z) * VERT + 60, o.z).project(camera);
     if (tmpV.z > 1) { el.hidden = true; return; }
     const full = world.lakeVol[o.l.id] / world.lakeCap[o.l.id], mine = me.via.has(o.l.id);
+    // What it's worth to you: the water standing above an outlet you'd cut
+    // now (your depth below its surface), which drains out to you.
+    const worth = Math.max(0, world.lakeVol[o.l.id] - lakeVolAt(world, o.l.id, lakeLevel(world, o.l.id) - me.depth));
     el.hidden = false;
     el.className = `lake${full < 0.5 ? ' dry' : ''}${mine ? ' mine' : ''}`;
-    el.textContent = `${mine ? 'your lake' : 'lake'} ${Math.round(full * 100)}% · ${(o.d / 1000).toFixed(1)} km`;
+    el.textContent = mine ? `your lake · feeding you · ${Math.round(full * 100)}%` : `lake ≈ +${fmtL(worth)} · ${(o.d / 1000).toFixed(1)} km`;
     el.style.transform = `translate(${((tmpV.x + 1) / 2) * innerWidth}px, ${((1 - tmpV.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
   });
 }
@@ -681,6 +684,12 @@ function advance(inputs) {
       // A pulse reached a head: it swells, more for a bigger slug of water.
       const en = entries[e.river];
       if (en && e.amount > 0) { en.swellAt = performance.now(); en.swell = Math.min(0.5, e.amount / (en.r.volume * 0.04 + 1)); }
+      // A lake's water reaching you is the payoff: say so, loudly.
+      if (en && river && e.river === river.idx && e.lake >= 0 && e.amount > 20_000) {
+        showPop(`+${fmtL(e.amount)} from a lake`);
+        burstSpray(en.spray, en.r.x, surfaceAt(world, en.r.x, en.r.z) * VERT, en.r.z, 1 + Math.min(2, e.amount / 500_000), 90);
+        audio.lake();
+      }
     } else if (e.type === 'soak') {
       const en = entries[e.river];
       if (en && river && e.river === river.idx && e.amount > 50_000) showPop('A low lake on your channel is soaking up your water');
