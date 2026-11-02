@@ -20,7 +20,7 @@ const state = (page) => page.evaluate(() => {
 });
 
 // Poll the game's own clock, never wall time.
-async function until(page, fn, what, tries = 600) {
+async function until(page, fn, what, tries = 1200) { // 60 s: CI renders in software, slower than the sim
   for (let i = 0; i < tries; i++) {
     const s = await state(page);
     if (s.error) throw new Error(s.error);
