@@ -107,7 +107,7 @@ export function createInput(target) {
     drag: () => (stick ? { dx: stick.x - stick.x0, dy: stick.y - stick.y0, x0: stick.x0, y0: stick.y0 } : null),
     // Read gamepads; call once per frame. Steering is the left stick or D-pad,
     // its up / down hurries or slows the drop; the right stick turns the camera.
-    // Button presses become actions: A 'confirm' (and 'restart'), B the skill, X 'mute',
+    // Button presses become actions: A 'confirm' (and 'restart') and the skill in a race, B the skill too, X 'mute',
     // Y/Back 'map', D-pad or stick up/down 'up'/'down' for menus.
     poll() {
       const pads = navigator.getGamepads?.() ?? [];
@@ -130,7 +130,7 @@ export function createInput(target) {
       if (!pad.seen) { pad.seen = true; onPad?.(); }
       for (const i of now) {
         if (pad.down.has(i)) continue; // edges only
-        if (i === PAD.A) actions.push('confirm', 'restart');
+        if (i === PAD.A) { actions.push('confirm', 'restart'); pressSkill(); } // A: select in menus, Gouge in a race
         else if (i === PAD.B) pressSkill();
         else if (i === PAD.X) actions.push('mute');
         else if (i === PAD.Y || i === PAD.BACK) actions.push('map');
