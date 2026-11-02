@@ -14,7 +14,8 @@ export const TUNE = {
   baseSpeed: 55, // m/s on level ground at starting size
   slopeSpeed: 1800, // extra m/s per unit downhill slope
   maxSpeed: 240,
-  speedEase: 0.12, // share of the way to target speed per tick, at starting size
+  speedEase: 0.12, // share of the way to target speed per tick, at starting size, speeding up...
+  slowEase: 0.03, // ...and slowing down (divided by size): carried speed halves in about 1.1 s, not 0.27 s
   climb: 1.5, // metres any head can rise over before it is blocked, before its head height
   headPerSize: 2, // metres the water stands at the head per unit of size: what it can push over
   headLook: 150,
@@ -73,6 +74,8 @@ export const TUNE = {
   // Gouge, a skill: the head rears up and slams down, cutting the ground ahead
   // down to a gentle grade below it. The wind-up holds the head still and open
   // to rivals (the real price), and the blow spends water.
+  beachRadius: 3000, // metres of coast either side of where the slope meets the sea: the one finish
+  seaCurrent: 150, // m/s: the current that carries a river off the wrong coast along to the beach
   gougeWind: 16, // ticks rearing up (0.8 s): the head stands still, steering aims the cut
   gougeRecover: 6, // ticks after the blow before the water runs on (0.3 s)
   gougeCells: 6, // cells cut ahead of the head (about 600 m)
@@ -146,11 +149,11 @@ export const TUNE = {
   // river grows by what reaches its head.
   pulseEvery: [[3_000_000, 20], [8_000_000, 40], [Infinity, 60]], // [below this volume, ticks]
   pulseSpeed: 3,
-  surge: 1.2, // a pulse reaching the head adds up to this many times base speed...
-  surgeShare: 0.03, // ...the full surge once it brings this share of the river's volume...
-  surgeCap: 1.35, // ...up to this many times its usual top speed
-  surgeLift: 1.5, // metres a head running at base speed can carry up a rise (grows with speed squared)...
-  surgeLiftMax: 25, // ...up to this
+  surge: 2.5, // a pulse reaching the head adds up to this many times base speed...
+  surgeShare: 0.015, // ...the full surge once it brings this share of the river's volume...
+  surgeCap: 1.6, // ...up to this many times its usual top speed
+  surgeLift: 3, // metres a head running at base speed can carry up a rise (grows with speed squared)...
+  surgeLiftMax: 40, // ...up to this
   // Storms: one at a time, from stormStart and then stormGap after each has
   // gone, a storm blows in from one side of the island ahead of the pack and
   // sweeps across to the other,
@@ -200,7 +203,8 @@ export function createWorld(terrain, { forest = true } = {}) {
   const world = {
     terrain,
     dist: distanceToSea(terrain, downhill), // along the fill's downhill tree
-    reach: descentDistance(terrain), // shortest route water can take (HUD, standings, bots)
+    reach: descentDistance(terrain), // shortest route water can take to any sea (spawn fairness, forest lanes)
+    ...finishBeach(terrain), // beach (sea cells that end the race), beachLand, seaNext, toBeach
     lakeOf, lakes,
     lakeCap: Float64Array.from(lakes, (l) => lakeGain(l)), // litres when full
     lakeVol: Float64Array.from(lakes, (l) => lakeGain(l) * TUNE.lakeStart), // litres now
@@ -545,17 +549,17 @@ export function skyClouds(world) {
   // Low clouds down the slope, one per band of distance to the sea from the
   // start ring to the coast, so there is water to chase the whole way down,
   // not only in the sky at the start. Caught by a head flowing under one.
-  const low = stream(t.seed, 'slope-clouds'), top = Math.max(...ring.map((k) => world.reach[k]));
+  const low = stream(t.seed, 'slope-clouds'), top = Math.max(...ring.map((k) => world.toBeach[k]));
   const picked = [];
   for (let i = 0; i < TUNE.slopeClouds; i++) {
     const want = top * (1 - (i + 0.5) / TUNE.slopeClouds);
     let best = -1, bestErr = Infinity;
     for (let tries = 0; tries < 400; tries++) {
       const k = Math.floor(low() * n * n);
-      if (world.lakeOf[k] >= 0 || t.filled[k] <= SEA_LEVEL + 5 || world.lava?.[k] || !Number.isFinite(world.reach[k])) continue;
+      if (world.lakeOf[k] >= 0 || t.filled[k] <= SEA_LEVEL + 5 || world.lava?.[k] || !(world.toBeach[k] > 0 && world.toBeach[k] < 1e8)) continue;
       const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
       if (picked.some((p) => (p.x - kx) ** 2 + (p.z - kz) ** 2 < 2500 ** 2)) continue;
-      const err = Math.abs(world.reach[k] - want);
+      const err = Math.abs(world.toBeach[k] - want);
       if (err < bestErr) { bestErr = err; best = k; }
     }
     if (best < 0) continue;
@@ -712,7 +716,15 @@ export function gougePlan(world, r) {
       if (world.lakeOf[k] >= 0 || t.filled[k] <= SEA_LEVEL) continue;
       const ground = t.filled[k] + world.rock[k];
       if (ground <= floor) continue;
-      if (k === kc && ground - floor > reach) return { cells, through: false }; // too high for one blow
+      if (k === kc && ground - floor > reach) { // too high for one blow: cut this line as deep as it goes, then stop
+        for (let s2 = -half; s2 <= half; s2 += t.cell * 0.5) {
+          const k2 = cellIndex(t, cx + r.dz * s2, cz - r.dx * s2);
+          if (world.lakeOf[k2] >= 0 || t.filled[k2] <= SEA_LEVEL) continue;
+          const g2 = t.filled[k2] + world.rock[k2];
+          if (g2 > floor && !cells.some(([c]) => c === k2)) cells.push([k2, Math.max(Math.max(-TUNE.gougeMax, SEA_LEVEL + 0.5 - t.filled[k2]), world.rock[k2] - Math.min(g2 - floor, reach))]);
+        }
+        return { cells, through: false };
+      }
       const lowest = Math.max(-TUNE.gougeMax, SEA_LEVEL + 0.5 - t.filled[k]);
       const now = Math.max(lowest, world.rock[k] - Math.min(ground - floor, reach));
       if (now < world.rock[k]) cells.push([k, now]);
@@ -759,9 +771,9 @@ function gougeTick(world, r) {
   r.speed = 0;
   r.depth = depthOf(r);
   if (r.gougeT === TUNE.gougeWind) {
-    // Re-aimed during the wind-up at a rise it can't break through: the blow
-    // lands, but cuts nothing (the water is spent all the same).
-    const { cells, through } = gougePlan(world, r), plan = through ? cells : [];
+    // It cuts what it can along the heading as aimed now: through a rise, or
+    // as far into one as a blow reaches (the ground preview shows which).
+    const { cells } = gougePlan(world, r), plan = cells;
     let cut = 0;
     for (const [k, now] of plan) cut = Math.max(cut, world.rock[k] - now);
     // The ground changes with the digs, after everyone has moved, so no river
@@ -817,8 +829,16 @@ function moveRiver(world, r, { s: steer, f: fwd, k: skill }) {
     r.dx = dx; r.dz = dz;
     normalize(r);
   }
-  if (skill && gougeUsable(world, r)) startGouge(world, r);
+  // A player's Gouge fires whenever it is ready: it cuts what it can ahead (all
+  // the way through, part of a rise, or nothing, and then it is just a lunge).
+  // Bots press it only when the cut breaks through (see bot.js): a cut that
+  // stops short leaves a trench that holds the head (Brain lesson).
+  if (skill && gougeReady(world, r)) startGouge(world, r);
   if (r.gougeT >= 0) return gougeTick(world, r);
+  // In the sea off the wrong coast: only the one beach ends the race, so the
+  // current carries the river along the coast to it (no steering out at sea).
+  const kSea = cellIndex(world.terrain, r.x, r.z);
+  if (world.terrain.filled[kSea] <= SEA_LEVEL && !world.beach[kSea]) return seaCurrent(world, r, kSea);
   if (r.pooled >= 0) {
     // Pooled in a lake below full: the water rises; the head waits.
     r.pooledTicks++;
@@ -922,7 +942,7 @@ function moveRiver(world, r, { s: steer, f: fwd, k: skill }) {
     : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + TUNE.slopeSpeed * along) * mass))) * drag;
   // Momentum: more water surges up to speed just as fast, but holds it
   // longer, slowing down only slowly.
-  r.speed += (target - r.speed) * (target > r.speed ? TUNE.speedEase : TUNE.speedEase / r.size);
+  r.speed += (target - r.speed) * (target > r.speed ? TUNE.speedEase : TUNE.slowEase / r.size);
   r.depth = depthOf(r);
 
   // More water stands taller at the head: rises that would stop a small river
@@ -1598,7 +1618,7 @@ export function widthOf(r) {
 // Finish order, then racers by distance left, then the absorbed (latest out first).
 export function standings(world) {
   const fin = world.rivers.filter((r) => r.finished).sort((a, b) => a.finishTick - b.finishTick || biggerFirst(a, b));
-  const left = (r) => world.reach[cellIndex(world.terrain, r.x, r.z)];
+  const left = (r) => world.toBeach[cellIndex(world.terrain, r.x, r.z)];
   const racing = world.rivers.filter(isRacing).sort((a, b) => left(a) - left(b) || byId(a, b));
   const out = world.rivers.filter((r) => r.out).sort((a, b) => b.out.tick - a.out.tick || biggerFirst(a, b));
   return [...fin, ...racing, ...out];
@@ -1750,11 +1770,69 @@ function afterMove(world, r) {
   const last = r.path[r.path.length - 1];
   const lx = r.x - last.x, lz = r.z - last.z;
   if (lx * lx + lz * lz >= (world.terrain.cell * 0.75) ** 2) pushPathPoint(world, r);
-  if (world.terrain.filled[cellIndex(world.terrain, r.x, r.z)] <= SEA_LEVEL) {
+  const kEnd = cellIndex(world.terrain, r.x, r.z);
+  if (world.terrain.filled[kEnd] <= SEA_LEVEL && world.beach[kEnd]) {
     r.finished = true;
     r.finishTick = world.tick;
     pushPathPoint(world, r);
   }
+}
+
+// The one finish: the stretch of coast where the slope's axis meets the sea,
+// beachRadius either side. beach marks its sea cells, beachLand the shore cells
+// behind them (drawn as the finish), seaNext is each sea cell's step toward it,
+// and toBeach the shortest route water can take there (HUD, standings, bots).
+function finishBeach(t) {
+  const n = t.size, f = t.filled, cell = (x, z) => cellIndex(t, x, z);
+  let px = 0, pz = 0;
+  for (let s = 0; s < t.worldSize; s += t.cell * 0.5) {
+    const x = t.axis.x * s, z = t.axis.y * s;
+    if (f[cell(x, z)] <= SEA_LEVEL) { px = x; pz = z; break; }
+  }
+  const beach = new Uint8Array(n * n), beachLand = [];
+  const R2 = TUNE.beachRadius * TUNE.beachRadius;
+  const pos = (k) => [((k % n) / (n - 1) - 0.5) * t.worldSize, (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize];
+  for (let k = 0; k < n * n; k++) {
+    const [x, z] = pos(k), d2 = (x - px) ** 2 + (z - pz) ** 2;
+    if (d2 > (TUNE.beachRadius + 1500) ** 2) continue;
+    if (f[k] <= SEA_LEVEL) { if (d2 <= R2) beach[k] = 1; continue; }
+    if (d2 > R2) continue;
+    const kx = k % n, ky = (k - kx) / n;
+    let shore = false;
+    for (let dy = -1; dy <= 1 && !shore; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const x = kx + dx, y = ky + dy;
+      if (x >= 0 && y >= 0 && x < n && y < n && f[y * n + x] <= SEA_LEVEL) { shore = true; break; }
+    }
+    if (shore) beachLand.push(k);
+  }
+  // Sea current: breadth-first over sea cells from the beach.
+  const seaNext = new Int32Array(n * n).fill(-1), seen = new Uint8Array(n * n), queue = [];
+  for (let k = 0; k < n * n; k++) if (beach[k]) { seen[k] = 1; queue.push(k); }
+  for (let q = 0; q < queue.length; q++) {
+    const a = queue[q], ax = a % n, ay = (a - ax) / n;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const x = ax + dx, y = ay + dy, b = y * n + x;
+      if ((!dx && !dy) || x < 0 || y < 0 || x >= n || y >= n || seen[b] || f[b] > SEA_LEVEL) continue;
+      seen[b] = 1; seaNext[b] = a; queue.push(b);
+    }
+  }
+  return { beach, beachLand, beachAt: { x: px, z: pz }, seaNext, toBeach: descentDistance(t, beach) };
+}
+
+function seaCurrent(world, r, k) {
+  const t = world.terrain, n = t.size;
+  let to = k;
+  for (let i = 0; i < 3 && world.seaNext[to] >= 0; i++) to = world.seaNext[to];
+  const tx = ((to % n) / (n - 1) - 0.5) * t.worldSize - r.x, tz = (Math.floor(to / n) / (n - 1) - 0.5) * t.worldSize - r.z;
+  const tl = Math.sqrt(tx * tx + tz * tz);
+  if (!r.offCourse) { r.offCourse = true; world.events.push({ type: 'offcourse', river: r.idx, tick: world.tick }); }
+  r.speed = TUNE.seaCurrent;
+  r.depth = depthOf(r);
+  if (tl < 1e-6) return;
+  r.dx = tx / tl; r.dz = tz / tl;
+  const step = Math.min(tl, r.speed * DT);
+  moveTo(world, r, r.x + r.dx * step, r.z + r.dz * step);
+  afterMove(world, r);
 }
 
 export function cellIndex(t, wx, wz) {
@@ -1869,11 +1947,13 @@ function sampleFilled(t, wx, wz) {
 // Shortest distance from each cell to the sea along any route water can flow
 // (each step at most TUNE.climb uphill on the filled surface). A steered river
 // can cut across the fill tree, so fair spawns must be measured by this.
-export function descentDistance(t) {
+// goal: a cell mask to measure to (the finish beach); without one, any sea.
+// Toward a goal, open sea is passable (the current carries a river along it).
+export function descentDistance(t, goal = null) {
   const n = t.size, f = t.filled;
   const dist = new Float64Array(n * n).fill(Infinity);
   const heap = new MinHeap(n * 4);
-  for (let i = 0; i < n * n; i++) if (f[i] <= SEA_LEVEL) { dist[i] = 0; heap.push(0, i); }
+  for (let i = 0; i < n * n; i++) if (goal ? goal[i] : f[i] <= SEA_LEVEL) { dist[i] = 0; heap.push(0, i); }
   while (heap.size) {
     const a = heap.pop(), da = dist[a];
     const ax = a % n, ay = (a - ax) / n;
@@ -1882,12 +1962,12 @@ export function descentDistance(t) {
       const x = ax + dx, y = ay + dy;
       if (x < 0 || y < 0 || x >= n || y >= n) continue;
       const b = y * n + x;
-      if (f[b] <= SEA_LEVEL || f[a] > f[b] + TUNE.climb) continue; // water can't flow b -> a
+      if ((!goal && f[b] <= SEA_LEVEL) || f[a] > f[b] + TUNE.climb) continue; // water can't flow b -> a
       const d = da + t.cell * (dx && dy ? 1.4142135623730951 : 1);
       if (d < dist[b]) { dist[b] = d; heap.push(d, b); }
     }
   }
-  return Float32Array.from(dist, (d) => (Number.isFinite(d) ? d : 0));
+  return Float32Array.from(dist, (d) => (Number.isFinite(d) ? d : goal ? 1e9 : 0));
 }
 
 // Remaining downhill distance to the sea from every cell (static, ignores carving).

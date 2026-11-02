@@ -83,7 +83,7 @@ export function botSteer(world, bot) {
   bot.next = world.tick + bot.think;
 
   const t = world.terrain;
-  const here = world.reach[cellIndex(t, r.x, r.z)];
+  const here = world.toBeach[cellIndex(t, r.x, r.z)];
   const rivals = world.rivers.filter((o) => o !== r && isRacing(o));
   const scores = new Map();
   for (const a of OFFSETS) {
@@ -97,7 +97,7 @@ export function botSteer(world, bot) {
     const end = path[path.length - 1];
     const travelled = Math.max(TUNE_BOT.step, end.d);
     let score = -Math.abs(a) * 0.12; // mild preference for going straight
-    score += ((here - world.reach[cellIndex(t, end.x, end.z)]) / travelled) * 2; // progress toward the sea
+    score += ((here - world.toBeach[cellIndex(t, end.x, end.z)]) / travelled) * 2; // progress toward the finish beach
     if (end.blocked) score -= 0.6;
     const dx = (end.x - r.x) / (end.d || 1), dz = (end.z - r.z) / (end.d || 1);
     for (const p of path) {
