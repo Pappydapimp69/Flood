@@ -227,6 +227,20 @@ function lakeCellsOf(mesh, lakeOf, lake) {
   return ud.lakeCells.get(lake) ?? [];
 }
 
+// The finish beach: a warm gold wash on its shore cells, kept in the base
+// colours so carving and lake updates leave it on (resetCarve restores pristine).
+const BEACH = new THREE.Color('#ffd166');
+export function markBeach(mesh, cells) {
+  const { baseColors } = mesh.userData;
+  const col = mesh.geometry.attributes.color;
+  for (const k of cells) {
+    tmp.fromArray(baseColors, k * 3).lerp(BEACH, 0.7).toArray(baseColors, k * 3);
+    for (let c = 0; c < 3; c++) col.array[k * 3 + c] = baseColors[k * 3 + c];
+  }
+  col.clearUpdateRanges();
+  col.needsUpdate = true;
+}
+
 // Show (or clear) the landing zone while you fall: a cyan wash over its cells.
 const ZONE = new THREE.Color('#5fe0ff');
 export function highlightZone(mesh, cells, on) {

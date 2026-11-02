@@ -4,7 +4,7 @@ import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain
 import { createWorld, rollIsland, addRiver, step, gougeReady, gougeTarget, gougeCost, gougePlan, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
-import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
+import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, VERT } from './terrainMesh.js';
 import { buildSea, buildLakes, makeSurge, makeSpray, updateSpray, burstSpray, tickWater } from './water.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
@@ -269,6 +269,30 @@ function updateSkyClouds() {
   skyClouds(world).forEach((c, i) => { skyMeshes[i].visible = c.taken < 0 && (c.low || (falling && !mapView)); });
 }
 
+// The finish: red and white posts along the one beach that ends the race.
+let finishFlags = null;
+function placeFinishFlags() {
+  if (finishFlags) { scene.remove(finishFlags); finishFlags.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); }); }
+  finishFlags = new THREE.Group();
+  const t = world.terrain, n = t.size, mats = [new THREE.MeshBasicMaterial({ color: '#ffffff' }), new THREE.MeshBasicMaterial({ color: '#e63946' })];
+  const geo = new THREE.CylinderGeometry(22, 22, 160, 8);
+  const spots = [];
+  for (const k of world.beachLand) {
+    const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+    if (spots.some((p) => (p.x - x) ** 2 + (p.z - z) ** 2 < 500 ** 2)) continue;
+    spots.push({ x, z });
+  }
+  for (const p of spots) {
+    const g = surfaceAt(world, p.x, p.z) * VERT;
+    for (let i = 0; i < 4; i++) {
+      const seg = new THREE.Mesh(geo, mats[i % 2]);
+      seg.position.set(p.x, g + 80 + i * 160, p.z);
+      finishFlags.add(seg);
+    }
+  }
+  scene.add(finishFlags);
+}
+
 // Storm clouds follow their storms across the island (height easing over the hills).
 const stormClouds = new Map();
 function followStorm() {
@@ -348,6 +372,8 @@ function beginRace(seed, raceIds, me, rolled) {
   showHint();
   document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
+  markBeach(terrainMesh, world.beachLand);
+  placeFinishFlags();
   updateLakes(); // dry basins show as dry from the first frame
   for (const g of guides) if (!g.parent) scene.add(g);
   buildZoneDots();
@@ -695,6 +721,8 @@ function advance(inputs) {
       const en = entries[e.river], lr = world.rivers[e.river];
       if (en) burstSpray(en.spray, lr.x, surfaceAt(world, lr.x, lr.z) * VERT, lr.z, 1.2, 70);
       if (river && e.river === river.idx) { highlightZone(terrainMesh, dropZone(world), false); audio.splash(1.2); }
+    } else if (e.type === 'offcourse') {
+      if (river && e.river === river.idx) showPop('Wrong beach — the current carries you to the finish');
     } else if (e.type === 'gouge-wind') {
       const en = entries[e.river];
       if (en) en.gougeAt = performance.now();
@@ -778,11 +806,12 @@ function updateSkill() {
   const plan = ready || busy ? gougePlan(world, river) : null;
   const target = ready && gougeTarget(world, river);
   const tooHigh = ready && !target && plan.cells.length > 0 && !plan.through;
-  const state = busy ? 'busy' : left ? 'cool' : !ready ? 'dry' : target ? 'go' : 'idle';
+  const state = busy ? 'busy' : left ? 'cool' : !ready ? 'dry' : 'go';
   hud.skill.dataset.state = state;
   hud.skill.style.setProperty('--cool', left ? (left / TUNE.gougeCool).toFixed(3) : 0);
   const note = state === 'cool' ? `ready in ${Math.ceil(left / TICK_HZ)} s` : state === 'dry' ? 'need more water'
-    : state === 'idle' ? (tooHigh ? 'rise too big' : 'nothing ahead to cut') : state === 'busy' ? 'cutting…' : `cut through · −${Math.round(gougeCost(river) / 1000)}k L`;
+    : state === 'busy' ? 'cutting…'
+    : `${target ? 'cut through' : tooHigh ? 'cut part way' : plan.cells.length ? 'cut' : 'lunge'} · −${Math.round(gougeCost(river) / 1000)}k L`;
   if (hud.skillNote.textContent !== note) hud.skillNote.textContent = note;
   // What it will do: a glowing line on the ground along the cut it would make.
   if ((state === 'go' || state === 'busy') && plan?.cells.length) {
@@ -812,7 +841,7 @@ function updateSkill() {
     gougeLine.visible = true;
   }
   // Blocked by a rise it can cut: say so, the moment it happens.
-  if (state === 'go' && river.speed < TUNE.climbSpeed && performance.now() - gougeHintAt > 8000) {
+  if (state === 'go' && target && river.speed < TUNE.climbSpeed && performance.now() - gougeHintAt > 8000) {
     gougeHintAt = performance.now();
     showPop(lowPower ? 'Blocked — tap GOUGE to cut through' : 'Blocked — press SPACE to GOUGE through');
   }
@@ -1224,10 +1253,10 @@ renderer.setAnimationLoop(() => {
   const rankHtml = river ? `#${place}<small>/${world.rivers.length}</small><em>${alive} flowing</em>` : `<small>SPECTATING</small><em>${alive} flowing</em>`;
   if (hud.rank.innerHTML !== rankHtml) hud.rank.innerHTML = rankHtml;
   hud.rank.className = !river ? '' : place === 1 ? 'top' : place <= 4 ? 'mid' : 'low';
-  const toSea = world.reach[cellIndex(terrain, focus.x, focus.z)];
+  const toSea = world.toBeach[cellIndex(terrain, focus.x, focus.z)];
   const distHtml = focus !== river ? `<small>WATCHING</small> ${escapeHtml(nameOf(focus))}`
     : river.dropping ? `FALLING<small> · ${Math.ceil(river.dropping / TICK_HZ)} S</small>`
-    : `${(toSea / 1000).toFixed(2)}<small> KM TO SEA</small>`;
+    : toSea >= 1e8 ? `<small>FIND A WAY DOWN</small>` : `${(toSea / 1000).toFixed(2)}<small> KM TO THE BEACH</small>`;
   if (hud.dist.innerHTML !== distHtml) hud.dist.innerHTML = distHtml;
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);

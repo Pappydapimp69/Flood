@@ -16,16 +16,18 @@ function atRise(seed = 4) {
 }
 const press = (w, s = 0) => step(w, new Map([['a', { s, f: 0, k: 1 }]]));
 
-test('a press with nothing to cut spends nothing and starts no cooldown', () => {
+test('a ready gouge fires any time: with nothing to cut it is a lunge, and still pays', () => {
   const w = rollIsland(4, 12).world;
   const r = addRiver(w, 'a');
   for (let k = 0; k < 40; k++) step(w, new Map());
-  if (gougeTarget(w, r)) return; // (this start happens to face a rise: covered below)
-  const vol = r.volume;
+  assert.ok(gougeReady(w, r));
+  const vol = r.volume, cost = gougeCost(r);
   press(w);
+  assert.ok(r.gougeT >= 0, 'a ready press always starts');
+  assert.ok(vol - r.volume > cost * 0.9, 'paid');
+  for (let k = 0; k < TUNE.gougeWind + TUNE.gougeRecover; k++) step(w, new Map());
   assert.equal(r.gougeT, -1);
-  assert.equal(r.gougeAt, 0);
-  assert.ok(r.volume >= vol, 'water was spent on a refused gouge');
+  assert.ok(r.speed >= TUNE.baseSpeed, 'it bursts on');
 });
 
 test('gouge costs water, holds the head through the wind-up, then cuts a way through', () => {
