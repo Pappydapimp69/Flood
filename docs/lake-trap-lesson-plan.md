@@ -1,5 +1,24 @@
 # Lake traps: lesson plan to train Brain
 
+## Outcome (2026-11-02): fixed in 198e855, and the suspected cause below was wrong
+
+- **Owner call answered from Brain:** never a trap. dog#E11 and sweety#E19 (audited) say
+  every state and every enclosure needs a guaranteed exit. The water-currency kernel says a
+  basin costs water and time to fill, never the race.
+- **Real cause:** the heat front isn't what drains these lakes. Rivals' outlets erode their
+  lips 15-39 m and drain the lake to the lowest one. A rival that climbed out over a bank has
+  its outlet at that bank cell, and the fill's downhill tree from there runs back into the
+  lake. `lowestExit` picked it as the lowest lip, so the head looped in and out forever.
+- **F1 (restore pooling) tested alone: no effect.** The eroded lips drained the topped-up lake
+  again within seconds, and 5 rivers were still trapped. Dropped.
+- **Fix:** `lowestExit` skips outlets whose downhill path returns to the same lake.
+  - Diagnosis islands: trapped 6 to 0, stalls over 60 s 11 to 2, finishes 92 to 92.
+  - Held-out islands (7 13 21 33 57 64 88 150 222 512): trapped 4 to 0, stalls over 60 s
+    8 to 3, finishes 91 to 97.
+  - npm test 52/52.
+- Lesson filed in memory incoming (`2026-11-02__flood-lake-exit-drains-back.md`).
+- L1-L5 below stay open as training on the leftover stalls (2-3 over 60 s that still move).
+
 Rivers still get stuck in lakes. `brain start lake|stuck|basin|outlet` turned up five
 lessons on this (flood#E7, E16, E32, E33, E37), and all five are already in the code,
 so Brain has no fix for what's left. This plan lists the training passes that would
