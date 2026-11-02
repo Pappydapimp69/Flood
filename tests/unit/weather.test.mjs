@@ -21,7 +21,9 @@ test('the heat front never touches a river: every 3 s each lake behind it loses 
   const v0 = r.volume;
   r.out = { by: 'test', tick: 0 }; // out of the race, so it pours nothing in
   for (let k = 0; k < TUNE.heatEvery; k++) step(w, new Map());
-  for (const l of behind) assert.equal(before[l.id] - w.lakeVol[l.id], Math.min(before[l.id], TUNE.heatLake), `lake ${l.id} behind the front`);
+  // A level drop: heatDrop metres of the lake's own depth, so a pond and a deep lake fall alike.
+  const dry = (id) => Math.min(before[id], w.lakeCap[id] * TUNE.heatDrop / Math.max(0.5, w.lakeBrim[id] - w.lakeBed[id]));
+  for (const l of behind) assert.ok(Math.abs(before[l.id] - w.lakeVol[l.id] - dry(l.id)) < 1e-6, `lake ${l.id} behind the front`);
   for (const l of ahead) assert.equal(w.lakeVol[l.id], before[l.id], `lake ${l.id} ahead of the front dried`);
   assert.equal(r.volume, v0, 'the heat touched a river');
   assert.ok(!r.out?.how, 'the heat knocked a river out');
@@ -35,7 +37,8 @@ test('water pouring in still counts against the heat: a fed lake behind the fron
   w.lakeVol[lake.id] = w.lakeCap[lake.id] * 0.5; // well under its rim, so nothing spills
   const v0 = w.lakeVol[lake.id];
   for (let k = 0; k < TUNE.heatEvery; k++) { w.lakePending[lake.id] += 2000; step(w, new Map()); }
-  assert.equal(Math.round(w.lakeVol[lake.id] - v0), TUNE.heatEvery * 2000 - Math.min(v0, TUNE.heatLake));
+  const dry = Math.min(v0, w.lakeCap[lake.id] * TUNE.heatDrop / Math.max(0.5, w.lakeBrim[lake.id] - w.lakeBed[lake.id]));
+  assert.equal(Math.round(w.lakeVol[lake.id] - v0), Math.round(TUNE.heatEvery * 2000 - dry));
 });
 
 test('storms sweep across the island ahead of the pack and rain into rivers under them', () => {
