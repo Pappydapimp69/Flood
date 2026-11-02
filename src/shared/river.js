@@ -536,7 +536,9 @@ export function skyClouds(world) {
   if (world.clouds) return world.clouds;
   const t = world.terrain, n = t.size, rng = stream(t.seed, 'sky-clouds'), ring = spawnBand(world).ring;
   world.clouds = Array.from({ length: TUNE.skyClouds }, (_, id) => {
-    const k = ring[Math.floor(rng() * ring.length)], d = 600 + rng() * 2600, a = rng() * 2 - 1, b = rng() * 2 - 1, l = Math.sqrt(a * a + b * b) || 1;
+    // Within the drop zone (zoneSlack of the landing ring): a falling drop is held there, so a
+    // cloud further out could never be reached (half of them couldn't, before).
+    const k = ring[Math.floor(rng() * ring.length)], d = rng() * TUNE.zoneSlack * 0.8, a = rng() * 2 - 1, b = rng() * 2 - 1, l = Math.sqrt(a * a + b * b) || 1;
     return {
       id,
       x: ((k % n) / (n - 1) - 0.5) * t.worldSize + (a / l) * d,

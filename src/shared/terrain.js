@@ -159,7 +159,9 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
 // Summit cones: peak height as a share of maxHeight, and metres of drop per
 // unit of map half-width (32 km) away from the peak: an even grade.
 // Island shape settings (exported so tuning passes can try others; defaults keep every island as it was).
-export const ISLAND = { lakes: 20, gates: 5, wide: 1.5, taper: 2, warp: 2 }; // 2026-11-02 map pass: more lakes, a wider winding corridor
+// 2026-11-02 map pass: more lakes and a wider, winding corridor. wide 1.5 or warp 2 put
+// a fifth of the start cells nearer another summit than their own; 1.3 / 1.5 keeps all of them.
+export const ISLAND = { lakes: 20, gates: 5, wide: 1.3, taper: 2, warp: 1.5 };
 const LAKES = () => ISLAND.lakes; // lake basins down the slope
 const GATES = () => ISLAND.gates; // rock gates across the lower slope
 const GATE = { height: 45, thick: 0.007, gap: 0.12, spread: 0.06 };

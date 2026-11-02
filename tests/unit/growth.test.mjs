@@ -136,7 +136,9 @@ test('the island is rerolled until the summit ring seats every river', async () 
     assert.ok(cells.length > 0, `summit ${i} has no starts`);
     for (const c of cells) {
       assert.ok(t.height[c] > t.height[s] * 0.8, `start cell ${c} far below its summit`);
-      assert.ok(Math.hypot((c % n) - sx, Math.floor(c / n) - sy) < 40, `start cell ${c} far from its summit`);
+      // Its own summit's ring: nearer that summit than either other one.
+      const d = t.summits.map((o) => Math.hypot((c % n) - (o % n), Math.floor(c / n) - Math.floor(o / n)));
+      assert.ok(d[i] <= Math.min(...d) + 1e-9, `start cell ${c} is nearer another summit than its own`);
     }
   });
   for (let i = 0; i < 12; i++) addRiver(world, `p${String(i).padStart(2, '0')}`);
