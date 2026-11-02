@@ -131,7 +131,8 @@ await check('race: rank shows, and a drained player spectates the winner', async
   await until(page, (s) => s.tick > s0.tick + 110, 'past spawn grace');
   // Shrink the player and drop a bot on its head: next tick it must be absorbed.
   await page.evaluate(() => {
-    const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out && !r.finished);
+    // (A bot mid-Gouge holds still and digs no channel: pick one that is flowing.)
+    const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out && !r.finished && r.gougeT < 0 && !(r.boost > 0) && !r.dropping);
     me.volume = 1; me.size = 0.01; // (size follows volume when water arrives; set both)
     bot.x = me.x + 5; bot.z = me.z;
     window.__absorber = bot.id;
