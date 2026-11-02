@@ -166,7 +166,7 @@ addEventListener('resize', fitCamera);
 const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
-  document.getElementById('help').textContent = 'Controller: left stick steers (up / down while falling) · right stick turns the camera · B: gouge · A: select / race again · Y: map · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (up / down while falling) · right stick turns the camera · A: gouge (select / race again in menus) · Y: map · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -811,7 +811,7 @@ function updateSkill() {
   hud.skill.style.setProperty('--cool', left ? (left / TUNE.gougeCool).toFixed(3) : 0);
   const note = state === 'cool' ? `ready in ${Math.ceil(left / TICK_HZ)} s` : state === 'dry' ? 'need more water'
     : state === 'busy' ? 'cutting…'
-    : `${target ? 'cut through' : tooHigh ? 'cut part way' : plan.cells.length ? 'cut' : 'lunge'} · −${Math.round(gougeCost(river) / 1000)}k L`;
+    : `${target ? 'cut through' : tooHigh ? 'cut part way' : plan.cells.length ? 'carve' : 'lunge'} · −${Math.round(gougeCost(river) / 1000)}k L`;
   if (hud.skillNote.textContent !== note) hud.skillNote.textContent = note;
   // What it will do: a glowing line on the ground along the cut it would make.
   if ((state === 'go' || state === 'busy') && plan?.cells.length) {

@@ -78,7 +78,8 @@ export const TUNE = {
   seaCurrent: 150, // m/s: the current that carries a river off the wrong coast along to the beach
   gougeWind: 16, // ticks rearing up (0.8 s): the head stands still, steering aims the cut
   gougeRecover: 6, // ticks after the blow before the water runs on (0.3 s)
-  gougeCells: 6, // cells cut ahead of the head (about 600 m)
+  gougeCells: 7, // cells cut ahead of the head (about 700 m)
+  gougeDig: 15, // metres every blow digs at least, times size: a trench you can see
   gougeDepth: 25, // metres the blow can lower one cell, times size
   gougeGrade: 0.01, // the cut falls this many metres per metre ahead: water runs on along it
   gougeMax: 60, // metres the ground can be gouged down in all
@@ -693,49 +694,47 @@ export function gougeReady(world, r) {
 }
 
 // Cells the blow would cut along the current heading: [cell, new rock] pairs.
-// Each cell comes down to a gentle grade below the water at the head, never
-// below the sea; lakes are left alone. A blow only ever cuts a way THROUGH: the
-// cut runs ahead until it meets ground the water can already run on (or a
-// lake), and if no such ground lies within reach, or a cell stands deeper than
-// one blow can cut, there is no target. (A cut that stopped short would leave a
-// dead-end trench that holds the head.)
-// Returns { cells: [[cell, new rock]...], through }.
+// The blow carves a trench straight down the heading: gougeCells long, about
+// three cells wide, at least gougeDig x size deep everywhere (so it always
+// shows), and on a rise down to a gentle grade below the water at the head so
+// the river can run on through it; never more than gougeReach x size at once,
+// never below the sea; lakes are left alone. The last cells ramp back up so
+// the head can run out of the end. `through`: the trench takes the whole line
+// down to ground the head can run on (bots only press it then).
+// Returns { cells: [[cell, new rock]...], through, rise }.
 export function gougePlan(world, r) {
   const t = world.terrain, here = surfaceAt(world, r.x, r.z, r.idx);
-  const half = Math.max(t.cell * 0.6, widthOf(r) * 0.6), seen = new Set([cellIndex(t, r.x, r.z)]);
-  const cells = [], reach = TUNE.gougeDepth * r.size;
+  const half = Math.max(t.cell * 0.9, widthOf(r) * 0.7), seen = new Set([cellIndex(t, r.x, r.z)]);
+  const cells = [], dig = TUNE.gougeDig * r.size, reach = TUNE.gougeDepth * r.size;
+  let through = true, rise = 0;
   for (let i = 1; i <= TUNE.gougeCells; i++) {
     const d = t.cell * i, cx = r.x + r.dx * d, cz = r.z + r.dz * d;
     const floor = here - 0.5 - d * TUNE.gougeGrade;
+    const ramp = Math.min(1, (TUNE.gougeCells + 1 - i) / 2.5); // the far end eases back up
     const kc = cellIndex(t, cx, cz);
-    if (world.lakeOf[kc] >= 0 || surfaceAt(world, cx, cz, r.idx) <= floor + TUNE.climb) return { cells, through: true };
     for (let s = -half; s <= half; s += t.cell * 0.5) {
       const k = cellIndex(t, cx + r.dz * s, cz - r.dx * s);
       if (seen.has(k)) continue;
       seen.add(k);
       if (world.lakeOf[k] >= 0 || t.filled[k] <= SEA_LEVEL) continue;
-      const ground = t.filled[k] + world.rock[k];
-      if (ground <= floor) continue;
-      if (k === kc && ground - floor > reach) { // too high for one blow: cut this line as deep as it goes, then stop
-        for (let s2 = -half; s2 <= half; s2 += t.cell * 0.5) {
-          const k2 = cellIndex(t, cx + r.dz * s2, cz - r.dx * s2);
-          if (world.lakeOf[k2] >= 0 || t.filled[k2] <= SEA_LEVEL) continue;
-          const g2 = t.filled[k2] + world.rock[k2];
-          if (g2 > floor && !cells.some(([c]) => c === k2)) cells.push([k2, Math.max(Math.max(-TUNE.gougeMax, SEA_LEVEL + 0.5 - t.filled[k2]), world.rock[k2] - Math.min(g2 - floor, reach))]);
-        }
-        return { cells, through: false };
-      }
+      const ground = t.filled[k] + world.rock[k], edge = 1 - 0.4 * Math.abs(s) / half; // rounder at the banks
+      const want = Math.min(ground - dig * ramp * edge, ramp === 1 ? floor : ground);
       const lowest = Math.max(-TUNE.gougeMax, SEA_LEVEL + 0.5 - t.filled[k]);
-      const now = Math.max(lowest, world.rock[k] - Math.min(ground - floor, reach));
+      const now = Math.max(lowest, world.rock[k] - Math.min(ground - want, reach + dig));
+      if (k === kc) {
+        rise = Math.max(rise, ground - floor);
+        if (t.filled[k] + now > floor + TUNE.climb + 1e-6 && ramp === 1) through = false;
+      }
       if (now < world.rock[k]) cells.push([k, now]);
     }
   }
-  return { cells, through: false }; // still rising at the end of reach
+  return { cells, through, rise };
 }
 
+// A target worth a bot's blow: a real rise ahead that the trench breaks through.
 export function gougeTarget(world, r) {
   const p = gougePlan(world, r);
-  return p.through && p.cells.some(([k, now]) => world.rock[k] - now >= TUNE.gougeTarget);
+  return p.through && p.rise >= TUNE.gougeTarget + TUNE.climb;
 }
 
 export const gougeUsable = (world, r) => gougeReady(world, r) && gougeTarget(world, r);
