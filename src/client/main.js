@@ -266,7 +266,8 @@ function updateSkyClouds() {
     });
   }
   const falling = world.rivers.some((r) => r.dropping);
-  skyClouds(world).forEach((c, i) => { skyMeshes[i].visible = c.taken < 0 && (c.low || (falling && !mapView)); });
+  // (Lite mode, for tests and weak machines, skips the low clouds' big translucent shafts.)
+  skyClouds(world).forEach((c, i) => { skyMeshes[i].visible = c.taken < 0 && (c.low ? !lite : falling && !mapView); });
 }
 
 // The finish: red and white posts along the one beach that ends the race
