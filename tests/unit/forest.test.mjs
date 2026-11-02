@@ -51,6 +51,12 @@ function standAhead(w) {
     if (!w.trees[k] || !w.trees[k + 1] || !w.trees[k + 2]) continue;
     const up = k - 4; // four cells west, aimed east into the stand
     if (w.trees[up] || w.trees[up + 1] || w.lakeOf[up] >= 0 || t.filled[up] - t.filled[k] < 2 || t.filled[up] - t.filled[k] > 30) continue;
+    // Only a stand the water really runs into from there (the slope can carry it past).
+    const probe = createWorld(t7), r = addRiver(probe, 'p', pos(up)), size = TUNE.treeBreak + 0.3;
+    r.volume = TUNE.startVolume * size ** 3; r.size = size; r.mass = 1 + TUNE.speedPerSize * (size - 1); r.dx = 1; r.dz = 0; r.speed = 120;
+    let hit = false;
+    for (let j = 0; j < 80 && !hit; j++) { step(probe, new Map()); hit = cellIndex(t, r.x, r.z) === k; }
+    if (!hit) continue;
     return { from: pos(up), stand: k, pos };
   }
   return null;

@@ -66,16 +66,16 @@ function shapeOf(seed) {
   return {
     ax, ay, // down the slope: summit end at -long, sea end at +long
     long: 0.62 + 0.06 * r(), // half-length along the axis (fits the map in any direction)
-    wide: 0.17 + 0.05 * r(), // half-width of the corridor
+    wide: (0.17 + 0.05 * r()) * ISLAND.wide, // half-width of the corridor
     gap: 0.08 + 0.01 * r(), // how far the outer summits stand from the middle one
-    taper: 0.25 + 0.2 * r(), // how much the width wanders along the slope
-    warp: 0.05 + 0.04 * r(),
+    taper: (0.25 + 0.2 * r()) * ISLAND.taper, // how much the width wanders along the slope
+    warp: (0.05 + 0.04 * r()) * ISLAND.warp,
     wall: 0.08 + 0.03 * r(), // side walls, as a share of the top height
     // Lake basins: bowls sunk into the slope below the summits, which the
     // fill turns into lakes. Where along (t) and across (v, share of the
     // half-width) each sits, and its radius.
-    lakes: Array.from({ length: LAKES }, (_, i) => ({
-      t: 0.2 + (0.7 * (i + r())) / LAKES,
+    lakes: Array.from({ length: LAKES() }, (_, i) => ({
+      t: 0.2 + (0.7 * (i + r())) / LAKES(),
       v: (r() * 2 - 1) * 0.55,
       rad: 0.018 + 0.025 * r(),
     })),
@@ -84,8 +84,8 @@ function shapeOf(seed) {
     // Water hitting an arm slides along it to the gap, slowly; a river aimed
     // at the gap early keeps its speed, and everyone squeezes through the
     // same notch.
-    gates: Array.from({ length: GATES }, (_, i) => ({
-      t: 0.4 + (0.5 * (i + 0.3 + 0.4 * r())) / GATES,
+    gates: Array.from({ length: GATES() }, (_, i) => ({
+      t: 0.4 + (0.5 * (i + 0.3 + 0.4 * r())) / GATES(),
       v: (i % 2 ? 1 : -1) * (0.2 + 0.3 * r()),
     })),
   };
@@ -158,8 +158,12 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
 
 // Summit cones: peak height as a share of maxHeight, and metres of drop per
 // unit of map half-width (32 km) away from the peak: an even grade.
-const LAKES = 12; // lake basins down the slope
-const GATES = 5; // rock gates across the lower slope
+// Island shape settings (exported so tuning passes can try others; defaults keep every island as it was).
+// 2026-11-02 map pass: more lakes and a wider, winding corridor. wide 1.5 or warp 2 put
+// a fifth of the start cells nearer another summit than their own; 1.3 / 1.5 keeps all of them.
+export const ISLAND = { lakes: 20, gates: 5, wide: 1.3, taper: 2, warp: 1.5 };
+const LAKES = () => ISLAND.lakes; // lake basins down the slope
+const GATES = () => ISLAND.gates; // rock gates across the lower slope
 const GATE = { height: 45, thick: 0.007, gap: 0.12, spread: 0.06 };
 
 const SUMMIT = { top: 1.2, grade: 7500, at: 0.1, room: 0.06 };
