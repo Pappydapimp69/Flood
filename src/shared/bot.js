@@ -4,13 +4,58 @@
 // randomness comes from its own id-keyed stream.
 
 import { stream } from './rng.js';
-import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, DT, TUNE } from './river.js';
+import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, DT, TUNE } from './river.js';
+import { downhill } from './terrain.js';
 
 const OFFSETS = [-1.6, -0.7, -0.35, 0, 0.35, 0.7, 1.6]; // sideways share added to heading; + = left
 export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10 };
 
 // Trace the water from r holding heading (hx, hz) (the player's flow guide uses it too): each step runs down the
 // local fall line bent toward the heading, until it would climb out of reach.
+// Where the water will actually go holding heading (hx, hz), for about `metres`
+// (the route preview): the same steering rule as flowFrom, but past a rise it
+// can't climb it follows the fill's downhill tree round it, as the sim's escape
+// route does, instead of stopping. Each point: { x, z, d, kind } with kind
+// 'run' (going where aimed), 'slide' (bent along the slope) or 'route' (blocked,
+// finding its way round). end: distance to the beach at the last point.
+export function routeAhead(world, r, hx, hz, metres = 3000) {
+  const t = world.terrain, n = t.size, step = TUNE_BOT.step, h = t.cell * 2, out = [];
+  let x = r.x, z = r.z, d = 0, low = Math.min(r.low ?? Infinity, surfaceAt(world, x, z, r.idx));
+  const lift = liftOf(r);
+  while (d < metres) {
+    const here = surfaceAt(world, x, z, r.idx);
+    if (here < low) low = here;
+    const k = cellIndex(t, x, z);
+    if (world.beach?.[k] && t.filled[k] <= 0) break;
+    const gx = (surfaceAt(world, x + h, z, r.idx) - surfaceAt(world, x - h, z, r.idx)) / (2 * h);
+    const gz = (surfaceAt(world, x, z + h, r.idx) - surfaceAt(world, x, z - h, r.idx)) / (2 * h);
+    const gl = Math.sqrt(gx * gx + gz * gz);
+    let mx = hx, mz = hz, kind = 'run';
+    const lake = world.lakeOf[k];
+    if (gl >= TUNE.flatSlope && !(lake >= 0 && world.lakeVol[lake] > 0)) {
+      const wf = Math.min(1, gl / TUNE.fallSlope), fx = -gx / gl, fz = -gz / gl, up = hx * fx + hz * fz;
+      const over = up < 0 && -up * gl * TUNE.headLook > lift;
+      if (over) { mx -= up * fx; mz -= up * fz; kind = 'slide'; }
+      if (up >= 0 || over) { mx += fx * wf * (over ? TUNE.fallUphill : TUNE.fallDrift); mz += fz * wf * (over ? TUNE.fallUphill : TUNE.fallDrift); }
+      const ml = Math.sqrt(mx * mx + mz * mz) || 1;
+      mx /= ml; mz /= ml;
+    }
+    let nx = x + mx * step, nz = z + mz * step;
+    if (surfaceAt(world, nx, nz, r.idx) > low + TUNE.climb + lift) {
+      // Blocked: round the rise along the fill's downhill tree.
+      const dn = downhill(t, k);
+      if (dn < 0) break;
+      nx = ((dn % n) / (n - 1) - 0.5) * t.worldSize; nz = (Math.floor(dn / n) / (n - 1) - 0.5) * t.worldSize;
+      kind = 'route';
+    }
+    const sl = Math.hypot(nx - x, nz - z) || step;
+    x = nx; z = nz; d += sl;
+    out.push({ x, z, d, kind });
+  }
+  const last = out[out.length - 1] ?? { x: r.x, z: r.z };
+  return { path: out, end: world.toBeach?.[cellIndex(t, last.x, last.z)] ?? 0 };
+}
+
 export function flowFrom(world, r, hx, hz) {
   const h = world.terrain.cell * 2, out = [];
   let x = r.x, z = r.z, d = 0;
@@ -65,8 +110,15 @@ export function botSteer(world, bot) {
   if (r.dropping) return botGlide(world, bot);
   // Gouge, through the same button and gates as a player: when a rise has
   // slowed the head and there is ground ahead to cut (checked twice a second).
-  if (world.tick % 10 === idPhase(r.id) && r.gougeT < 0 && r.speed < TUNE.climbSpeed && gougeUsable(world, r)) {
+  // (Not with a deeper rival beside it: the wind-up holds the head still, and
+  // a rival in reach siphons 23% of its water while it waits (Brain G2).)
+  const exposed = world.tick % 5 === 0 && world.rivers.some((o) => o !== r && isRacing(o) && !o.dropping && o.depth > r.depth && (o.x - r.x) ** 2 + (o.z - r.z) ** 2 < 400 * 400);
+  if (!exposed && world.tick % 10 === idPhase(r.id) && r.gougeT < 0 && r.speed < TUNE.climbSpeed && gougeUsable(world, r)) {
     return { s: bot.steer ?? 0, f: 0, k: 1 };
+  }
+  // Surge on the flat, where the water has slowed and nothing rises ahead.
+  if (!exposed && world.tick % 10 === (idPhase(r.id) + 5) % 10 && r.speed < TUNE.baseSpeed * 1.2 && r.inLake < 0 && surgeReady(world, r) && !gougeTarget(world, r)) {
+    return { s: bot.steer ?? 0, f: 0, u: 1 };
   }
   // Going nowhere (moving, but back and forth, or not at all) for 2 s: let
   // go of the stick for a few seconds so the water finds its own way out, the

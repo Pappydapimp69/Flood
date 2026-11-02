@@ -12,6 +12,9 @@ export function createAudio() {
   let voices = 0;
   const VOICES = 12, last = {};
   try { muted = localStorage.getItem('flood.muted') === '1'; } catch { /* no storage */ }
+  // Music and effects volumes, 0..1, from the settings panel.
+  let vol = { music: 1, sfx: 1 };
+  try { vol = { ...vol, ...JSON.parse(localStorage.getItem('flood.vol') || '{}') }; } catch { /* no storage */ }
 
   function start() {
     if (ctx || muted) return;
@@ -35,7 +38,7 @@ export function createAudio() {
       const soft = ctx.createBiquadFilter();
       soft.type = 'lowpass'; soft.frequency.value = 7000;
       sfxBus = ctx.createGain();
-      sfxBus.gain.value = muted ? 0 : 1;
+      sfxBus.gain.value = muted ? 0 : vol.sfx;
       sfxBus.connect(soft).connect(comp).connect(ctx.destination);
       const layer = (type, f, q) => {
         const src = ctx.createBufferSource();
@@ -138,7 +141,7 @@ export function createAudio() {
     if (buffers) return;
     buffers = {};
     musicBus = ctx.createGain();
-    musicBus.gain.value = muted ? 0 : 1;
+    musicBus.gain.value = muted ? 0 : vol.music;
     musicBus.connect(ctx.destination);
     for (const [name, url] of Object.entries(TRACKS)) {
       fetch(url).then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(r.status))))
@@ -174,7 +177,7 @@ export function createAudio() {
   function startMusic() {
     if (!ctx || music) return;
     const out = ctx.createGain();
-    out.gain.value = muted ? 0 : 0.5;
+    out.gain.value = muted ? 0 : 0.5 * vol.music;
     const lp = ctx.createBiquadFilter();
     lp.type = 'lowpass';
     lp.frequency.value = 2200;
@@ -233,10 +236,17 @@ export function createAudio() {
       muted = !muted;
       try { localStorage.setItem('flood.muted', muted ? '1' : '0'); } catch { /* no storage */ }
       if (!muted) { start(); if (ctx) loadTracks(); }
-      if (music) music.out.gain.setTargetAtTime(muted ? 0 : 0.5, ctx.currentTime, 0.1);
-      if (musicBus) musicBus.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, 0.1);
-      if (sfxBus) sfxBus.gain.setTargetAtTime(muted ? 0 : 1, ctx.currentTime, 0.1);
+      if (music) music.out.gain.setTargetAtTime(muted ? 0 : 0.5 * vol.music, ctx.currentTime, 0.1);
+      if (musicBus) musicBus.gain.setTargetAtTime(muted ? 0 : vol.music, ctx.currentTime, 0.1);
+      if (sfxBus) sfxBus.gain.setTargetAtTime(muted ? 0 : vol.sfx, ctx.currentTime, 0.1);
       return muted;
+    },
+    get volumes() { return { ...vol }; },
+    setVolumes(v) {
+      vol = { ...vol, ...v };
+      try { localStorage.setItem('flood.vol', JSON.stringify(vol)); } catch { /* no storage */ }
+      if (ctx && musicBus) musicBus.gain.setTargetAtTime(muted ? 0 : vol.music, ctx.currentTime, 0.05);
+      if (ctx && sfxBus) sfxBus.gain.setTargetAtTime(muted ? 0 : vol.sfx, ctx.currentTime, 0.05);
     },
     get muted() { return muted; },
     get playing() { return playing?.name ?? (music ? 'generative' : null); },

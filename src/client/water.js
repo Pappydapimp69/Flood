@@ -251,13 +251,30 @@ export function makeSurge(mine) {
   return mesh;
 }
 
+// A soft round droplet for the spray (untextured points draw as hard squares,
+// which read as a white slab over the head).
+let dropTex = null;
+function dropTexture() {
+  if (dropTex || typeof document === 'undefined') return dropTex;
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const g = c.getContext('2d'), grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.45, 'rgba(255,255,255,0.85)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  dropTex = new THREE.CanvasTexture(c);
+  return dropTex;
+}
+
 // Spray: a ring buffer of droplets per head, thrown up and back, falling.
 const SPRAY = 70;
 export function makeSpray() {
   const geo = new THREE.BufferGeometry();
   const pos = new Float32Array(SPRAY * 3);
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage));
-  const mat = new THREE.PointsMaterial({ color: '#f4fdff', size: 14, sizeAttenuation: true, transparent: true, opacity: 0.85, depthWrite: false });
+  const mat = new THREE.PointsMaterial({ color: '#f4fdff', size: 14, sizeAttenuation: true, transparent: true, opacity: 0.85, depthWrite: false, map: dropTexture() });
   const pts = new THREE.Points(geo, mat);
   pts.frustumCulled = false;
   pts.renderOrder = 4;

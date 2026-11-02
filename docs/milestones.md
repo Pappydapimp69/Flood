@@ -294,3 +294,21 @@ biggest at 60 s won 0/10 (no snowball).
   lake swallow, lava hiss, bubbles while drawing a rival's water, a wave and chime at the sea.
 - Music crossfades with an equal-power curve between the menu and race pieces.
 - Verified only by levels (headless analyser on the output: peaks 0.07-0.3, no clipping), not by ear.
+
+## M20 — Skills, a readable race, and records (2026-11-02, from Brain training)
+Each step was measured on the sim first (Brain docs: train-plan-2026-11-02*.md, audit-2026-11-02.md).
+- One finish beach: the coast where the slope meets the sea; other coasts carry you to it on a current.
+- Gouge: a 3 s climb boost (+80 m x size), 10 s cooldown. Surge: a 2 s speed burst, 8 s cooldown; the only
+  lever that gave rivers at the back any comeback (3 of 18 vs 0 for water levers). Bots use both, but not
+  with a deeper rival beside them (the wind-up is a 23% siphon risk).
+- Route preview: the real movement rules run on a copy of your river (9 m off at 1 km, against 306 m for
+  a terrain trace). It shows where the water goes, not which way is faster: no preview could tell that.
+- Map view frames the whole run top-down with the finish marked; cloud markers out to 5 km.
+- Lakes stay lakes (slow level-drop evaporation, outlets stop 4 m under the start level); faster bank cuts.
+- Map: 20 lake bowls, a wider winding corridor, storms 2.5 km across, drop clouds inside the drop zone.
+- Waves hit harder (2.5x base) and carried speed fades in 1.1 s, not 0.27 s.
+- Results: stars against this race's own baselines (beach, the middle of the field, first) and a record
+  kept in the browser (races, wins, best place, fastest, stars) with personal bests called out.
+- Pause and settings (volumes, route preview, camera shake); a first-race coach, one step at a time.
+- Desync fingerprint covers the ground; spray drawn as round droplets.
+- Open: tensions T188 (wind-up length), T189 (skill cost vs size), T184 (eroded terrain), T180 (race ending).

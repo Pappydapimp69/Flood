@@ -87,6 +87,19 @@ export const TUNE = {
   gougeMinCost: 80_000, // ...but never less than this many litres
   gougeKeep: 0.5, // share of the starting volume a river must keep after paying
   gougeCool: 200, // ticks from one gouge to the next (10 s)
+  gougeSizeCost: false, // experiment: cost share x size (big rivers pay more)
+  // Surge, the second skill: a short wind-up, then
+  // a burst of speed on the flat; costs water, its own cooldown.
+  surgeOn: true,
+  surgeWind: 10, // ticks winding up (0.5 s), head still
+  surgeTicks: 40, // ticks of burst (2 s)
+  surgeSpeed: 2.5, // times base speed at least while surging
+  surgeShare: 0.08, // share of volume each surge spends (min gougeMinCost)
+  surgeCool: 160, // ticks from one surge to the next (8 s)
+  // Comeback experiments (off by default).
+  stormAim: 'pack', // 'pack': storms blow in just ahead of the middle of the field; 'tail': over its back
+  catchUp: 0, // extra trickle share for rivers more than catchUpGap behind the leader
+  catchUpGap: 3000,
   massEase: 0.04, // share of the way a river's momentum moves to its new size each tick
   stallTicks: 20, stallMin: 30, stallNet: 0.35,
   routeHold: 10, // ticks a head keeps to the way out once it takes it
@@ -467,6 +480,7 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     stuck: false, stuckAt: 0, stuckX: 0, stuckZ: 0, // a head on a lake cutting its way out through a bank
     exitPath: null, exitStep: 0,
     gougeT: -1, // ticks into a gouge's wind-up, or -1
+    surgeT: -1, surgeAt: 0, // Surge: ticks into it (wind-up then burst), or -1; tick it's ready again
     boost: 0, // ticks of Gouge's climb boost left
     gougeAt: 0, // tick the next gouge is ready
     pulses: [], // { s (metres down the path), i (next path point), amount, flow, every, erode, lakes passed }
@@ -680,14 +694,14 @@ function normalize(r) {
 // Inputs: Map<id, steer> with steer -1 | 0 | 1, or Map<id, { s, f, k }> where f
 // (-1 | 0 | 1) slows or hurries a falling drop and k (0 | 1) is the skill button.
 function readInput(v) {
-  if (v && typeof v === 'object') return { s: clampUnit(v.s), f: clampUnit(v.f), k: v.k ? 1 : 0 };
-  return { s: clampUnit(v), f: 0, k: 0 };
+  if (v && typeof v === 'object') return { s: clampUnit(v.s), f: clampUnit(v.f), k: v.k ? 1 : 0, u: v.u ? 1 : 0 };
+  return { s: clampUnit(v), f: 0, k: 0, u: 0 };
 }
 
 // ---- Gouge. Two gates, read alike by the sim, the HUD and the bots: ready
 // (recharged, enough water, free to act) and a target (ground ahead to cut).
 // The cooldown and the cost are taken only once both pass.
-export const gougeCost = (r) => Math.max(TUNE.gougeMinCost, r.volume * TUNE.gougeShare);
+export const gougeCost = (r) => Math.max(TUNE.gougeMinCost, r.volume * TUNE.gougeShare * (TUNE.gougeSizeCost ? Math.max(1, r.size) : 1));
 
 export function gougeReady(world, r) {
   return isRacing(r) && !r.dropping && r.pooled < 0 && r.gougeT < 0 && !(r.boost > 0) && world.tick >= r.gougeAt &&
@@ -740,6 +754,11 @@ const clampUnit = (v) => Math.max(-1, Math.min(1, v | 0));
 // 3. water moves between rivers and lakes;
 // 4. channel digs and erosion are applied, in id order.
 export function step(world, inputs) {
+  if (TUNE.catchUp) {
+    let lead = Infinity;
+    for (const r of world.rivers) if (isRacing(r) && !r.dropping) lead = Math.min(lead, world.toBeach[cellIndex(world.terrain, r.x, r.z)]);
+    world.leadReach = lead;
+  }
   for (const r of world.rivers) {
     if (!isRacing(r)) continue;
     moveRiver(world, r, readInput(inputs?.get(r.id)));
@@ -757,7 +776,9 @@ export function step(world, inputs) {
 // (downhill along the heading is fast, across a slope slow); water can't go
 // uphill, so a heading into a rise slides along the contour if it can, or the
 // water ponds a little and then waits for the player to turn.
-function moveRiver(world, r, { s: steer, f: fwd, k: skill }) {
+export const surgeReady = (world, r) => TUNE.surgeOn && isRacing(r) && !r.dropping && r.pooled < 0 && r.gougeT < 0 && !(r.surgeT >= 0)
+  && world.tick >= (r.surgeAt ?? 0) && r.volume - Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare) >= TUNE.gougeKeep * TUNE.startVolume;
+function moveRiver(world, r, { s: steer, f: fwd, k: skill, u: surge }) {
   if (r.dropping) return glide(world, r, steer, fwd);
   if (steer) {
     // Turn by adding a sideways component, then renormalising (angle = atan(a)).
@@ -772,6 +793,17 @@ function moveRiver(world, r, { s: steer, f: fwd, k: skill }) {
   // rise the boost can carry them over (see bot.js).
   if (skill && gougeReady(world, r)) startGouge(world, r);
   if (r.boost > 0) r.boost--;
+  if (surge && surgeReady(world, r)) {
+    const cost = Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare);
+    grow(r, -cost); r.surgeT = 0; r.surgeAt = world.tick + TUNE.surgeCool; r.speed = 0;
+    world.events.push({ type: 'surge-wind', river: r.idx, cost, tick: world.tick });
+  }
+  if (r.surgeT >= 0) {
+    r.surgeT++;
+    if (r.surgeT <= TUNE.surgeWind) { r.speed = 0; r.depth = depthOf(r); return; }
+    if (r.surgeT === TUNE.surgeWind + 1) world.events.push({ type: 'surge', river: r.idx, tick: world.tick });
+    if (r.surgeT > TUNE.surgeWind + TUNE.surgeTicks) r.surgeT = -1;
+  }
   if (r.gougeT >= 0) return gougeTick(world, r);
   // In the sea off the wrong coast: only the one beach ends the race, so the
   // current carries the river along the coast to it (no steering out at sea).
@@ -882,6 +914,7 @@ function moveRiver(world, r, { s: steer, f: fwd, k: skill }) {
   // longer, slowing down only slowly.
   r.speed += (target - r.speed) * (target > r.speed ? TUNE.speedEase : TUNE.slowEase / r.size);
   if (r.boost > 0) r.speed = Math.max(r.speed, TUNE.baseSpeed * TUNE.gougeSpeed * mass); // boosted: the climb can't slow it
+  if (r.surgeT > TUNE.surgeWind) r.speed = Math.max(r.speed, TUNE.baseSpeed * TUNE.surgeSpeed * mass); // surging
   r.depth = depthOf(r);
 
   // More water stands taller at the head: rises that would stop a small river
@@ -1191,7 +1224,7 @@ function weather(world) {
   if (!world.storms.length && world.tick >= (world.stormNext ?? TUNE.stormStart) && racing.length) {
     const rng = stream(world.terrain.seed, `storm:${world.tick}`);
     const ts = racing.map((r) => slopeT(world, r.x, r.z)).sort((a, b) => a - b);
-    const tAt = Math.min(0.95, ts[ts.length >> 1] + 0.05 + 0.12 * rng());
+    const tAt = TUNE.stormAim === 'tail' ? Math.min(0.95, ts[Math.floor(ts.length * 0.12)] + 0.03 + 0.06 * rng()) : Math.min(0.95, ts[ts.length >> 1] + 0.05 + 0.12 * rng());
     const t = world.terrain, ax = t.axis.x, az = t.axis.y, half = t.worldSize / 2;
     const u = (tAt * 2 * t.long - t.long) * half;
     const from = rng() < 0.5 ? -1 : 1, span = TUNE.stormSpan;
@@ -1574,7 +1607,10 @@ function moveTo(world, r, nx, nz) {
   r.x = nx; r.z = nz;
   // In a lake the river's volume holds: its water goes into the lake.
   // What a longer channel gathers comes down it from the source, in pulses.
-  if (world.lakeOf[cellIndex(world.terrain, nx, nz)] < 0) feed(r, 0, moved * TUNE.trickle);
+  if (world.lakeOf[cellIndex(world.terrain, nx, nz)] < 0) {
+    const behind = TUNE.catchUp && world.leadReach !== undefined && world.toBeach[cellIndex(world.terrain, nx, nz)] - world.leadReach > TUNE.catchUpGap;
+    feed(r, 0, moved * TUNE.trickle * (behind ? 1 + TUNE.catchUp : 1));
+  }
 }
 
 // Send a head on a lake to its lowest exit, by a path over the lake's water
@@ -1629,7 +1665,10 @@ function lowestExit(world, lake, self) {
   for (const o of world.rivers) {
     if (o === self) continue; // not back to where it already failed to get out
     const ot = o.via.get(lake);
-    if (ot && f[ot.cell] - ot.e < low && !drainsBack(world, ot.cell, lake)) { low = f[ot.cell] - ot.e; best = ot.cell; }
+    // (Ties go to the lower cell index, not to whichever river was added first:
+    // the race must not depend on the order rivers joined.)
+    const lip = f[ot?.cell] - ot?.e;
+    if (ot && (lip < low || (lip === low && ot.cell < best)) && !drainsBack(world, ot.cell, lake)) { low = lip; best = ot.cell; }
   }
   return best;
 }
@@ -1681,7 +1720,7 @@ function grow(r, litres) {
 function afterMove(world, r) {
   const here = cellIndex(world.terrain, r.x, r.z);
   // Flowing under a low rain cloud: its water is yours (first come).
-  for (const c of skyClouds(world)) {
+  for (const c of predicting ? [] : skyClouds(world)) {
     if (!c.low || c.taken >= 0 || (c.x - r.x) ** 2 + (c.z - r.z) ** 2 > TUNE.cloudRadius ** 2) continue;
     c.taken = r.idx;
     grow(r, c.water);
@@ -1775,6 +1814,32 @@ function seaCurrent(world, r, k) {
   afterMove(world, r);
 }
 
+// The route preview: run the real movement rules on a copy of a river for
+// `ticks`, holding the stick still, against a ghost of the world that keeps
+// its own events, digs and clock, so nothing shared changes (no ground worn,
+// no cloud taken). Rivals, pulses and weather don't move in the preview.
+// Returns [{ x, z, speed, kind }] with kind 'run' | 'slow' | 'route' | 'stuck'.
+let predicting = false;
+export function predictPath(world, r, ticks = 120, every = 4) {
+  if (!isRacing(r) || r.dropping) return [];
+  const ghost = Object.create(world);
+  Object.assign(ghost, { events: [], digs: [], dirty: [], tick: world.tick });
+  const g = {
+    ...r, path: r.path.slice(-2), via: new Map(r.via), feeds: new Map(), pulses: [], lakeFeeds: new Map(),
+    exitPath: r.exitPath ? r.exitPath.slice() : null,
+  };
+  const out = [];
+  predicting = true;
+  try {
+    for (let i = 0; i < ticks && isRacing(g); i++) {
+      moveRiver(ghost, g, { s: 0, f: 0, k: 0 });
+      ghost.tick++;
+      if (i % every === every - 1) out.push({ x: g.x, z: g.z, speed: g.speed, kind: g.stuck || g.filling ? 'stuck' : g.route !== null || g.exit >= 0 ? 'route' : g.speed < TUNE.climbSpeed ? 'slow' : 'run' });
+    }
+  } finally { predicting = false; }
+  return out;
+}
+
 export function cellIndex(t, wx, wz) {
   const n = t.size;
   const x = Math.max(0, Math.min(n - 1, Math.round((wx / t.worldSize + 0.5) * (n - 1))));
@@ -1852,6 +1917,7 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
 // that would only sink it deeper. Worn ground is lower for everyone (it's the
 // land, not a channel), so in time the head breaks through where it's aimed.
 function wearAhead(world, r) {
+  if (predicting) return; // a preview never touches the ground
   const t = world.terrain, n = t.size, floor = r.low - TUNE.climb;
   const half = Math.max(t.cell * 0.6, widthOf(r) / 2), seen = new Set([cellIndex(t, r.x, r.z)]);
   for (let i = 1; i <= TUNE.stuckWearCells; i++) {
@@ -1937,9 +2003,17 @@ export function riverFingerprint(world) {
   let h = 0x811c9dc5;
   const mix = (v) => { h = Math.imul(h ^ (v | 0), 0x01000193); };
   mix(world.tick);
+  // The ground too (worn rock, carved channels): a desync off every river's
+  // path would otherwise never show (Brain: it went unseen for 2,000+ ticks).
+  let g = 0;
+  for (let k = 0; k < world.rock.length; k++) {
+    const v = Math.round(world.rock[k] * 64) ^ Math.round(world.carve[k] * 64);
+    if (v) g = Math.imul(g ^ v ^ k, 0x01000193);
+  }
+  mix(g);
   for (const r of [...world.rivers].sort((a, b) => (a.id < b.id ? -1 : 1))) {
     mix(Math.round(r.x * 100)); mix(Math.round(r.z * 100)); mix(r.finishTick); mix(r.path.length); mix(Math.round(r.volume));
-    mix(r.out ? r.out.tick : -1); mix(r.pooled); mix(r.via.size); mix(r.gougeT); mix(r.gougeAt); mix(r.boost);
+    mix(r.out ? r.out.tick : -1); mix(r.pooled); mix(r.via.size); mix(r.gougeT); mix(r.gougeAt); mix(r.boost); mix(r.surgeT ?? -1); mix(r.surgeAt ?? 0);
   }
   return (h >>> 0).toString(16).padStart(8, '0');
 }

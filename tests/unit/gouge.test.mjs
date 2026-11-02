@@ -61,3 +61,40 @@ test('skill presses travel in frames and replay to the same race', () => {
   };
   assert.equal(run(), run());
 });
+
+test('surge: winds up still, then bursts at speed, pays water, and recharges', async () => {
+  const { surgeReady } = await import('../../src/shared/river.js');
+  const w = rollIsland(4, 12).world, r = addRiver(w, 'a');
+  for (let k = 0; k < 60; k++) step(w, new Map());
+  assert.ok(surgeReady(w, r));
+  const vol = r.volume, x = r.x;
+  step(w, new Map([['a', { s: 0, f: 0, u: 1 }]]));
+  assert.ok(w.events.some((e) => e.type === 'surge-wind'), 'no wind-up');
+  assert.ok(vol - r.volume > TUNE.gougeMinCost * 0.9, 'paid');
+  for (let k = 0; k < TUNE.surgeWind - 1; k++) { step(w, new Map()); assert.equal(r.x, x); }
+  for (let k = 0; k < 5; k++) step(w, new Map());
+  assert.ok(r.speed >= TUNE.baseSpeed * TUNE.surgeSpeed * 0.99, `surging at ${r.speed}`);
+  assert.equal(surgeReady(w, r), false, 'recharging');
+  const frame = encodeFrame(['a'], new Map([['a', { s: -1, f: 0, u: 1 }]]));
+  assert.deepEqual(decodeFrame(['a'], frame).get('a'), { s: -1, f: 0, u: 1 });
+});
+
+test('the route preview runs the real rules on a copy and changes nothing', async () => {
+  const { predictPath } = await import('../../src/shared/river.js');
+  const w = rollIsland(8, 12).world, r = addRiver(w, 'a');
+  for (let k = 0; k < 100; k++) step(w, new Map());
+  const fp = riverFingerprint(w), x = r.x, path = predictPath(w, r, 200, 4);
+  assert.equal(riverFingerprint(w), fp, 'the preview changed the world');
+  assert.equal(r.x, x);
+  assert.ok(path.length >= 40, `only ${path.length} points`);
+  // Unsteered, the river then runs along the path the preview drew (a pulse
+  // arriving can change how fast, not where): every 20 ticks it is within 60 m
+  // of the preview's line, while it is still within the preview's length.
+  const len = path.reduce((a, p, i) => a + (i ? Math.hypot(p.x - path[i - 1].x, p.z - path[i - 1].z) : 0), 0), t0 = r.travelled;
+  let worst = 0;
+  for (let k = 0; k < 200 && r.travelled - t0 < len * 0.9; k++) {
+    step(w, new Map());
+    if (k % 20 === 19) worst = Math.max(worst, Math.min(...path.map((p) => Math.hypot(p.x - r.x, p.z - r.z))));
+  }
+  assert.ok(worst < 60, `${Math.round(worst)} m off the previewed line`);
+});

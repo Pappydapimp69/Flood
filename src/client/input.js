@@ -9,9 +9,10 @@ const RIGHT = new Set(['ArrowRight', 'KeyD']);
 const FWD = new Set(['ArrowUp', 'KeyW']);
 const BACK = new Set(['ArrowDown', 'KeyS']);
 const SKILL = new Set(['Space', 'KeyE', 'ShiftLeft', 'ShiftRight']);
+const SURGE = new Set(['KeyQ', 'KeyF', 'ControlLeft']);
 
 // Standard gamepad mapping.
-const PAD = { A: 0, B: 1, X: 2, Y: 3, BACK: 8, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
+const PAD = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, BACK: 8, START: 9, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
 const DEADZONE = 0.35;
 
 export function createInput(target) {
@@ -24,6 +25,8 @@ export function createInput(target) {
   let onSkill = null; // () => void, fired on every skill press
   let skillPulse = 0; // a skill press not yet taken by a tick
   const pressSkill = () => { skillPulse = 1; onSkill?.(); };
+  let onSurge = null, surgePulse = 0;
+  const pressSurge = () => { surgePulse = 1; onSurge?.(); };
   let onPad = null; // fired once, when a gamepad is first seen
   const current = () => (held.left === held.right ? 0 : held.left ? -1 : 1);
   const press = (side) => { held[side] = true; pulse[side] = true; onChange?.(side === 'left' ? -1 : 1); };
@@ -53,7 +56,9 @@ export function createInput(target) {
       if (!e.repeat) pressSkill();
       if (e.code === 'Space') actions.push('restart');
       e.preventDefault();
-    } else if (e.code === 'KeyR' || e.code === 'Enter') actions.push('restart');
+    } else if (SURGE.has(e.code)) { if (!e.repeat) pressSurge(); e.preventDefault(); }
+    else if (e.code === 'Escape' || e.code === 'KeyP') actions.push('pause');
+    else if (e.code === 'KeyR' || e.code === 'Enter') actions.push('restart');
     else if (e.code === 'KeyM') actions.push('map');
   });
   addEventListener('keyup', (e) => {
@@ -98,6 +103,8 @@ export function createInput(target) {
     forward,
     // 1 once for each skill press (key, pad B or the on-screen button), then 0.
     takeSkill() { const k = skillPulse; skillPulse = 0; return k; },
+    takeSurge() { const u = surgePulse; surgePulse = 0; return u; },
+    pressSurge,
     pressSkill,
     // Right stick x, -1..1: turns the camera. 0 inside the dead zone.
     look: () => pad.look,
@@ -132,6 +139,8 @@ export function createInput(target) {
         if (pad.down.has(i)) continue; // edges only
         if (i === PAD.A) { actions.push('confirm', 'restart'); pressSkill(); } // A: select in menus, Gouge in a race
         else if (i === PAD.B) pressSkill();
+        else if (i === PAD.RB || i === PAD.LB) pressSurge();
+        else if (i === PAD.START) actions.push('pause');
         else if (i === PAD.X) actions.push('mute');
         else if (i === PAD.Y || i === PAD.BACK) actions.push('map');
         else if (i === PAD.UP) actions.push('up');
@@ -152,6 +161,7 @@ export function createInput(target) {
     set onPad(fn) { onPad = fn; },
     // Online play sends a skill press at once.
     set onSkill(fn) { onSkill = fn; },
+    set onSurge(fn) { onSurge = fn; },
     // Online play sends steer as it changes instead of waiting for the next frame.
     set onChange(fn) { onChange = fn; },
   };
