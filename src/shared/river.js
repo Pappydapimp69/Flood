@@ -160,7 +160,7 @@ export const TUNE = {
   // filling every lake it passes over.
   stormStart: 600 + 20 * 40,
   stormGap: 20 * 12,
-  stormRadius: 1300,
+  stormRadius: 2500, // (map pass: a storm you can actually reach)
   stormRain: 9000,
   stormLakeRain: 15, // litres per tick per lake cell for a lake under a storm
   stormSpan: 9000, // metres either side of the slope's centre line a storm starts and ends
