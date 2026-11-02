@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 \"/root/.brain/Brain/bin/brain\" session-start",
+            "command": "python3 \"$HOME/.brain/Brain/bin/brain\" session-start",
             "timeout": 10
           }
         ]

@@ -1515,9 +1515,21 @@ function lowestExit(world, lake, self) {
   for (const o of world.rivers) {
     if (o === self) continue; // not back to where it already failed to get out
     const ot = o.via.get(lake);
-    if (ot && f[ot.cell] - ot.e < low) { low = f[ot.cell] - ot.e; best = ot.cell; }
+    if (ot && f[ot.cell] - ot.e < low && !drainsBack(world, ot.cell, lake)) { low = f[ot.cell] - ot.e; best = ot.cell; }
   }
   return best;
+}
+
+// Whether the ground past an outlet runs straight back into its own lake. A
+// river that left over a bank cut its outlet where it climbed out, and the
+// fill's downhill tree from there can lead back in: an exit there only loops.
+function drainsBack(world, cell, lake) {
+  const t = world.terrain;
+  for (let k = cell, i = 0; k >= 0 && i < 64; k = downhill(t, k), i++) {
+    if (world.lakeOf[k] === lake) return true;
+    if (world.lakeOf[k] >= 0) return false;
+  }
+  return false;
 }
 
 function joinLake(world, r, lake, cell) {
