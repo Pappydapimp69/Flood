@@ -71,6 +71,8 @@ export const TUNE = {
   stuckWear: 0.5, // ...and wears the ground the way it's pushing down this many metres a tick, times size...
   stuckWearCells: 3, // ...this many cells out along its heading
   stuckWearMax: 40, // metres the ground can be worn down
+  beachRadius: 3000, // metres of coast either side of where the slope meets the sea: the one finish
+  seaCurrent: 150, // m/s: the current that carries a river off the wrong coast along to the beach
   // Gouge, a skill: the head rears up and slams down, and for gougeBoost the
   // water can run over ground far higher than it normally can, uphill where
   // it's aimed, without the climb bleeding its speed. The wind-up holds the
