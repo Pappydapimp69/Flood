@@ -14,7 +14,8 @@ export const TUNE = {
   baseSpeed: 55, // m/s on level ground at starting size
   slopeSpeed: 1800, // extra m/s per unit downhill slope
   maxSpeed: 240,
-  speedEase: 0.12, // share of the way to target speed per tick, at starting size
+  speedEase: 0.12, // share of the way to target speed per tick, at starting size, speeding up...
+  slowEase: 0.03, // ...and slowing down (divided by size): carried speed halves in about 1.1 s, not 0.27 s
   climb: 1.5, // metres any head can rise over before it is blocked, before its head height
   headPerSize: 2, // metres the water stands at the head per unit of size: what it can push over
   headLook: 150,
@@ -148,11 +149,11 @@ export const TUNE = {
   // river grows by what reaches its head.
   pulseEvery: [[3_000_000, 20], [8_000_000, 40], [Infinity, 60]], // [below this volume, ticks]
   pulseSpeed: 3,
-  surge: 1.2, // a pulse reaching the head adds up to this many times base speed...
-  surgeShare: 0.03, // ...the full surge once it brings this share of the river's volume...
-  surgeCap: 1.35, // ...up to this many times its usual top speed
-  surgeLift: 1.5, // metres a head running at base speed can carry up a rise (grows with speed squared)...
-  surgeLiftMax: 25, // ...up to this
+  surge: 2.5, // a pulse reaching the head adds up to this many times base speed...
+  surgeShare: 0.015, // ...the full surge once it brings this share of the river's volume...
+  surgeCap: 1.6, // ...up to this many times its usual top speed
+  surgeLift: 3, // metres a head running at base speed can carry up a rise (grows with speed squared)...
+  surgeLiftMax: 40, // ...up to this
   // Storms: one at a time, from stormStart and then stormGap after each has
   // gone, a storm blows in from one side of the island ahead of the pack and
   // sweeps across to the other,
@@ -941,7 +942,7 @@ function moveRiver(world, r, { s: steer, f: fwd, k: skill }) {
     : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + TUNE.slopeSpeed * along) * mass))) * drag;
   // Momentum: more water surges up to speed just as fast, but holds it
   // longer, slowing down only slowly.
-  r.speed += (target - r.speed) * (target > r.speed ? TUNE.speedEase : TUNE.speedEase / r.size);
+  r.speed += (target - r.speed) * (target > r.speed ? TUNE.speedEase : TUNE.slowEase / r.size);
   r.depth = depthOf(r);
 
   // More water stands taller at the head: rises that would stop a small river
