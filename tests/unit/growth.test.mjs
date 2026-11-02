@@ -47,7 +47,7 @@ test('a head in a lake raises it and keeps its own volume', () => {
   assert.ok(poured > 0, 'no inflow from the river in it'); // in pulses, not every tick
 });
 
-test('leaving a lake: mass jumps at once, an outlet opens, water keeps coming and erodes it', () => {
+test('leaving a lake: mass jumps at once, an outlet opens, water keeps coming and erodes it', async () => {
   const w = createWorld(t42);
   const { lake, inside, outCell, pos } = bigLake(w);
   const r = addRiver(w, 'a', inside);
@@ -66,7 +66,9 @@ test('leaving a lake: mass jumps at once, an outlet opens, water keeps coming an
   let fed = 0;
   for (let k = 0; k < 40; k++) { step(w, new Map()); fed = Math.max(fed, r.inflow); }
   assert.ok(fed > 0, 'no water flowing out to the river');
-  assert.ok(o.e > e0, 'the outlet did not erode');
+  // It erodes, down to the floor an outlet may reach (TUNE.outletDrain under the lake's start level).
+  const { outletLipFloor } = await import('../../src/shared/river.js');
+  assert.ok(o.e > e0 || t42.filled[outCell] - o.e <= outletLipFloor(w, lake.id) + 1e-6, 'the outlet did not erode');
 });
 
 test('water leaves only over a lip below the surface, never over a high bank', async () => {

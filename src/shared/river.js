@@ -1028,7 +1028,8 @@ function moveRiver(world, r, { s: steer, f: fwd, k: skill }) {
   // right down, and running down gives it back through the slope.
   const rise = surfaceAt(world, nx, nz, me) - here;
   if (rise > 0 && !onLake && !(r.boost > 0)) {
-    const v2 = r.speed * r.speed - (rise * TUNE.baseSpeed * TUNE.baseSpeed) / TUNE.surgeLift;
+    // (Heavier water loses less speed per metre: mass carries a big river further up.)
+    const v2 = r.speed * r.speed - (rise * TUNE.baseSpeed * TUNE.baseSpeed) / (TUNE.surgeLift * (r.mass ?? 1));
     r.speed = Math.max(TUNE.minSpeed, Math.sqrt(Math.max(0, v2)));
   }
   moveTo(world, r, nx, nz);
@@ -1766,9 +1767,9 @@ function seaCurrent(world, r, k) {
   r.speed = TUNE.seaCurrent;
   r.depth = depthOf(r);
   if (tl < 1e-6) return;
-  r.dx = tx / tl; r.dz = tz / tl;
+  // (The current moves the water; the heading stays the player's.)
   const step = Math.min(tl, r.speed * DT);
-  moveTo(world, r, r.x + r.dx * step, r.z + r.dz * step);
+  moveTo(world, r, r.x + (tx / tl) * step, r.z + (tz / tl) * step);
   afterMove(world, r);
 }
 
