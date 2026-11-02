@@ -24,3 +24,10 @@ nothing, in which case it is just a lunge.
 Bots still press it only when the cut breaks through. Brain lesson (2026-11-02, flood gouge
 breakthrough): cuts that stop short leave dead-end trenches, and with them bots finished 86 vs 92
 of 120 and 3 vs 0 were trapped. The player gets the freedom, and the preview shows the risk.
+
+## Update (owner, same day): Gouge is a climb boost, not a cut
+Gouge no longer changes the terrain. After the wind-up, for 3 s (`TUNE.gougeBoost`) the head can
+pass over ground up to 80 m x size higher than usual (`gougeLift`, folded into `liftOf`). It goes
+where it's aimed even uphill, at least 2x base speed, and climbing doesn't cost it speed. The
+cooldown is 10 s from the press. The trench, the breakthrough plan and the dig-phase cut queue are
+gone. Bots press it facing a rise above what they can climb but within the boost's lift.

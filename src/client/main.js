@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, gougeReady, gougeTarget, gougeCost, gougePlan, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, gougeReady, gougeTarget, gougeCost, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, VERT } from './terrainMesh.js';
@@ -728,16 +728,10 @@ function advance(inputs) {
       if (en) en.gougeAt = performance.now();
       if (river && e.river === river.idx) { showPop(`Gouge! −${fmtL(e.cost)}`); audio.gougeWind(); }
     } else if (e.type === 'gouge') {
-      // The blow lands: spray thrown up all along the cut, the camera jolts.
+      // The slam: spray thrown up all round, the camera jolts, the boost is on.
       const en = entries[e.river], gr = world.rivers[e.river];
-      if (en) {
-        en.slamAt = performance.now();
-        for (let i = 0; i <= 4; i++) {
-          const d = (e.len * i) / 4, x = e.x + e.dx * d, z = e.z + e.dz * d;
-          burstSpray(en.spray, x, surfaceAt(world, x, z) * VERT, z, 1.4 * gr.size, 14);
-        }
-      }
-      if (river && e.river === river.idx) { audio.gouge(gr.size); gougeShakeAt = performance.now(); if (!e.cells) showPop('Nothing left to cut there'); }
+      if (en) { en.slamAt = performance.now(); burstSpray(en.spray, gr.x, surfaceAt(world, gr.x, gr.z) * VERT, gr.z, 1.8 * gr.size, 60); }
+      if (river && e.river === river.idx) { audio.gouge(gr.size); gougeShakeAt = performance.now(); showPop('Boosted — climb anything for 3 s'); }
       else if (river && en && Math.hypot(gr.x - river.x, gr.z - river.z) < 3000) audio.gouge(0.5);
     } else if (e.type === 'pool') {
       if (river && e.river === river.idx) showPop('Lake — your water pours in and raises it');
@@ -795,55 +789,24 @@ const fmtL = (v) => `${Math.round(v).toLocaleString('en-US')} L`;
 
 // The skill button reads the same two gates the sim and the bots do: ready
 // (recharged, enough water) and a target (ground ahead to cut).
-let gougeLine = null, gougeHintAt = -1e9;
+let gougeHintAt = -1e9;
 function updateSkill() {
   const show = !!river && isRacing(river) && !river.dropping && !mapView;
   hud.skill.hidden = !show;
-  if (gougeLine) gougeLine.visible = false;
   if (!show) return;
   const left = Math.max(0, river.gougeAt - world.tick);
-  const busy = river.gougeT >= 0, ready = gougeReady(world, river);
-  const plan = ready || busy ? gougePlan(world, river) : null;
-  const target = ready && gougeTarget(world, river);
-  const tooHigh = ready && !target && plan.cells.length > 0 && !plan.through;
+  const busy = river.gougeT >= 0 || river.boost > 0, ready = gougeReady(world, river);
   const state = busy ? 'busy' : left ? 'cool' : !ready ? 'dry' : 'go';
   hud.skill.dataset.state = state;
-  hud.skill.style.setProperty('--cool', left ? (left / TUNE.gougeCool).toFixed(3) : 0);
-  const note = state === 'cool' ? `ready in ${Math.ceil(left / TICK_HZ)} s` : state === 'dry' ? 'need more water'
-    : state === 'busy' ? 'cutting…'
-    : `${target ? 'cut through' : tooHigh ? 'cut part way' : plan.cells.length ? 'carve' : 'lunge'} · −${Math.round(gougeCost(river) / 1000)}k L`;
+  hud.skill.style.setProperty('--cool', left && !busy ? (left / TUNE.gougeCool).toFixed(3) : 0);
+  const note = river.gougeT >= 0 ? 'winding up…' : river.boost > 0 ? `boosted · ${(river.boost / TICK_HZ).toFixed(1)} s`
+    : state === 'cool' ? `ready in ${Math.ceil(left / TICK_HZ)} s` : state === 'dry' ? 'need more water'
+    : `climb boost · −${Math.round(gougeCost(river) / 1000)}k L`;
   if (hud.skillNote.textContent !== note) hud.skillNote.textContent = note;
-  // What it will do: a glowing line on the ground along the cut it would make.
-  if ((state === 'go' || state === 'busy') && plan?.cells.length) {
-    const t = world.terrain, n = t.size;
-    let far = 0;
-    for (const [k] of plan.cells) {
-      const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize - river.x, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize - river.z;
-      far = Math.max(far, kx * river.dx + kz * river.dz);
-    }
-    far += t.cell * 0.5;
-    if (!gougeLine) {
-      gougeLine = new THREE.Mesh(new THREE.PlaneGeometry(1, 1, 1, 16), new THREE.MeshBasicMaterial({ color: '#ff8a2a', transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }));
-      gougeLine.renderOrder = 5;
-      scene.add(gougeLine);
-    }
-    const pos = gougeLine.geometry.attributes.position, wdt = widthOf(river) * 0.6, here = surfaceAt(world, river.x, river.z, river.idx);
-    for (let i = 0; i < pos.count; i++) {
-      const side = pos.getX(i) < 0 ? -1 : 1, along = (pos.getY(i) + 0.5) * far;
-      const x = river.x + river.dx * along + river.dz * side * wdt, z = river.z + river.dz * along - river.dx * side * wdt;
-      // Drawn at the floor the cut will leave, so you see the channel it opens.
-      const y = Math.min(surfaceAt(world, x, z, river.idx), here - 0.5 - along * TUNE.gougeGrade);
-      pos.setXYZ(i, x, y * VERT + 12, z);
-    }
-    pos.needsUpdate = true;
-    gougeLine.geometry.computeBoundingSphere();
-    gougeLine.material.opacity = state === 'busy' ? 0.85 : 0.4 + 0.2 * Math.sin(performance.now() / 160);
-    gougeLine.visible = true;
-  }
-  // Blocked by a rise it can cut: say so, the moment it happens.
-  if (state === 'go' && target && river.speed < TUNE.climbSpeed && performance.now() - gougeHintAt > 8000) {
+  // A rise the boost would carry you over: say so, the moment it stops you.
+  if (state === 'go' && river.speed < TUNE.climbSpeed && gougeTarget(world, river) && performance.now() - gougeHintAt > 8000) {
     gougeHintAt = performance.now();
-    showPop(lowPower ? 'Blocked — tap GOUGE to cut through' : 'Blocked — press SPACE to GOUGE through');
+    showPop(lowPower ? 'Blocked — tap GOUGE to climb over' : 'Blocked — press SPACE / A to GOUGE over it');
   }
 }
 let popTimer;
@@ -1134,8 +1097,9 @@ renderer.setAnimationLoop(() => {
       const wind = r.gougeT >= 0 && r.gougeT < TUNE.gougeWind ? (r.gougeT + alpha) / TUNE.gougeWind : 0;
       const slam = e.slamAt ? Math.max(0, 1 - (now - e.slamAt) / 450) : 0;
       const rear = wind * wind, quiver = wind > 0.6 ? Math.sin(now / 22) * 0.06 * wind : 0;
-      e.surge.position.set(hx - e.mx * 40 * s * rear, hy + 6 * s + 70 * s * rear * (1 - slam), hz - e.mz * 40 * s * rear);
-      e.surge.scale.set(95 * s * (1 - 0.25 * rear + 0.35 * slam + quiver), 46 * s * (1 + 1.8 * rear - 0.5 * slam), 120 * s * (1 - 0.3 * rear + 0.8 * slam));
+      const lift = r.boost > 0 ? Math.min(1, r.boost / 10) * (0.9 + 0.1 * Math.sin(now / 60)) : 0; // boosted: a tall standing wave
+      e.surge.position.set(hx - e.mx * 40 * s * rear, hy + 6 * s + 70 * s * rear * (1 - slam) + 40 * s * lift, hz - e.mz * 40 * s * rear);
+      e.surge.scale.set(95 * s * (1 - 0.25 * rear + 0.35 * slam + quiver + 0.3 * lift), 46 * s * (1 + 1.8 * rear - 0.5 * slam + 1.6 * lift), 120 * s * (1 - 0.3 * rear + 0.8 * slam + 0.3 * lift));
       e.surge.rotation.set(0, Math.atan2(e.mx / ml, e.mz / ml), 0);
     }
     updateSpray(e.spray, hx, hy, hz, e.mx, e.mz, 1 + (r.size - 1) * 2, Math.min(1, r.speed / 200), frameDt, flowing && !r.finished);    e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
