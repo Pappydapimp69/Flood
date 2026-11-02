@@ -66,6 +66,7 @@ export class Room {
     seat.held = s;
     seat.fwd = f;
     if (s) seat.pulse = s; // a tap shorter than a tick still turns once
+    if (msg.k === 1) seat.skill = 1; // a press, played on the next tick
   }
 
   fingerprint(conn, msg) {
@@ -117,8 +118,9 @@ export class Room {
       const seat = this.byId.get(id);
       if (!seat) continue;
       const st = seat.held || seat.pulse;
-      steers.set(id, seat.fwd ? { s: st, f: seat.fwd } : st);
+      steers.set(id, seat.fwd || seat.skill ? { s: st, f: seat.fwd, k: seat.skill ?? 0 } : st);
       seat.pulse = 0;
+      seat.skill = 0;
     }
     for (const b of this.bots) steers.set(b.river.id, botSteer(w, b));
     const frame = { t: 'f', k: w.tick, i: encodeFrame(this.ids, steers) };

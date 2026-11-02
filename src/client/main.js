@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, gougeReady, gougeTarget, gougeCost, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -166,7 +166,7 @@ addEventListener('resize', fitCamera);
 const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
-  document.getElementById('help').textContent = 'Controller: left stick steers (up / down while falling) · right stick turns the camera · A: select / race again · Y: map · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (up / down while falling) · right stick turns the camera · B: gouge · A: select / race again · Y: map · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -189,7 +189,12 @@ const hud = {
   menu: document.getElementById('menu'),
   status: document.getElementById('status'),
   hint: document.getElementById('hint'),
+  skill: document.getElementById('skill'),
+  skillNote: document.querySelector('#skill small'),
 };
+// The skill button: a tap works like Space / E / pad B.
+hud.skill.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); input.pressSkill(); });
+let gougeShakeAt = 0; // ms: when your own gouge landed (the camera jolts)
 
 const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
 
@@ -379,6 +384,7 @@ let everOpen = false;
 function goOnline(name) {
   mode = 'online';
   input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true, river.dropping ? input.forward() : 0); };
+  input.onSkill = () => { if (river && isRacing(river) && !river.dropping) net?.skill(input.sample()); };
   if (!terrain) { useIsland(1); camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0); }
   status('Connecting…');
   net = connect({
@@ -556,7 +562,8 @@ function sampleSteer() {
   if (aim) { steer = aim.s; f = aim.f; }
   dbg.steers.push(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
-  return f ? { s: steer, f } : steer;
+  const k = dbg.forceSkill ? 1 : input.takeSkill();
+  return f || k ? { s: steer, f, k } : steer;
 }
 
 // Draw the drag stick while it aims the drop.
@@ -681,6 +688,22 @@ function advance(inputs) {
       const en = entries[e.river], lr = world.rivers[e.river];
       if (en) burstSpray(en.spray, lr.x, surfaceAt(world, lr.x, lr.z) * VERT, lr.z, 1.2, 70);
       if (river && e.river === river.idx) { highlightZone(terrainMesh, dropZone(world), false); audio.splash(1.2); }
+    } else if (e.type === 'gouge-wind') {
+      const en = entries[e.river];
+      if (en) en.gougeAt = performance.now();
+      if (river && e.river === river.idx) { showPop(`Gouge! −${fmtL(e.cost)}`); audio.gougeWind(); }
+    } else if (e.type === 'gouge') {
+      // The blow lands: spray thrown up all along the cut, the camera jolts.
+      const en = entries[e.river], gr = world.rivers[e.river];
+      if (en) {
+        en.slamAt = performance.now();
+        for (let i = 0; i <= 4; i++) {
+          const d = (e.len * i) / 4, x = e.x + e.dx * d, z = e.z + e.dz * d;
+          burstSpray(en.spray, x, surfaceAt(world, x, z) * VERT, z, 1.4 * gr.size, 14);
+        }
+      }
+      if (river && e.river === river.idx) { audio.gouge(gr.size); gougeShakeAt = performance.now(); if (!e.cells) showPop('Nothing left to cut there'); }
+      else if (river && en && Math.hypot(gr.x - river.x, gr.z - river.z) < 3000) audio.gouge(0.5);
     } else if (e.type === 'pool') {
       if (river && e.river === river.idx) showPop('Lake — your water pours in and raises it');
     } else if (e.type === 'pond') {
@@ -734,6 +757,22 @@ function advance(inputs) {
 }
 
 const fmtL = (v) => `${Math.round(v).toLocaleString('en-US')} L`;
+
+// The skill button reads the same two gates the sim and the bots do: ready
+// (recharged, enough water) and a target (ground ahead to cut).
+function updateSkill() {
+  const show = !!river && isRacing(river) && !river.dropping && !mapView;
+  hud.skill.hidden = !show;
+  if (!show) return;
+  const left = Math.max(0, river.gougeAt - world.tick);
+  const busy = river.gougeT >= 0, ready = gougeReady(world, river), target = ready && gougeTarget(world, river);
+  const state = busy ? 'busy' : left ? 'cool' : !ready ? 'dry' : target ? 'go' : 'idle';
+  hud.skill.dataset.state = state;
+  hud.skill.style.setProperty('--cool', left ? (left / TUNE.gougeCool).toFixed(3) : 0);
+  const note = state === 'cool' ? `${Math.ceil(left / TICK_HZ)} s` : state === 'dry' ? 'need water'
+    : state === 'idle' ? 'nothing to cut' : state === 'busy' ? '…' : `−${Math.round(gougeCost(river) / 1000)}k L`;
+  if (hud.skillNote.textContent !== note) hud.skillNote.textContent = note;
+}
 let popTimer;
 function showPop(text) {
   hud.pop.textContent = text;
@@ -1017,8 +1056,13 @@ renderer.setAnimationLoop(() => {
       if (vl > 0.5) { e.mx += (vx / vl - e.mx) * 0.2; e.mz += (vz / vl - e.mz) * 0.2; }
       const ml = Math.hypot(e.mx, e.mz) || 1;
       const s = r.size * (r.finished ? 1.4 : 1);
-      e.surge.position.set(hx, hy + 6 * s, hz);
-      e.surge.scale.set(95 * s, 46 * s, 120 * s);
+      // Gouge: the water rears up and draws back while it winds up, then
+      // slams flat and long when the blow lands.
+      const wind = r.gougeT >= 0 && r.gougeT < TUNE.gougeWind ? (r.gougeT + alpha) / TUNE.gougeWind : 0;
+      const slam = e.slamAt ? Math.max(0, 1 - (now - e.slamAt) / 450) : 0;
+      const rear = wind * wind, quiver = wind > 0.6 ? Math.sin(now / 22) * 0.06 * wind : 0;
+      e.surge.position.set(hx - e.mx * 40 * s * rear, hy + 6 * s + 70 * s * rear * (1 - slam), hz - e.mz * 40 * s * rear);
+      e.surge.scale.set(95 * s * (1 - 0.25 * rear + 0.35 * slam + quiver), 46 * s * (1 + 1.8 * rear - 0.5 * slam), 120 * s * (1 - 0.3 * rear + 0.8 * slam));
       e.surge.rotation.set(0, Math.atan2(e.mx / ml, e.mz / ml), 0);
     }
     updateSpray(e.spray, hx, hy, hz, e.mx, e.mz, 1 + (r.size - 1) * 2, Math.min(1, r.speed / 200), frameDt, flowing && !r.finished);    e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
@@ -1119,7 +1163,8 @@ renderer.setAnimationLoop(() => {
     const fast = falling || done ? 0 : Math.min(1, (focus.speed ?? 0) / 260);
     const fov = baseFov * (1 + 0.22 * fast);
     if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * (1 - Math.exp(-frameDt * 3)); camera.updateProjectionMatrix(); }
-    const shake = falling || done ? 0 : Math.min(18, 14 * Math.max(0, sz - 1) * fast + 3 * fast * fast);
+    const jolt = gougeShakeAt ? Math.max(0, 1 - (now - gougeShakeAt) / 500) : 0;
+    const shake = falling || done ? 0 : Math.max(Math.min(18, 14 * Math.max(0, sz - 1) * fast + 3 * fast * fast), 45 * jolt * jolt);
     if (shake > 0.5) {
       camera.position.x += (Math.random() - 0.5) * shake;
       camera.position.y += (Math.random() - 0.5) * shake;
@@ -1155,6 +1200,7 @@ renderer.setAnimationLoop(() => {
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`
     : me.inLake >= 0 && heatGap(me) < 0 ? 'the heat front is drying this lake'
     : `pouring ${fmtL(dischargeOf(me) * TICK_HZ + me.inflow * TICK_HZ)}/s · head ${headOf(me).toFixed(1)} m · cutting ${me.depth.toFixed(1)} m` + (fedBy ? ` · fed by ${fedBy}` : '');
+  updateSkill();
   watchCaptions(now, place);
   tugFeedback(now);
   if (river && !isRacing(river) && !endShown && (!river.finished || world.tick - river.finishTick > 3 * TICK_HZ)) {

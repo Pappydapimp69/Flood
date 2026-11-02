@@ -4,7 +4,7 @@
 // randomness comes from its own id-keyed stream.
 
 import { stream } from './rng.js';
-import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, DT, TUNE } from './river.js';
+import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, DT, TUNE } from './river.js';
 
 const OFFSETS = [-1.6, -0.7, -0.35, 0, 0.35, 0.7, 1.6]; // sideways share added to heading; + = left
 export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10 };
@@ -42,6 +42,10 @@ export function flowFrom(world, r, hx, hz) {
   return out;
 }
 
+// A tick phase 0..9 from the river's id (never its index: that depends on the
+// order rivers were added, and the race must not).
+const idPhase = (id) => { let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 10; return h; };
+
 export function createBot(world, river, skill) {
   const rng = stream(world.terrain.seed, `bot:${river.id}`);
   return {
@@ -59,6 +63,11 @@ export function botSteer(world, bot) {
   const r = bot.river;
   if (!isRacing(r)) return 0;
   if (r.dropping) return botGlide(world, bot);
+  // Gouge, through the same button and gates as a player: when a rise has
+  // slowed the head and there is ground ahead to cut (checked twice a second).
+  if (world.tick % 10 === idPhase(r.id) && r.gougeT < 0 && r.speed < TUNE.climbSpeed && gougeUsable(world, r)) {
+    return { s: bot.steer ?? 0, f: 0, k: 1 };
+  }
   // Going nowhere (moving, but back and forth, or not at all) for 2 s: let
   // go of the stick for a few seconds so the water finds its own way out, the
   // way a player would. The game itself never steers.

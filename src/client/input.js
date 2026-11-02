@@ -8,6 +8,7 @@ const LEFT = new Set(['ArrowLeft', 'KeyA']);
 const RIGHT = new Set(['ArrowRight', 'KeyD']);
 const FWD = new Set(['ArrowUp', 'KeyW']);
 const BACK = new Set(['ArrowDown', 'KeyS']);
+const SKILL = new Set(['Space', 'KeyE', 'ShiftLeft', 'ShiftRight']);
 
 // Standard gamepad mapping.
 const PAD = { A: 0, B: 1, X: 2, Y: 3, BACK: 8, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
@@ -20,6 +21,9 @@ export function createInput(target) {
   const actions = []; // one-shot keys: 'restart', 'map'
 
   let onChange = null; // (steer) => void, fired on every press and release
+  let onSkill = null; // () => void, fired on every skill press
+  let skillPulse = 0; // a skill press not yet taken by a tick
+  const pressSkill = () => { skillPulse = 1; onSkill?.(); };
   let onPad = null; // fired once, when a gamepad is first seen
   const current = () => (held.left === held.right ? 0 : held.left ? -1 : 1);
   const press = (side) => { held[side] = true; pulse[side] = true; onChange?.(side === 'left' ? -1 : 1); };
@@ -45,7 +49,11 @@ export function createInput(target) {
       keys[FWD.has(e.code) ? 'fwd' : 'back'] = true;
       if (forward() !== was) onChange?.(current());
       e.preventDefault();
-    } else if (e.code === 'KeyR' || e.code === 'Enter' || e.code === 'Space') actions.push('restart');
+    } else if (SKILL.has(e.code)) {
+      if (!e.repeat) pressSkill();
+      if (e.code === 'Space') actions.push('restart');
+      e.preventDefault();
+    } else if (e.code === 'KeyR' || e.code === 'Enter') actions.push('restart');
     else if (e.code === 'KeyM') actions.push('map');
   });
   addEventListener('keyup', (e) => {
@@ -88,6 +96,9 @@ export function createInput(target) {
     },
     // Hurry (+1) or slow (-1) the drop.
     forward,
+    // 1 once for each skill press (key, pad B or the on-screen button), then 0.
+    takeSkill() { const k = skillPulse; skillPulse = 0; return k; },
+    pressSkill,
     // Right stick x, -1..1: turns the camera. 0 inside the dead zone.
     look: () => pad.look,
     takeActions() { return actions.splice(0); },
@@ -96,7 +107,7 @@ export function createInput(target) {
     drag: () => (stick ? { dx: stick.x - stick.x0, dy: stick.y - stick.y0, x0: stick.x0, y0: stick.y0 } : null),
     // Read gamepads; call once per frame. Steering is the left stick or D-pad,
     // its up / down hurries or slows the drop; the right stick turns the camera.
-    // Button presses become actions: A 'confirm' (and 'restart'), X 'mute',
+    // Button presses become actions: A 'confirm' (and 'restart'), B the skill, X 'mute',
     // Y/Back 'map', D-pad or stick up/down 'up'/'down' for menus.
     poll() {
       const pads = navigator.getGamepads?.() ?? [];
@@ -120,6 +131,7 @@ export function createInput(target) {
       for (const i of now) {
         if (pad.down.has(i)) continue; // edges only
         if (i === PAD.A) actions.push('confirm', 'restart');
+        else if (i === PAD.B) pressSkill();
         else if (i === PAD.X) actions.push('mute');
         else if (i === PAD.Y || i === PAD.BACK) actions.push('map');
         else if (i === PAD.UP) actions.push('up');
@@ -138,6 +150,8 @@ export function createInput(target) {
       }
     },
     set onPad(fn) { onPad = fn; },
+    // Online play sends a skill press at once.
+    set onSkill(fn) { onSkill = fn; },
     // Online play sends steer as it changes instead of waiting for the next frame.
     set onChange(fn) { onChange = fn; },
   };
