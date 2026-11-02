@@ -61,6 +61,17 @@
     #hint .g { color: #8be68b; } #hint .r { color: #ff8d80; }
     #mute { position: fixed; right: calc(14px + env(safe-area-inset-right, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
       font-size: 20px; background: #eaf5fbd9; border: 0; border-radius: 10px; min-width: 40px; height: 40px; padding: 0 8px; cursor: pointer; white-space: nowrap; }
+    #skill { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+      width: 84px; height: 84px; border-radius: 50%; border: 3px solid #ffffffcc; cursor: pointer; touch-action: none;
+      font: 900 15px system-ui, sans-serif; letter-spacing: 0.04em; color: #fff; text-shadow: 0 1px 3px #0008;
+      display: grid; place-content: center; gap: 2px; text-align: center; -webkit-user-select: none; user-select: none;
+      background: conic-gradient(#0b2a36cc calc(var(--cool, 0) * 360deg), #c8642acc 0); box-shadow: 0 4px 14px #0005; }
+    #skill small { font: 600 11px system-ui, sans-serif; letter-spacing: 0; opacity: 0.9; }
+    #skill[hidden] { display: none; }
+    #skill[data-state="go"] { background: radial-gradient(circle, #ff9a3c, #c8481a); animation: skillReady 1.2s ease-in-out infinite; }
+    #skill[data-state="idle"], #skill[data-state="dry"] { background: #4a5a62b0; color: #ffffffb0; }
+    #skill[data-state="busy"] { background: radial-gradient(circle, #ffd27a, #ff7a1a); transform: scale(1.08); }
+    @keyframes skillReady { 50% { box-shadow: 0 0 0 7px #ff9a3c55, 0 4px 14px #0005; } }
     #banner[hidden] { display: none; }
     #help { position: fixed; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); left: 0; right: 0; text-align: center;
       font: 13px system-ui, sans-serif; color: #10303dcc; pointer-events: none; }
@@ -136,11 +147,12 @@
   <div id="tags"></div>
   <div id="pop"></div>
   <div id="feed"></div>
-  <div id="help">Steer: ← → or A D · on a phone, hold the left or right side · M: map</div>
+  <div id="help">Steer: ← → or A D · on a phone, hold the left or right side · Space / E: gouge · M: map</div>
   <div id="status" hidden></div>
   <div id="downhill" hidden></div>
   <div id="hint" hidden>← → steer · ↑ ↓ while falling · join lakes to grow · touch smaller <b class="g">▼</b> rivers to absorb them, avoid bigger <b class="r">▲</b> ones · every trail is live water; grey beds belong to drained rivers</div>
   <button id="mute" aria-label="Sound on or off"></button>
+  <button id="skill" hidden aria-label="Gouge: cut the ground ahead (Space, E or pad B)">GOUGE<small></small></button>
   <div id="splash" hidden>
     <h2>FLOOD</h2>
     <p>Every player is a river. Race downhill to the sea.</p>

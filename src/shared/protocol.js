@@ -6,31 +6,36 @@
 //
 // client -> server
 //   { t: 'hello', token?, name? }       join (token resumes a seat)
-//   { t: 'in', s, f? }                  steer -1 | 0 | 1; f: hurry +1 / slow -1 the drop
+//   { t: 'in', s, f?, k? }              steer -1 | 0 | 1; f: hurry +1 / slow -1 the drop; k: 1 skill pressed
 //   { t: 'fp', k, fp }                  sim fingerprint after tick k
 // server -> client
 //   { t: 'welcome', token, id }
 //   { t: 'lobby', players, startsIn }   seconds until the race starts
 //   { t: 'start', seed, ids, names, you, log }   log: frames already played
-//   { t: 'f', k, i }                    frame for tick k; i: one char per id (steer x forward)
+//   { t: 'f', k, i }                    frame for tick k; i: one char per id (steer x forward x skill)
 //   { t: 'end', standings }             ids, best first
 //   { t: 'resync' }                     fingerprint mismatch: say hello again
 
-// One char per river: steer (-1, 0, 1) by forward (-1, 0, 1). The f = 0 row is
-// the old '-0+' so a frame of plain steering reads the same.
+// One char per river: steer (-1, 0, 1) by forward (-1, 0, 1), and the same nine
+// in capitals with the skill pressed. The f = 0 row is the old '-0+' so a frame
+// of plain steering reads the same.
 const CHARS = ['abc', '-0+', 'xyz'];
+const SKILL = ['ABC', 'DEF', 'XYZ'];
 const DECODE = new Map();
-for (let f = -1; f <= 1; f++) for (let s = -1; s <= 1; s++) DECODE.set(CHARS[f + 1][s + 1], f ? { s, f } : s);
+for (let f = -1; f <= 1; f++) for (let s = -1; s <= 1; s++) {
+  DECODE.set(CHARS[f + 1][s + 1], f ? { s, f } : s);
+  DECODE.set(SKILL[f + 1][s + 1], { s, f, k: 1 });
+}
 
 const unit = (v) => Math.max(-1, Math.min(1, v | 0));
 
-// steers: id -> steer number or { s, f }.
+// steers: id -> steer number or { s, f, k }.
 export function encodeFrame(ids, steers) {
   let out = '';
   for (const id of ids) {
-    const v = steers.get(id);
-    const s = unit(v && typeof v === 'object' ? v.s : v), f = unit(v && typeof v === 'object' ? v.f : 0);
-    out += CHARS[f + 1][s + 1];
+    const v = steers.get(id), o = v && typeof v === 'object';
+    const s = unit(o ? v.s : v), f = unit(o ? v.f : 0);
+    out += (o && v.k ? SKILL : CHARS)[f + 1][s + 1];
   }
   return out;
 }

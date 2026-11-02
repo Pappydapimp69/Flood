@@ -68,6 +68,21 @@ export const TUNE = {
   stuckWear: 0.5, // ...and wears the ground the way it's pushing down this many metres a tick, times size...
   stuckWearCells: 3, // ...this many cells out along its heading
   stuckWearMax: 40, // metres the ground can be worn down
+  // Gouge, a skill: the head rears up and slams down, cutting the ground ahead
+  // down to a gentle grade below it. The wind-up holds the head still and open
+  // to rivals (the real price), and the blow spends water.
+  gougeWind: 16, // ticks rearing up (0.8 s): the head stands still, steering aims the cut
+  gougeRecover: 6, // ticks after the blow before the water runs on (0.3 s)
+  gougeCells: 6, // cells cut ahead of the head (about 600 m)
+  gougeDepth: 25, // metres the blow can lower one cell, times size
+  gougeGrade: 0.01, // the cut falls this many metres per metre ahead: water runs on along it
+  gougeMax: 60, // metres the ground can be gouged down in all
+  gougeTarget: 2, // metres: there must be at least this much ground to cut somewhere ahead
+  gougeShare: 0.1, // share of the river's volume each gouge spends...
+  gougeMinCost: 80_000, // ...but never less than this many litres
+  gougeKeep: 0.5, // share of the starting volume a river must keep after paying
+  gougeCool: 240, // ticks from one gouge to the next (12 s)
+  gougeLunge: 2, // times base speed the water bursts on into the cut
   massEase: 0.04, // share of the way a river's momentum moves to its new size each tick
   stallTicks: 20, stallMin: 30, stallNet: 0.35,
   routeHold: 10, // ticks a head keeps to the way out once it takes it
@@ -443,6 +458,8 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     cut: 0, cutTicks: 0, cutAt: -1, cutLake: -1,
     stuck: false, stuckAt: 0, stuckX: 0, stuckZ: 0, // a head on a lake cutting its way out through a bank
     exitPath: null, exitStep: 0,
+    gougeT: -1, // ticks into a gouge (wind-up then recovery), or -1
+    gougeAt: 0, // tick the next gouge is ready
     pulses: [], // { s (metres down the path), i (next path point), amount, flow, every, erode, lakes passed }
     feeds: new Map(), // path index -> litres waiting to leave there with the next pulse
     pulseAt: 0, // tick the next pulse leaves
@@ -622,11 +639,113 @@ function normalize(r) {
   if (len > 1e-9) { r.dx /= len; r.dz /= len; }
 }
 
-// Inputs: Map<id, steer> with steer -1 | 0 | 1, or Map<id, { s, f }> where f
-// (-1 | 0 | 1) slows or hurries a falling drop.
+// Inputs: Map<id, steer> with steer -1 | 0 | 1, or Map<id, { s, f, k }> where f
+// (-1 | 0 | 1) slows or hurries a falling drop and k (0 | 1) is the skill button.
 function readInput(v) {
-  if (v && typeof v === 'object') return { s: clampUnit(v.s), f: clampUnit(v.f) };
-  return { s: clampUnit(v), f: 0 };
+  if (v && typeof v === 'object') return { s: clampUnit(v.s), f: clampUnit(v.f), k: v.k ? 1 : 0 };
+  return { s: clampUnit(v), f: 0, k: 0 };
+}
+
+// ---- Gouge. Two gates, read alike by the sim, the HUD and the bots: ready
+// (recharged, enough water, free to act) and a target (ground ahead to cut).
+// The cooldown and the cost are taken only once both pass.
+export const gougeCost = (r) => Math.max(TUNE.gougeMinCost, r.volume * TUNE.gougeShare);
+
+export function gougeReady(world, r) {
+  return isRacing(r) && !r.dropping && r.pooled < 0 && r.gougeT < 0 && world.tick >= r.gougeAt &&
+    r.volume - gougeCost(r) >= TUNE.gougeKeep * TUNE.startVolume;
+}
+
+// Cells the blow would cut along the current heading: [cell, new rock] pairs.
+// Each cell comes down to a gentle grade below the water at the head, never
+// below the sea; lakes are left alone. A blow only ever cuts a way THROUGH: the
+// cut runs ahead until it meets ground the water can already run on (or a
+// lake), and if no such ground lies within reach, or a cell stands deeper than
+// one blow can cut, there is no target. (A cut that stopped short would leave a
+// dead-end trench that holds the head.)
+// Returns { cells: [[cell, new rock]...], through }.
+export function gougePlan(world, r) {
+  const t = world.terrain, here = surfaceAt(world, r.x, r.z, r.idx);
+  const half = Math.max(t.cell * 0.6, widthOf(r) * 0.6), seen = new Set([cellIndex(t, r.x, r.z)]);
+  const cells = [], reach = TUNE.gougeDepth * r.size;
+  for (let i = 1; i <= TUNE.gougeCells; i++) {
+    const d = t.cell * i, cx = r.x + r.dx * d, cz = r.z + r.dz * d;
+    const floor = here - 0.5 - d * TUNE.gougeGrade;
+    const kc = cellIndex(t, cx, cz);
+    if (world.lakeOf[kc] >= 0 || surfaceAt(world, cx, cz, r.idx) <= floor + TUNE.climb) return { cells, through: true };
+    for (let s = -half; s <= half; s += t.cell * 0.5) {
+      const k = cellIndex(t, cx + r.dz * s, cz - r.dx * s);
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (world.lakeOf[k] >= 0 || t.filled[k] <= SEA_LEVEL) continue;
+      const ground = t.filled[k] + world.rock[k];
+      if (ground <= floor) continue;
+      if (k === kc && ground - floor > reach) return { cells, through: false }; // too high for one blow
+      const lowest = Math.max(-TUNE.gougeMax, SEA_LEVEL + 0.5 - t.filled[k]);
+      const now = Math.max(lowest, world.rock[k] - Math.min(ground - floor, reach));
+      if (now < world.rock[k]) cells.push([k, now]);
+    }
+  }
+  return { cells, through: false }; // still rising at the end of reach
+}
+
+export function gougeTarget(world, r) {
+  const p = gougePlan(world, r);
+  return p.through && p.cells.some(([k, now]) => world.rock[k] - now >= TUNE.gougeTarget);
+}
+
+export const gougeUsable = (world, r) => gougeReady(world, r) && gougeTarget(world, r);
+
+// This tick's blows, in id order; where two cut one cell the deeper cut holds.
+function applyGouges(world) {
+  if (!world.gouges?.length) return;
+  for (const { plan } of world.gouges.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))) {
+    for (const [k, now] of plan) {
+      if (now >= world.rock[k]) continue;
+      world.treeRock[k] += now - world.rock[k];
+      world.rock[k] = now;
+      world.dirty.push(k);
+    }
+  }
+  world.gouges.length = 0;
+}
+
+function startGouge(world, r) {
+  const cost = gougeCost(r);
+  grow(r, -cost);
+  r.gougeT = 0;
+  r.gougeAt = world.tick + TUNE.gougeCool;
+  r.speed = 0;
+  world.events.push({ type: 'gouge-wind', river: r.idx, cost, tick: world.tick });
+}
+
+// One tick of a gouge under way. The head holds still (rivals can still cut
+// into it); at the end of the wind-up the blow lands along the heading as it
+// is aimed then, and after the recovery the water bursts on into the cut.
+function gougeTick(world, r) {
+  r.gougeT++;
+  r.speed = 0;
+  r.depth = depthOf(r);
+  if (r.gougeT === TUNE.gougeWind) {
+    // Re-aimed during the wind-up at a rise it can't break through: the blow
+    // lands, but cuts nothing (the water is spent all the same).
+    const { cells, through } = gougePlan(world, r), plan = through ? cells : [];
+    let cut = 0;
+    for (const [k, now] of plan) cut = Math.max(cut, world.rock[k] - now);
+    // The ground changes with the digs, after everyone has moved, so no river
+    // feels another's blow a tick early because of the order they move in.
+    (world.gouges ??= []).push({ id: r.id, plan });
+    world.events.push({ type: 'gouge', river: r.idx, x: r.x, z: r.z, dx: r.dx, dz: r.dz, len: world.terrain.cell * TUNE.gougeCells, cells: plan.length, cut, tick: world.tick });
+  }
+  if (r.gougeT >= TUNE.gougeWind + TUNE.gougeRecover) {
+    r.gougeT = -1;
+    r.speed = TUNE.baseSpeed * TUNE.gougeLunge * Math.max(1, r.size);
+    // A fresh start from here: no route, exit or stall held over from before.
+    r.route = null; r.exit = -1; r.exitPath = null; r.stuck = false;
+    r.cut = 0; r.cutTicks = 0; r.cutAt = -1; r.cutLake = -1;
+    r.low = Math.min(r.low, surfaceAt(world, r.x, r.z, r.idx));
+    r.netAt = r.stuckAt = world.tick; r.netX = r.stuckX = r.x; r.netZ = r.stuckZ = r.z; r.netT = r.travelled;
+  }
 }
 const clampUnit = (v) => Math.max(-1, Math.min(1, v | 0));
 
@@ -647,6 +766,7 @@ export function step(world, inputs) {
   pulses(world);
   erodeTrails(world);
   applyDigs(world);
+  applyGouges(world);
   world.tick++;
 }
 
@@ -654,7 +774,7 @@ export function step(world, inputs) {
 // (downhill along the heading is fast, across a slope slow); water can't go
 // uphill, so a heading into a rise slides along the contour if it can, or the
 // water ponds a little and then waits for the player to turn.
-function moveRiver(world, r, { s: steer, f: fwd }) {
+function moveRiver(world, r, { s: steer, f: fwd, k: skill }) {
   if (r.dropping) return glide(world, r, steer, fwd);
   if (steer) {
     // Turn by adding a sideways component, then renormalising (angle = atan(a)).
@@ -665,6 +785,8 @@ function moveRiver(world, r, { s: steer, f: fwd }) {
     r.dx = dx; r.dz = dz;
     normalize(r);
   }
+  if (skill && gougeUsable(world, r)) startGouge(world, r);
+  if (r.gougeT >= 0) return gougeTick(world, r);
   if (r.pooled >= 0) {
     // Pooled in a lake below full: the water rises; the head waits.
     r.pooledTicks++;
@@ -1749,7 +1871,7 @@ export function riverFingerprint(world) {
   mix(world.tick);
   for (const r of [...world.rivers].sort((a, b) => (a.id < b.id ? -1 : 1))) {
     mix(Math.round(r.x * 100)); mix(Math.round(r.z * 100)); mix(r.finishTick); mix(r.path.length); mix(Math.round(r.volume));
-    mix(r.out ? r.out.tick : -1); mix(r.pooled); mix(r.via.size);
+    mix(r.out ? r.out.tick : -1); mix(r.pooled); mix(r.via.size); mix(r.gougeT); mix(r.gougeAt);
   }
   return (h >>> 0).toString(16).padStart(8, '0');
 }
