@@ -100,7 +100,7 @@ await check('a short tap still registers (event-time capture)', async () => {
   await until(page, (s) => s.ready, 'ready');
   // Each press+release lands inside one frame; held-state sampling alone would see nothing.
   await page.evaluate(() => { __flood.steers.length = 0; });
-  for (let i = 0; i < 3; i++) { await page.keyboard.press('ArrowLeft', { delay: 0 }); await page.waitForTimeout(1200); } // a frame apart even at 2 fps headless
+  for (let i = 0; i < 3; i++) { await page.keyboard.press('ArrowLeft', { delay: 0 }); await page.waitForTimeout(2500); } // a frame apart even below 1 fps (CI's software renderer)
   const steers = await page.evaluate(() => __flood.steers.slice());
   const lefts = steers.filter((v) => v === -1).length;
   if (lefts < 3) throw new Error(`only ${lefts} left ticks from 3 taps: ${steers.join('')}`);
