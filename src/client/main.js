@@ -266,29 +266,32 @@ function updateSkyClouds() {
     });
   }
   const falling = world.rivers.some((r) => r.dropping);
-  skyClouds(world).forEach((c, i) => { skyMeshes[i].visible = c.taken < 0 && (c.low || (falling && !mapView)); });
+  // (Lite mode, for tests and weak machines, skips the low clouds' big translucent shafts.)
+  skyClouds(world).forEach((c, i) => { skyMeshes[i].visible = c.taken < 0 && (c.low ? !lite : falling && !mapView); });
 }
 
-// The finish: red and white posts along the one beach that ends the race.
+// The finish: red and white posts along the one beach that ends the race
+// (two instanced meshes: one draw call per colour, however long the beach).
 let finishFlags = null;
 function placeFinishFlags() {
   if (finishFlags) { scene.remove(finishFlags); finishFlags.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); }); }
   finishFlags = new THREE.Group();
-  const t = world.terrain, n = t.size, mats = [new THREE.MeshBasicMaterial({ color: '#ffffff' }), new THREE.MeshBasicMaterial({ color: '#e63946' })];
-  const geo = new THREE.CylinderGeometry(22, 22, 160, 8);
-  const spots = [];
+  const t = world.terrain, n = t.size, spots = [];
   for (const k of world.beachLand) {
     const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
-    if (spots.some((p) => (p.x - x) ** 2 + (p.z - z) ** 2 < 500 ** 2)) continue;
+    if (spots.some((p) => (p.x - x) ** 2 + (p.z - z) ** 2 < 600 ** 2)) continue;
     spots.push({ x, z });
   }
-  for (const p of spots) {
-    const g = surfaceAt(world, p.x, p.z) * VERT;
-    for (let i = 0; i < 4; i++) {
-      const seg = new THREE.Mesh(geo, mats[i % 2]);
-      seg.position.set(p.x, g + 80 + i * 160, p.z);
-      finishFlags.add(seg);
+  const geo = new THREE.CylinderGeometry(22, 22, 160, 8), m4 = new THREE.Matrix4();
+  for (const [colour, parity] of [['#ffffff', 0], ['#e63946', 1]]) {
+    const inst = new THREE.InstancedMesh(geo, new THREE.MeshBasicMaterial({ color: colour }), spots.length * 2);
+    let i = 0;
+    for (const p of spots) {
+      const g = surfaceAt(world, p.x, p.z) * VERT;
+      for (let j = parity; j < 4; j += 2) inst.setMatrixAt(i++, m4.makeTranslation(p.x, g + 80 + j * 160, p.z));
     }
+    inst.count = i;
+    finishFlags.add(inst);
   }
   scene.add(finishFlags);
 }

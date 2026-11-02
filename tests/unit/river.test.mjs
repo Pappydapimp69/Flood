@@ -172,7 +172,8 @@ test('more water stands taller: a big river pushes over rises a small one is tur
     r.dx = -fall.x; r.dz = -fall.z; // straight back up the slope it came down
     const h0 = surfaceAt(w, r.x, r.z, r.idx);
     let top = h0;
-    for (let k = 0; k < 40; k++) { step(w, new Map()); top = Math.max(top, surfaceAt(w, r.x, r.z, r.idx)); }
+    // (4 s: with momentum both still climb at 2 s; the size shows in how far each gets.)
+    for (let k = 0; k < 80; k++) { step(w, new Map()); top = Math.max(top, surfaceAt(w, r.x, r.z, r.idx)); }
     return top - h0;
   };
   assert.ok(headOf({ size: 3 }) === 9 * headOf({ size: 1 }));

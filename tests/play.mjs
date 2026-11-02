@@ -20,7 +20,7 @@ const state = (page) => page.evaluate(() => {
 });
 
 // Poll the game's own clock, never wall time.
-async function until(page, fn, what, tries = 600) {
+async function until(page, fn, what, tries = 1200) { // 60 s: CI renders in software, slower than the sim
   for (let i = 0; i < tries; i++) {
     const s = await state(page);
     if (s.error) throw new Error(s.error);
@@ -100,7 +100,7 @@ await check('a short tap still registers (event-time capture)', async () => {
   await until(page, (s) => s.ready, 'ready');
   // Each press+release lands inside one frame; held-state sampling alone would see nothing.
   await page.evaluate(() => { __flood.steers.length = 0; });
-  for (let i = 0; i < 3; i++) { await page.keyboard.press('ArrowLeft', { delay: 0 }); await page.waitForTimeout(1200); } // a frame apart even at 2 fps headless
+  for (let i = 0; i < 3; i++) { await page.keyboard.press('ArrowLeft', { delay: 0 }); await page.waitForTimeout(2500); } // a frame apart even below 1 fps (CI's software renderer)
   const steers = await page.evaluate(() => __flood.steers.slice());
   const lefts = steers.filter((v) => v === -1).length;
   if (lefts < 3) throw new Error(`only ${lefts} left ticks from 3 taps: ${steers.join('')}`);
@@ -131,7 +131,8 @@ await check('race: rank shows, and a drained player spectates the winner', async
   await until(page, (s) => s.tick > s0.tick + 110, 'past spawn grace');
   // Shrink the player and drop a bot on its head: next tick it must be absorbed.
   await page.evaluate(() => {
-    const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out && !r.finished);
+    // (A bot mid-Gouge holds still and digs no channel: pick one that is flowing.)
+    const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out && !r.finished && r.gougeT < 0 && !(r.boost > 0) && !r.dropping);
     me.volume = 1; me.size = 0.01; // (size follows volume when water arrives; set both)
     bot.x = me.x + 5; bot.z = me.z;
     window.__absorber = bot.id;
