@@ -33,7 +33,9 @@ test('gouge costs water, holds the head through the wind-up, then cuts a way thr
   const vol = r.volume, cost = gougeCost(r), plan = gougePlan(w, r);
   assert.ok(plan.through && plan.cells.length > 0);
   press(w);
-  assert.equal(Math.round(r.volume), Math.round(vol - cost), 'the cost is paid at once');
+  const wind = w.events.find((e) => e.type === 'gouge-wind');
+  assert.equal(Math.round(wind.cost), Math.round(cost), 'the cost charged');
+  assert.ok(vol - r.volume > cost * 0.9, 'the cost is paid at once'); // (a spill or pulse may add a little the same tick)
   assert.equal(r.gougeAt, w.tick - 1 + TUNE.gougeCool);
   const x = r.x, z = r.z;
   const events = [];

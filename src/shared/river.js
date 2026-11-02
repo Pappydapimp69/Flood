@@ -19,7 +19,8 @@ export const TUNE = {
   headPerSize: 2, // metres the water stands at the head per unit of size: what it can push over
   headLook: 150,
   climbSpeed: 40, // m/s: below this a head aimed uphill can't run up the slope // metres ahead a rise is judged against the head // metres the head may sit above the lowest point it has reached
-  bankCut: 0.5, // metres a head on a lake cuts into the bank it's pushing on, per tick, times size
+  bankCut: 1.5, // metres a head on a lake cuts into the bank it's pushing on, per tick, times size
+  // (fast: with lakes full, a slow cut held heads against banks for a quarter of their slow time)
   cutMax: 40, // metres above the lake, times size: the highest rim a head can cut through
   cutTicks: 120, // a bank still not cut through after 6 s: make for the lake's lowest exit
   pool: 0.15, // metres a stuck head's water rises per tick, times size: the hollow fills, then spills
@@ -50,6 +51,7 @@ export const TUNE = {
   outletK: 3000, // litres per tick an outlet carries at 1 m of water over its lip, starting width
   erodeK: 0.002, // metres an outlet erodes per tick, per metre of water over its lip, times the river's size
   outletMax: 40, // metres: most water over a lip that counts
+  outletDrain: 4, // metres below its starting level an outlet can ever drain a lake: lakes stay lakes
   spillK: 4000, // litres per tick a lake spills at 1 m over its rim
   spillDepth: 2, // metres a spill cuts its channel (it never erodes)
   spillWidth: 50, // metres
@@ -102,10 +104,12 @@ export const TUNE = {
   floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
   // Rain clouds hang in the sky over the summits: fall through one and its
   // water is yours, a bigger start; each can only be taken once.
-  skyClouds: 14,
+  skyClouds: 6, // rain clouds in the drop's sky, over the landing ring...
+  slopeClouds: 14, // ...and low rain clouds spread evenly down the slope, caught by flowing under them
   cloudRadius: 500, // metres across the sky...
   cloudDepth: 400, // ...and this far above or below its height
   cloudWater: [150_000, 450_000],
+  slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
   glideSpeed: 140, // m/s sideways while falling (x0.5 slowed, x1.5 hurried)
   settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
   zoneSlack: 300, // metres a falling drop may stray from the landing ring
@@ -132,7 +136,8 @@ export const TUNE = {
   heatStart: 600 + 20 * 50,
   heatSpeed: 155,
   heatEvery: 60, // every 3 s...
-  heatLake: 40_000, // ...each lake behind the front loses this many litres (inflow still fills it)
+  heatDrop: 0.1, // ...each lake behind the front falls this many metres (a level drop, not litres: a
+  // pond and a deep lake dry at the same rate, as real evaporation does; inflow still fills it)
   // Pulses: a river's water comes down its channel in waves. Every
   // pulseEvery ticks (more for bigger rivers) a pulse leaves the source with
   // the water gathered since the last; it runs down the channel at pulseSpeed
@@ -506,7 +511,7 @@ function glide(world, r, steer, fwd) {
   r.alt = Math.max(0, r.alt - rate);
   r.dropping = r.alt > 0 ? Math.max(1, Math.ceil(r.alt / rate)) : 1; // ticks left at the rate it's falling now
   for (const c of skyClouds(world)) {
-    if (c.taken >= 0 || (c.x - r.x) ** 2 + (c.z - r.z) ** 2 > TUNE.cloudRadius ** 2 || Math.abs(c.alt - r.alt) > TUNE.cloudDepth) continue;
+    if (c.low || c.taken >= 0 || (c.x - r.x) ** 2 + (c.z - r.z) ** 2 > TUNE.cloudRadius ** 2 || Math.abs(c.alt - r.alt) > TUNE.cloudDepth) continue;
     c.taken = r.idx;
     grow(r, c.water);
     world.events.push({ type: 'cloud', river: r.idx, amount: c.water, cloud: c.id, tick: world.tick });
@@ -537,6 +542,33 @@ export function skyClouds(world) {
       taken: -1,
     };
   });
+  // Low clouds down the slope, one per band of distance to the sea from the
+  // start ring to the coast, so there is water to chase the whole way down,
+  // not only in the sky at the start. Caught by a head flowing under one.
+  const low = stream(t.seed, 'slope-clouds'), top = Math.max(...ring.map((k) => world.reach[k]));
+  const picked = [];
+  for (let i = 0; i < TUNE.slopeClouds; i++) {
+    const want = top * (1 - (i + 0.5) / TUNE.slopeClouds);
+    let best = -1, bestErr = Infinity;
+    for (let tries = 0; tries < 400; tries++) {
+      const k = Math.floor(low() * n * n);
+      if (world.lakeOf[k] >= 0 || t.filled[k] <= SEA_LEVEL + 5 || world.lava?.[k] || !Number.isFinite(world.reach[k])) continue;
+      const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+      if (picked.some((p) => (p.x - kx) ** 2 + (p.z - kz) ** 2 < 2500 ** 2)) continue;
+      const err = Math.abs(world.reach[k] - want);
+      if (err < bestErr) { bestErr = err; best = k; }
+    }
+    if (best < 0) continue;
+    const c = {
+      id: world.clouds.length, low: true,
+      x: ((best % n) / (n - 1) - 0.5) * t.worldSize, z: (Math.floor(best / n) / (n - 1) - 0.5) * t.worldSize,
+      alt: TUNE.slopeCloudAlt,
+      water: TUNE.cloudWater[0] + low() * (TUNE.cloudWater[1] - TUNE.cloudWater[0]),
+      taken: -1,
+    };
+    picked.push(c);
+    world.clouds.push(c);
+  }
   return world.clouds;
 }
 
@@ -1186,7 +1218,7 @@ function weather(world) {
       for (const l of world.lakes) {
         const x = (l.gx / (n - 1) - 0.5) * t.worldSize, z = (l.gy / (n - 1) - 0.5) * t.worldSize;
         if (slopeT(world, x, z) >= front || world.lakeVol[l.id] <= 0) continue;
-        const dry = Math.min(world.lakeVol[l.id], TUNE.heatLake);
+        const dry = Math.min(world.lakeVol[l.id], world.lakeCap[l.id] * TUNE.heatDrop / lakeSpan(world, l.id));
         world.lakeVol[l.id] -= dry;
         world.events.push({ type: 'evaporate', lake: l.id, amount: dry, tick: world.tick });
       }
@@ -1313,7 +1345,7 @@ function hydrology(world) {
     }
     // Erosion follows the water over the lip and the river's volume: a high
     // lake and a big river cut fast; as the lake drops to the lip it slows.
-    o.e = Math.min(t.filled[o.cell] - SEA_LEVEL - 0.5, o.e + TUNE.erodeK * h * r.size);
+    o.e = Math.min(t.filled[o.cell] - SEA_LEVEL - 0.5, outletFloor(world, lake, o.cell), o.e + TUNE.erodeK * h * r.size);
   }
   // Over the rim: spill.
   for (let lake = 0; lake < L; lake++) {
@@ -1654,6 +1686,15 @@ function drainsBack(world, cell, lake) {
   return false;
 }
 
+// The deepest an outlet may be cut: its lip never more than outletDrain below
+// the level the lake starts at, so outlets bleed a lake's top off (and feed
+// rivers from the start) but never empty it into a pit.
+export const outletLipFloor = (world, lake) =>
+  world.lakeBed[lake] + Math.max(0.5, world.lakeBrim[lake] - world.lakeBed[lake]) * TUNE.lakeStart - TUNE.outletDrain;
+function outletFloor(world, lake, cell) {
+  return Math.max(0, world.terrain.filled[cell] - outletLipFloor(world, lake));
+}
+
 function joinLake(world, r, lake, cell) {
   if (r.via.has(lake)) return; // already has an outlet from this lake
   // The head floats on the lake, so it cuts its outlet down from the water it
@@ -1662,7 +1703,7 @@ function joinLake(world, r, lake, cell) {
   // deepens it.
   const ground = world.terrain.filled[cell];
   const lip = Math.max(SEA_LEVEL + 0.5, Math.min(ground, lakeLevel(world, lake)) - r.depth);
-  r.via.set(lake, { cell, e: Math.max(0, ground - lip), w: widthOf(r), born: world.tick, at: Math.max(0, r.path.length - 1) });
+  r.via.set(lake, { cell, e: Math.max(0, Math.min(ground - lip, outletFloor(world, lake, cell))), w: widthOf(r), born: world.tick, at: Math.max(0, r.path.length - 1) });
   r.lakes++;
   // Joining a lake adds its water to yours at once, then keeps flowing.
   // A full lake's surge comes off the brim: it doesn't lower the lake (a lake
@@ -1679,6 +1720,13 @@ function grow(r, litres) {
 
 function afterMove(world, r) {
   const here = cellIndex(world.terrain, r.x, r.z);
+  // Flowing under a low rain cloud: its water is yours (first come).
+  for (const c of skyClouds(world)) {
+    if (!c.low || c.taken >= 0 || (c.x - r.x) ** 2 + (c.z - r.z) ** 2 > TUNE.cloudRadius ** 2) continue;
+    c.taken = r.idx;
+    grow(r, c.water);
+    world.events.push({ type: 'cloud', river: r.idx, amount: c.water, cloud: c.id, tick: world.tick });
+  }
   if (world.lava[here]) {
     // Boiling off: water and speed, but lava alone never knocks a river out.
     const floor = TUNE.floor * TUNE.startVolume * TUNE.steamFloor;

@@ -10,14 +10,14 @@ const cellPos = (w, k) => {
 };
 
 test('lakes are reservoirs: they start part full and drain through a low outlet, never below its lip', async () => {
-  const { lakeLevel } = await import('../../src/shared/river.js');
+  const { lakeLevel, outletLipFloor } = await import('../../src/shared/river.js');
   const w = createWorld(t1);
   assert.equal(w.basins.length, 0);
   for (const l of w.lakes) assert.equal(w.lakeVol[l.id], w.lakeCap[l.id] * TUNE.lakeStart);
   const lake = w.lakes.reduce((a, b) => (b.cells > a.cells ? b : a));
-  // A river starting at the lake's spill point with an outlet cut 6 m below
-  // the water: stored water drains out to it.
-  const cell = w.lakeOutlet[lake.id], lip = lakeLevel(w, lake.id) - 6;
+  // A river starting at the lake's spill point with an outlet cut just below
+  // the water (and above the deepest an outlet may go): stored water drains out to it.
+  const cell = w.lakeOutlet[lake.id], lip = Math.max(lakeLevel(w, lake.id) - 6, outletLipFloor(w, lake.id) + 0.5);
   const r = addRiver(w, 'a', cellPos(w, cell));
   step(w, new Map());
   r.via.set(lake.id, { cell, e: w.terrain.filled[cell] - lip, w: TUNE.width, born: 0 });
@@ -27,6 +27,9 @@ test('lakes are reservoirs: they start part full and drain through a low outlet,
   assert.ok(r.volume > v0, 'the outlet carried nothing to the river');
   assert.ok(r.via.get(lake.id).e > e0, 'the outlet did not erode');
   assert.ok(lakeLevel(w, lake.id) >= w.terrain.filled[cell] - r.via.get(lake.id).e - 0.5, 'drained below its lip');
+  // Outlets bleed a lake's top off but never cut it into a pit.
+  for (let k = 0; k < 4000; k++) step(w, new Map());
+  assert.ok(w.terrain.filled[cell] - r.via.get(lake.id).e >= outletLipFloor(w, lake.id) - 1e-6, 'an outlet cut below its floor');
 });
 
 test('momentum carries across level water instead of dropping to a crawl', () => {

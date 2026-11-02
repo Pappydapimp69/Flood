@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, gougeReady, gougeTarget, gougeCost, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, step, gougeReady, gougeTarget, gougeCost, gougePlan, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, VERT } from './terrainMesh.js';
@@ -252,14 +252,21 @@ function updateSkyClouds() {
         puff.scale.setScalar(0.55 + 0.1 * (j % 3));
         g.add(puff);
       }
-      g.scale.set(TUNE.cloudRadius, TUNE.cloudDepth, TUNE.cloudRadius);
+      g.scale.set(TUNE.cloudRadius, c.low ? 220 : TUNE.cloudDepth, TUNE.cloudRadius);
+      if (c.low) {
+        // A grey-bellied rain cloud with a shaft of rain to the ground: water here.
+        const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.9, c.alt / 220, 20, 1, true),
+          new THREE.MeshBasicMaterial({ color: '#8fc4ea', transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }));
+        shaft.position.y = -c.alt / 440;
+        g.add(shaft);
+      }
       g.position.set(c.x, surfaceAt(world, c.x, c.z) * VERT + c.alt, c.z);
       scene.add(g);
       return g;
     });
   }
   const falling = world.rivers.some((r) => r.dropping);
-  skyClouds(world).forEach((c, i) => { skyMeshes[i].visible = falling && c.taken < 0 && !mapView; });
+  skyClouds(world).forEach((c, i) => { skyMeshes[i].visible = c.taken < 0 && (c.low || (falling && !mapView)); });
 }
 
 // Storm clouds follow their storms across the island (height easing over the hills).
@@ -760,18 +767,55 @@ const fmtL = (v) => `${Math.round(v).toLocaleString('en-US')} L`;
 
 // The skill button reads the same two gates the sim and the bots do: ready
 // (recharged, enough water) and a target (ground ahead to cut).
+let gougeLine = null, gougeHintAt = -1e9;
 function updateSkill() {
   const show = !!river && isRacing(river) && !river.dropping && !mapView;
   hud.skill.hidden = !show;
+  if (gougeLine) gougeLine.visible = false;
   if (!show) return;
   const left = Math.max(0, river.gougeAt - world.tick);
-  const busy = river.gougeT >= 0, ready = gougeReady(world, river), target = ready && gougeTarget(world, river);
+  const busy = river.gougeT >= 0, ready = gougeReady(world, river);
+  const plan = ready || busy ? gougePlan(world, river) : null;
+  const target = ready && gougeTarget(world, river);
+  const tooHigh = ready && !target && plan.cells.length > 0 && !plan.through;
   const state = busy ? 'busy' : left ? 'cool' : !ready ? 'dry' : target ? 'go' : 'idle';
   hud.skill.dataset.state = state;
   hud.skill.style.setProperty('--cool', left ? (left / TUNE.gougeCool).toFixed(3) : 0);
-  const note = state === 'cool' ? `${Math.ceil(left / TICK_HZ)} s` : state === 'dry' ? 'need water'
-    : state === 'idle' ? 'nothing to cut' : state === 'busy' ? '…' : `−${Math.round(gougeCost(river) / 1000)}k L`;
+  const note = state === 'cool' ? `ready in ${Math.ceil(left / TICK_HZ)} s` : state === 'dry' ? 'need more water'
+    : state === 'idle' ? (tooHigh ? 'rise too big' : 'nothing ahead to cut') : state === 'busy' ? 'cutting…' : `cut through · −${Math.round(gougeCost(river) / 1000)}k L`;
   if (hud.skillNote.textContent !== note) hud.skillNote.textContent = note;
+  // What it will do: a glowing line on the ground along the cut it would make.
+  if ((state === 'go' || state === 'busy') && plan?.cells.length) {
+    const t = world.terrain, n = t.size;
+    let far = 0;
+    for (const [k] of plan.cells) {
+      const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize - river.x, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize - river.z;
+      far = Math.max(far, kx * river.dx + kz * river.dz);
+    }
+    far += t.cell * 0.5;
+    if (!gougeLine) {
+      gougeLine = new THREE.Mesh(new THREE.PlaneGeometry(1, 1, 1, 16), new THREE.MeshBasicMaterial({ color: '#ff8a2a', transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide }));
+      gougeLine.renderOrder = 5;
+      scene.add(gougeLine);
+    }
+    const pos = gougeLine.geometry.attributes.position, wdt = widthOf(river) * 0.6, here = surfaceAt(world, river.x, river.z, river.idx);
+    for (let i = 0; i < pos.count; i++) {
+      const side = pos.getX(i) < 0 ? -1 : 1, along = (pos.getY(i) + 0.5) * far;
+      const x = river.x + river.dx * along + river.dz * side * wdt, z = river.z + river.dz * along - river.dx * side * wdt;
+      // Drawn at the floor the cut will leave, so you see the channel it opens.
+      const y = Math.min(surfaceAt(world, x, z, river.idx), here - 0.5 - along * TUNE.gougeGrade);
+      pos.setXYZ(i, x, y * VERT + 12, z);
+    }
+    pos.needsUpdate = true;
+    gougeLine.geometry.computeBoundingSphere();
+    gougeLine.material.opacity = state === 'busy' ? 0.85 : 0.4 + 0.2 * Math.sin(performance.now() / 160);
+    gougeLine.visible = true;
+  }
+  // Blocked by a rise it can cut: say so, the moment it happens.
+  if (state === 'go' && river.speed < TUNE.climbSpeed && performance.now() - gougeHintAt > 8000) {
+    gougeHintAt = performance.now();
+    showPop(lowPower ? 'Blocked — tap GOUGE to cut through' : 'Blocked — press SPACE to GOUGE through');
+  }
 }
 let popTimer;
 function showPop(text) {
