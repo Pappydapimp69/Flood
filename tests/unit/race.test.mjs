@@ -166,9 +166,9 @@ test('drop: diving lands sooner and floating later, steerable anywhere, touchdow
     for (const e of w.events.splice(0)) if (e.type === 'land') { const r = w.rivers[e.river]; landed[r.id] = e.tick; at[r.id] = { x: r.x, z: r.z, born: r.born }; }
     for (const r of w.rivers) assert.equal(r.path.length > 0, r.dropping === 0, 'a channel before landing');
   }
-  // a dived (about 12 s), c fell steadily (20 s), b floated (about 31 s).
+  // a dived, c fell steadily (dropTicks), b floated.
   assert.ok(landed.a < landed.c && landed.c < landed.b, `landed at ${JSON.stringify(landed)}`);
-  assert.ok(Math.abs(landed.c - TUNE.dropTicks) <= 2, `steady fall took ${landed.c} ticks`);
+  assert.ok(Math.abs(landed.c - TUNE.dropTicks) <= TUNE.dropTicks * 0.02, `steady fall took ${landed.c} ticks`); // (cloud water can make it a little heavier)
   const n = w.terrain.size;
   for (const r of w.rivers) {
     assert.equal(r.dropping, 0);
