@@ -129,8 +129,8 @@ export const TUNE = {
   // seepage (so a river's volume holds), and those losses feed the sky and the ground.
   evapRate: 0.00015, // litres per tick per square metre of channel surface, into the sky
   seepRate: 0.0001, // litres per tick per square metre of channel bed, into the ground store
-  stormMinWater: 1_500_000, // the sky builds a storm once it holds this much...
-  stormMaxWater: 4_000_000, // ...carrying at most this much, rained out until it's empty
+  stormMinWater: 5_000_000, // the sky builds a storm once it holds this much...
+  stormMaxWater: 5_000_000, // ...carrying at most this much, rained out until it's empty
   cloudWater: [150_000, 450_000],
   slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
   glideSpeed: 140, // m/s sideways while falling (x0.5 slowed, x1.5 hurried)
