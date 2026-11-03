@@ -183,6 +183,7 @@ export const TUNE = {
   stormGap: 20 * 12,
   stormRadius: 2500, // (map pass: a storm you can actually reach)
   stormRain: 9000,
+  stormMax: 3, // storms in the sky at once
   stormLakeRain: 15, // litres per tick per lake cell for a lake under a storm
   stormSpan: 9000, // metres either side of the slope's centre line a storm starts and ends
   stormSpeed: [100, 150], // m/s a storm sweeps across the island...
@@ -1266,9 +1267,9 @@ function weather(world) {
   }
   // Storms: each one blows in from one side of the island ahead of the pack
   // and sweeps right across it to the other, drifting down the slope as it
-  // goes, raining into every river head and lake under it.
-  // One storm at a time: the next blows in stormGap after the last has gone.
-  if (!world.storms.length && world.tick >= (world.stormNext ?? TUNE.stormStart) && racing.length && (world.sky ?? 0) >= TUNE.stormMinWater) {
+  // goes, raining into every river (head or channel) and lake under it.
+  // Up to stormMax storms at once; after one ends the next waits stormGap.
+  if (world.storms.length < TUNE.stormMax && world.tick >= (world.stormNext ?? TUNE.stormStart) && racing.length && (world.sky ?? 0) >= TUNE.stormMinWater) {
     const rng = stream(world.terrain.seed, `storm:${world.tick}`);
     const ts = racing.map((r) => slopeT(world, r.x, r.z)).sort((a, b) => a - b);
     const tAt = TUNE.stormAim === 'tail' ? Math.min(0.95, ts[Math.floor(ts.length * 0.12)] + 0.03 + 0.06 * rng()) : Math.min(0.95, ts[ts.length >> 1] + 0.05 + 0.12 * rng());
@@ -1298,8 +1299,21 @@ function weather(world) {
     s.z += s.vz * DT;
     const r2 = s.radius * s.radius;
     for (const r of racing) {
-      if ((r.x - s.x) ** 2 + (r.z - s.z) ** 2 > r2) continue;
-      const rain = Math.min(s.water, TUNE.stormRain);
+      // Rain on the head counts in full; rain on the channel behind it counts
+      // for the share of the storm's width the channel runs under.
+      let wet = (r.x - s.x) ** 2 + (r.z - s.z) ** 2 <= r2 ? 1 : 0;
+      if (!wet && r.path.length) {
+        let under = 0;
+        for (let k = r.path.length - 1, prev = null; k >= 0; k -= 4) {
+          const p = r.path[k];
+          const inside = (p.x - s.x) ** 2 + (p.z - s.z) ** 2 <= r2;
+          if (inside && prev) under += Math.abs(prev.s - p.s);
+          prev = inside ? p : null;
+        }
+        wet = Math.min(1, under / (2 * s.radius));
+      }
+      if (wet <= 0) continue;
+      const rain = Math.min(s.water, TUNE.stormRain * wet);
       if (rain <= 0) break;
       s.water -= rain;
       if (r.inLake >= 0) world.lakePending[r.inLake] += rain;
