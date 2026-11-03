@@ -247,10 +247,11 @@ function updateWeather(time) {
 }
 // Rain clouds in the sky during the drop: puffs of white, gone once taken.
 let skyMeshes = null, skyWorld = null;
+let cloudGot = 0, cloudSaidAt = 0;
 function updateSkyClouds() {
   if (skyWorld !== world) {
     if (skyMeshes) for (const m of skyMeshes) { scene.remove(m); m.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); }); }
-    skyWorld = world;
+    skyWorld = world; cloudGot = 0;
     const mat = new THREE.MeshLambertMaterial({ color: '#f4f8ff', transparent: true, opacity: 0.92 });
     skyMeshes = skyClouds(world).map((c, i) => {
       const g = new THREE.Group();
@@ -276,7 +277,15 @@ function updateSkyClouds() {
   }
   const falling = world.rivers.some((r) => r.dropping);
   // (Lite mode, for tests and weak machines, skips the low clouds' big translucent shafts.)
-  skyClouds(world).forEach((c, i) => { skyMeshes[i].visible = c.taken < 0 && (c.low ? !lite : falling && !mapView); });
+  skyClouds(world).forEach((c, i) => {
+    const m = skyMeshes[i];
+    if (c.low) { m.visible = c.taken < 0 && !lite; return; }
+    // Drop clouds shrink and rise as rivers inside drain them.
+    m.visible = c.water > 0 && c.taken < 0 && falling && !mapView;
+    const rad = c.radius ?? TUNE.cloudRadius;
+    m.scale.set(rad, TUNE.cloudDepth * Math.max(0.4, rad / TUNE.cloudRadius), rad);
+    m.position.y = surfaceAt(world, c.x, c.z) * VERT + c.alt;
+  });
 }
 
 // The map: straight down on the island from above the middle of the run, the
@@ -348,6 +357,7 @@ function followStorm() {
       scene.add(c);
       stormClouds.set(s.id, c);
     }
+    c.scale.x = c.scale.z = s.radius; // shrinks as it rains out
     const ground = surfaceAt(world, s.x, s.z) * VERT, y = c.position.y;
     c.position.set(s.x, y + (ground + 2600 - y) * 0.03, s.z);
   }
@@ -869,7 +879,12 @@ function advance(inputs) {
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
     } else if (e.type === 'cloud') {
-      if (river && e.river === river.idx) { showPop(`+${fmtL(e.amount)} from a rain cloud`); audio.splash(0.8); }
+      // A cloud drains a little every tick: add it up, say it twice a second.
+      if (river && e.river === river.idx) {
+        cloudGot += e.amount;
+        const now = performance.now();
+        if (now - cloudSaidAt > 500) { cloudSaidAt = now; showPop(`+${fmtL(cloudGot)} from a rain cloud`); audio.splash(0.5); }
+      }
     } else if (e.type === 'heat') {
       showPop('A heat wave is rolling down the mountain — the lakes behind it are drying up');
       feed('The heat front is coming: lakes behind it dry out');

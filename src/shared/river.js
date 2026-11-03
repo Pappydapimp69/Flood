@@ -122,11 +122,20 @@ export const TUNE = {
   slopeClouds: 14, // ...and low rain clouds spread evenly down the slope, caught by flowing under them
   cloudRadius: 500, // metres across the sky...
   cloudDepth: 400, // ...and this far above or below its height
+  cloudDrain: 50, // a drop cloud drains in this many ticks with a river inside, shared equally by all inside
+  cloudLift: 1500, // metres a drop cloud rises as it empties (lighter, it floats up into slower fallers' way)
+  heavyFall: 0.5, // falling faster per unit of size gained from clouds...
+  // Water cycle: the source pump replaces what a channel loses to evaporation and
+  // seepage (so a river's volume holds), and those losses feed the sky and the ground.
+  evapRate: 0.00015, // litres per tick per square metre of channel surface, into the sky
+  seepRate: 0.0001, // litres per tick per square metre of channel bed, into the ground store
+  stormMinWater: 5_000_000, // the sky builds a storm once it holds this much...
+  stormMaxWater: 5_000_000, // ...carrying at most this much, rained out until it's empty
   cloudWater: [150_000, 450_000],
   slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
   glideSpeed: 140, // m/s sideways while falling (x0.5 slowed, x1.5 hurried)
   settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
-  zoneSlack: 300, // metres a falling drop may stray from the landing ring
+  zoneSlack: 2400, // metres a falling drop may stray from the landing rings: wide enough to glide to another mountain's
   glideTurn: 0.1, // radians per tick while falling: a full circle in about 3 s
   startElevation: 0.91, // starts ring each summit cone this far up its peak
   startTolerance: 0.006, // starts within ±0.6% of the peak's height of each other
@@ -174,6 +183,7 @@ export const TUNE = {
   stormGap: 20 * 12,
   stormRadius: 2500, // (map pass: a storm you can actually reach)
   stormRain: 9000,
+  stormMax: 3, // storms in the sky at once
   stormLakeRain: 15, // litres per tick per lake cell for a lake under a storm
   stormSpan: 9000, // metres either side of the slope's centre line a storm starts and ends
   stormSpeed: [100, 150], // m/s a storm sweeps across the island...
@@ -514,24 +524,24 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
 // While falling: turn, and hurry (+1) or slow (-1) the glide, anywhere over the map.
 function glide(world, r, steer, fwd) {
   if (steer) {
-    const a = TUNE.glideTurn * -steer;
+    const a = (TUNE.glideTurn * -steer) / Math.max(1, r.size); // heavier turns slower
     const dx = r.dx + r.dz * a, dz = r.dz - r.dx * a;
     r.dx = dx; r.dz = dz;
     normalize(r);
   }
   const v = TUNE.glideSpeed * (1 + 0.5 * fwd);
+  const heavy = 1 + TUNE.heavyFall * Math.max(0, r.size - 1); // cloud water makes a drop heavier: it falls faster
   const p = keepInZone(world, r.x + r.dx * v * DT, r.z + r.dz * v * DT);
   r.x = p.x;
   r.z = p.z;
   // Dive to land sooner (a head start), or float to stay up for the clouds.
-  const rate = (TUNE.dropAlt / TUNE.dropTicks) * (fwd > 0 ? 1 + TUNE.diveRate * fwd : 1 + TUNE.floatRate * fwd);
+  const rate = (TUNE.dropAlt / TUNE.dropTicks) * (fwd > 0 ? 1 + TUNE.diveRate * fwd : 1 + TUNE.floatRate * fwd) * heavy;
   r.alt = Math.max(0, r.alt - rate);
   r.dropping = r.alt > 0 ? Math.max(1, Math.ceil(r.alt / rate)) : 1; // ticks left at the rate it's falling now
+  // Inside a drop cloud: it drains into every river inside, equally (see dropClouds).
   for (const c of skyClouds(world)) {
-    if (c.low || c.taken >= 0 || (c.x - r.x) ** 2 + (c.z - r.z) ** 2 > TUNE.cloudRadius ** 2 || Math.abs(c.alt - r.alt) > TUNE.cloudDepth) continue;
-    c.taken = r.idx;
-    grow(r, c.water);
-    world.events.push({ type: 'cloud', river: r.idx, amount: c.water, cloud: c.id, tick: world.tick });
+    if (c.low || c.water <= 0 || (c.x - r.x) ** 2 + (c.z - r.z) ** 2 > (c.radius ?? TUNE.cloudRadius) ** 2 || Math.abs(c.alt - r.alt) > TUNE.cloudDepth) continue;
+    (c.inside ??= []).push(r);
   }
   // The last seconds ease the drop onto the fair spot it will touch down on.
   if (r.dropping <= TUNE.settleTicks) {
@@ -561,6 +571,8 @@ export function skyClouds(world) {
       taken: -1,
     };
   });
+  // Drop clouds are reservoirs: their size follows their water, and they drain as rivers pass through.
+  for (const c of world.clouds) { c.water0 = c.water; c.radius = TUNE.cloudRadius * Math.cbrt(c.water / TUNE.cloudWater[1]) * 1.2; }
   // Low clouds down the slope, one per band of distance to the sea from the
   // start ring to the coast, so there is water to chase the whole way down,
   // not only in the sky at the start. Caught by a head flowing under one.
@@ -756,6 +768,8 @@ export function step(world, inputs) {
     if (!isRacing(r)) continue;
     moveRiver(world, r, readInput(inputs?.get(r.id)));
   }
+  dropClouds(world);
+  waterCycle(world);
   resolveContacts(world);
   weather(world);
   hydrology(world);
@@ -1189,6 +1203,48 @@ export function heatFront(world) {
   return -0.02 + (ticks * TUNE.heatSpeed * DT) / (2 * t.long * (t.worldSize / 2));
 }
 
+// Drop clouds this tick: each drains into every river inside it, equally, at
+// most water0/cloudDrain a tick, shrinking as it empties and rising as it
+// lightens. Once every river has landed, what's left goes into the sky.
+function dropClouds(world) {
+  const clouds = world.clouds;
+  if (!clouds) return;
+  const falling = world.rivers.some((r) => isRacing(r) && r.dropping);
+  for (const c of clouds) {
+    if (c.low) continue;
+    const inside = (c.inside ?? []).sort(byId);
+    c.inside = [];
+    if (!falling && c.water > 0) { world.sky = (world.sky ?? 0) + c.water; c.water = 0; c.taken = -2; continue; }
+    if (!inside.length || c.water <= 0) continue;
+    const drain = Math.min(c.water, c.water0 / TUNE.cloudDrain), share = drain / inside.length;
+    c.water -= drain;
+    for (const r of inside) {
+      grow(r, share);
+      world.events.push({ type: 'cloud', river: r.idx, amount: share, cloud: c.id, tick: world.tick });
+    }
+    c.radius = Math.max(TUNE.cloudRadius * 0.25, TUNE.cloudRadius * 1.2 * Math.cbrt(c.water / TUNE.cloudWater[1]));
+    c.alt += TUNE.cloudLift * (drain / c.water0);
+    if (c.water <= 0) c.taken = inside[0].idx;
+  }
+}
+
+// The water cycle's ledger. The source pump is the one place water comes from
+// nothing: it replaces what each channel loses to evaporation and seepage, so
+// the river's volume holds, and the losses go to the sky (storms) and the
+// ground store (springs, later). Water reaching the sea is counted there.
+function waterCycle(world) {
+  const w = (world.water ??= { pumped: 0, sky: 0, ground: 0, sea: 0 });
+  for (const r of world.rivers) {
+    if (!isRacing(r) || r.dropping || !r.path.length) continue;
+    const area = r.path[r.path.length - 1].s * widthOf(r);
+    const evap = area * TUNE.evapRate, seep = area * TUNE.seepRate;
+    world.sky = (world.sky ?? 0) + evap;
+    w.ground += seep;
+    w.pumped += evap + seep;
+  }
+  w.sky = world.sky ?? 0;
+}
+
 // Weather, once per tick: the heat front dries the lakes it has passed;
 // storms rain into whatever is under them. Placed from the state of
 // the race and a seeded stream, so every machine agrees.
@@ -1204,32 +1260,43 @@ function weather(world) {
         if (slopeT(world, x, z) >= front || world.lakeVol[l.id] <= 0) continue;
         const dry = Math.min(world.lakeVol[l.id], world.lakeCap[l.id] * TUNE.heatDrop / lakeSpan(world, l.id));
         world.lakeVol[l.id] -= dry;
+        world.sky = (world.sky ?? 0) + dry; // up into the sky, for the next storm
         world.events.push({ type: 'evaporate', lake: l.id, amount: dry, tick: world.tick });
       }
     }
   }
-  // Storms: each one blows in from one side of the island ahead of the pack
-  // and sweeps right across it to the other, drifting down the slope as it
-  // goes, raining into every river head and lake under it.
-  // One storm at a time: the next blows in stormGap after the last has gone.
-  if (!world.storms.length && world.tick >= (world.stormNext ?? TUNE.stormStart) && racing.length) {
-    const rng = stream(world.terrain.seed, `storm:${world.tick}`);
-    const ts = racing.map((r) => slopeT(world, r.x, r.z)).sort((a, b) => a - b);
-    const tAt = TUNE.stormAim === 'tail' ? Math.min(0.95, ts[Math.floor(ts.length * 0.12)] + 0.03 + 0.06 * rng()) : Math.min(0.95, ts[ts.length >> 1] + 0.05 + 0.12 * rng());
+  // Storms: each one forms at a random spot past the first quarter of the
+  // course and heads off in a random direction, raining steadily as it goes
+  // (it shrinks as it empties) and raining into every river (head or channel)
+  // and lake under it. A river under it costs the storm double what it gains.
+  // Up to stormMax storms at once; after one ends the next waits stormGap.
+  if (world.storms.length < TUNE.stormMax && world.tick >= (world.stormNext ?? TUNE.stormStart) && racing.length && (world.sky ?? 0) >= TUNE.stormMinWater) {
+    const rng = stream(world.terrain.seed, `storm:${world.tick}:${world.storms.length}`);
+    // Around the middle of the field: the mean slope position of the rivers
+    // from 3rd place to 3rd from last (the two out front and the two at the
+    // back don't pull it), never above the first quarter of the course.
+    const landed = racing.filter((r) => !r.dropping);
+    const ts = (landed.length ? landed : racing).map((r) => slopeT(world, r.x, r.z)).sort((a, b) => b - a);
+    const mid = ts.length >= 5 ? ts.slice(2, ts.length - 2) : ts;
+    const hi = mid[0], lo = mid[mid.length - 1], mean = mid.reduce((a, b) => a + b, 0) / mid.length;
+    const tAt = Math.min(0.95, Math.max(0.25, Math.min(hi, Math.max(lo, mean + (rng() - 0.5) * (hi - lo)))));
     const t = world.terrain, ax = t.axis.x, az = t.axis.y, half = t.worldSize / 2;
-    const u = (tAt * 2 * t.long - t.long) * half;
-    const from = rng() < 0.5 ? -1 : 1, span = TUNE.stormSpan;
-    const x = ax * u - az * span * from, z = az * u + ax * span * from;
-    const across = -from * (TUNE.stormSpeed[0] + (TUNE.stormSpeed[1] - TUNE.stormSpeed[0]) * rng());
-    const along = TUNE.stormDrift[0] + (TUNE.stormDrift[1] - TUNE.stormDrift[0]) * rng();
-    const ticks = Math.ceil(((2 * span) / Math.abs(across)) * TICK_HZ);
-    const s = { id: world.tick, x, z, vx: ax * along - az * across, vz: az * along + ax * across, until: world.tick + ticks, radius: TUNE.stormRadius };
+    const u = (tAt * 2 * t.long - t.long) * half, span = TUNE.stormSpan;
+    const side = (rng() * 2 - 1) * span * 0.7;
+    const x = ax * u - az * side, z = az * u + ax * side;
+    const heading = rng() * Math.PI * 2;
+    const speed = TUNE.stormSpeed[0] + (TUNE.stormSpeed[1] - TUNE.stormSpeed[0]) * rng();
+    const ticks = Math.ceil(((2 * span) / speed) * TICK_HZ);
+    const water = Math.min(world.sky, TUNE.stormMaxWater);
+    world.sky -= water;
+    const s = { id: world.tick * 4 + world.storms.length, x, z, vx: Math.cos(heading) * speed, vz: Math.sin(heading) * speed, until: world.tick + ticks, radius: TUNE.stormRadius, water, water0: water, drizzle: water / ticks };
     world.storms.push(s);
     world.events.push({ type: 'storm', on: true, id: s.id, x, z, radius: s.radius, tick: world.tick });
   }
   const t = world.terrain, n = t.size;
   for (const s of [...world.storms]) {
-    if (world.tick >= s.until) {
+    if (world.tick >= s.until || s.water <= 0) {
+      world.sky = (world.sky ?? 0) + Math.max(0, s.water); // what it didn't rain goes back up
       world.storms.splice(world.storms.indexOf(s), 1);
       world.stormNext = world.tick + TUNE.stormGap;
       world.events.push({ type: 'storm', on: false, id: s.id, tick: world.tick });
@@ -1237,11 +1304,35 @@ function weather(world) {
     }
     s.x += s.vx * DT;
     s.z += s.vz * DT;
+    // Off the island (past the summit, the sea or the sides), it's gone.
+    const st = slopeT(world, s.x, s.z), side = -s.x * t.axis.y + s.z * t.axis.x;
+    if (st < 0 || st > 1.05 || Math.abs(side) > TUNE.stormSpan * 1.1) s.until = world.tick;
+    const ledger = (world.water ??= { pumped: 0, sky: 0, ground: 0, sea: 0 });
+    // It rains as it travels, onto the ground, and shrinks as it empties.
+    const drizzle = Math.min(s.water, s.drizzle);
+    s.water -= drizzle; ledger.ground += drizzle;
+    s.radius = TUNE.stormRadius * Math.max(0.35, Math.sqrt(Math.max(0, s.water) / s.water0));
     const r2 = s.radius * s.radius;
     for (const r of racing) {
-      if ((r.x - s.x) ** 2 + (r.z - s.z) ** 2 > r2) continue;
-      if (r.inLake >= 0) world.lakePending[r.inLake] += TUNE.stormRain;
-      else grow(r, TUNE.stormRain);
+      // Rain on the head counts in full; rain on the channel behind it counts
+      // for the share of the storm's width the channel runs under.
+      let wet = (r.x - s.x) ** 2 + (r.z - s.z) ** 2 <= r2 ? 1 : 0;
+      if (!wet && r.path.length) {
+        let under = 0;
+        for (let k = r.path.length - 1, prev = null; k >= 0; k -= 4) {
+          const p = r.path[k];
+          const inside = (p.x - s.x) ** 2 + (p.z - s.z) ** 2 <= r2;
+          if (inside && prev) under += Math.abs(prev.s - p.s);
+          prev = inside ? p : null;
+        }
+        wet = Math.min(1, under / (2 * s.radius));
+      }
+      if (wet <= 0) continue;
+      const rain = Math.min(s.water / 2, TUNE.stormRain * wet);
+      if (rain <= 0) break;
+      s.water -= 2 * rain; ledger.ground += rain; // double off the cloud: half soaks in
+      if (r.inLake >= 0) world.lakePending[r.inLake] += rain;
+      else grow(r, rain);
       r.rained = world.tick;
     }
     // Lakes under it fill, more the more of them it covers.
@@ -1249,7 +1340,9 @@ function weather(world) {
       const lx = (l.gx / (n - 1) - 0.5) * t.worldSize, lz = (l.gy / (n - 1) - 0.5) * t.worldSize;
       const reach = s.radius + Math.sqrt(l.cells) * t.cell * 0.5;
       if ((lx - s.x) ** 2 + (lz - s.z) ** 2 > reach * reach) continue;
-      world.lakePending[l.id] += TUNE.stormLakeRain * Math.min(l.cells, TUNE.lakeCellCap);
+      const rain = Math.min(Math.max(0, s.water), TUNE.stormLakeRain * Math.min(l.cells, TUNE.lakeCellCap));
+      s.water -= rain;
+      world.lakePending[l.id] += rain;
     }
   }
 }
@@ -1742,6 +1835,7 @@ function afterMove(world, r) {
   if (lx * lx + lz * lz >= (world.terrain.cell * 0.75) ** 2) pushPathPoint(world, r);
   const kEnd = cellIndex(world.terrain, r.x, r.z);
   if (world.terrain.filled[kEnd] <= SEA_LEVEL && world.beach[kEnd]) {
+    (world.water ??= { pumped: 0, sky: 0, ground: 0, sea: 0 }).sea += r.volume; // its water joins the sea
     r.finished = true;
     r.finishTick = world.tick;
     pushPathPoint(world, r);
