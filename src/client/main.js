@@ -691,9 +691,11 @@ function watchCourse() {
   if (!river || river.dropping) return;
   if (river.finished || river.out) { tutorial = false; return; } // "Race again" after it is a normal race
   const t = slopeT(world, river.x, river.z);
+  // A beacon stands until you pass its station; the next one pulses.
+  const nextUp = STATIONS.findIndex((s) => s.at > t - 0.01);
   tcourse.beacons.children.forEach((b, i) => {
-    b.visible = i >= tcourse.next;
-    b.material.opacity = i === tcourse.next ? 0.35 + 0.15 * Math.sin(performance.now() / 300) : 0.15;
+    b.visible = STATIONS[i].at > t - 0.01;
+    b.material.opacity = i === nextUp ? 0.4 + 0.2 * Math.sin(performance.now() / 300) : 0.18;
   });
   const s = STATIONS[tcourse.next];
   if (!s || t < s.trig) return;
@@ -707,7 +709,7 @@ function watchCourse() {
     world.storms.push({ id: world.tick * 4 + 3, x: p.x - 1500, z: p.z, vx: 30, vz: 10, until: world.tick + life, radius: TUNE.stormRadius, water, water0: water, drizzle: water / life });
   }
   taught.delete(s.key);
-  teach(s.key, s.title, s.html(), p.x, p.z);
+  teach(s.key, s.title, s.html(), p.x, p.z, s.storm ? 3.2 : 1); // a storm is seen from above its cloud
 }
 
 // Gamepad actions that work outside a race too: menu focus and confirm,
@@ -1127,10 +1129,10 @@ function caption(key, html) {
 // and a card explains it; A / Space / Enter / a click carries on.
 const lessonEl = document.getElementById('lesson');
 let lesson = null; const lessonQueue = [], taught = new Set();
-function teach(key, title, html, x, z) {
+function teach(key, title, html, x, z, far = 1) {
   if (!tutorial || mode !== 'solo' || taught.has(key)) return;
   taught.add(key);
-  lessonQueue.push({ title, html, x, z });
+  lessonQueue.push({ title, html, x, z, far });
   if (!lesson) nextLesson();
 }
 function nextLesson() {
@@ -1509,7 +1511,7 @@ renderer.setAnimationLoop(() => {
   if (lesson && lesson.x !== undefined && !mapView) {
     // A lesson: fly to the spot, high and to the south of it, and look down on it.
     const g = surfaceAt(world, lesson.x, lesson.z) * VERT;
-    const want = new THREE.Vector3(lesson.x + 700, g + 1500, lesson.z + 1700), k = 1 - Math.exp(-frameDt * 3);
+    const f = lesson.far ?? 1, want = new THREE.Vector3(lesson.x + 700 * f, g + 1500 * f, lesson.z + 1700 * f), k = 1 - Math.exp(-frameDt * 3);
     camera.position.lerp(want, k);
     camLook.lerp(new THREE.Vector3(lesson.x, g, lesson.z), k);
     camera.lookAt(camLook);
