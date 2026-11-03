@@ -289,12 +289,12 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
     await set(0);
     if (!steers.includes(-1)) throw new Error(`${how} left gave ${steers.join('')}`);
   }
-  // Right stick swings the camera; released, it eases back behind the river.
+  // Right stick sideways does nothing now (it only sets the fall): the camera stays put.
   await page.evaluate(() => { __pad.axes[2] = 1; });
-  let yaw = 0;
-  for (let i = 0; i < 100 && yaw < 0.3; i++) { await page.waitForTimeout(100); yaw = Math.max(yaw, await page.evaluate(() => __flood.camYaw)); }
+  await page.waitForTimeout(1500);
+  const yaw = await page.evaluate(() => __flood.camYaw);
   await page.evaluate(() => { __pad.axes[2] = 0; });
-  if (yaw < 0.3) throw new Error(`right stick did not turn the camera: ${yaw}`);
+  if (Math.abs(yaw) > 0.05) throw new Error(`right stick sideways turned the camera: ${yaw}`);
   // Finish the run by force (after the spawn grace), then A on the results card starts a new one.
   const t0 = (await state(page)).tick;
   await until(page, (st) => st.tick > Math.max(t0, 140), 'past spawn grace');

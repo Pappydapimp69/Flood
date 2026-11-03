@@ -43,12 +43,12 @@ export function connect({ name, onMessage, onStatus }) {
     // Send steer when it changes, and every second anyway so a lost message heals.
     // force: a press or release, sent even if it repeats the last value (a tap).
     // f: hurry (+1) or slow (-1) the drop.
-    steer(s, now, force = false, f = 0) {
-      const key = s * 3 + f;
+    steer(s, now, force = false, f = 0, g = 0) {
+      const key = s * 9 + f * 3 + g;
       if (!force && key === lastSteer && now - sentAt < 1000) return;
       lastSteer = key;
       sentAt = now;
-      send(f ? { t: 'in', s, f } : { t: 'in', s });
+      send(f || g ? { t: 'in', s, f, g } : { t: 'in', s });
     },
     // The skill button: one press, sent at once with the current steer.
     skill(s, f = 0) { send(f ? { t: 'in', s, f, k: 1 } : { t: 'in', s, k: 1 }); },

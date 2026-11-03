@@ -36,8 +36,8 @@ export function createInput(target) {
     onChange?.(current());
   };
   const keys = { left: false, right: false, fwd: false, back: false };
-  const pad = { left: false, right: false, down: new Set(), stickY: 0, seen: false, fwd: 0, look: 0 };
-  // Forward / back: hurry or slow the drop. Keys or left stick up / down.
+  const pad = { left: false, right: false, down: new Set(), stickY: 0, seen: false, fwd: 0, glide: 0, look: 0 };
+  // Forward / back: hurry or slow the fall. Keys or right stick up / down.
   const forward = () => {
     const k = keys.fwd === keys.back ? 0 : keys.fwd ? 1 : -1;
     return k || pad.fwd;
@@ -101,39 +101,41 @@ export function createInput(target) {
     },
     // Hurry (+1) or slow (-1) the drop.
     forward,
+    glide: () => pad.glide,
     // 1 once for each skill press (key, pad B or the on-screen button), then 0.
     takeSkill() { const k = skillPulse; skillPulse = 0; return k; },
     takeSurge() { const u = surgePulse; surgePulse = 0; return u; },
     pressSurge,
     pressSkill,
-    // Right stick x, -1..1: turns the camera. 0 inside the dead zone.
+    // Camera turn: no longer on the right stick (it only sets the fall). Always 0 from a pad.
     look: () => pad.look,
     takeActions() { return actions.splice(0); },
     // The drag stick: offset from where the finger went down, in screen pixels,
     // with its start point; null while no finger (or mouse button) is down.
     drag: () => (stick ? { dx: stick.x - stick.x0, dy: stick.y - stick.y0, x0: stick.x0, y0: stick.y0 } : null),
     // Read gamepads; call once per frame. Steering is the left stick or D-pad,
-    // its up / down hurries or slows the drop; the right stick turns the camera.
+    // falling, its up / down glides faster or slower; the right stick up / down hurries or slows the fall.
     // Button presses become actions: A 'confirm' (and 'restart') and the skill in a race, B the skill too, X 'mute',
     // Y/Back 'map', D-pad or stick up/down 'up'/'down' for menus.
     poll() {
       const pads = navigator.getGamepads?.() ?? [];
-      let l = false, r = false, y = 0, look = 0;
+      let l = false, r = false, y = 0, ry = 0, look = 0;
       const now = new Set();
       for (const gp of pads) {
         if (!gp) continue;
         const x = gp.axes[0] ?? 0;
         y = gp.axes[1] ?? 0;
-        const rx = gp.axes[2] ?? 0;
-        if (Math.abs(rx) > 0.2 && Math.abs(rx) > Math.abs(look)) look = rx;
+        ry = gp.axes[3] ?? 0; // right stick: up / down only (sideways is ignored)
         if (x < -DEADZONE || gp.buttons[PAD.LEFT]?.pressed) l = true;
         if (x > DEADZONE || gp.buttons[PAD.RIGHT]?.pressed) r = true;
         gp.buttons.forEach((b, i) => { if (b.pressed) now.add(i); });
       }
       if (!pads.some(Boolean)) return;
       pad.look = look;
-      const f = y < -DEADZONE || now.has(PAD.UP) ? 1 : y > DEADZONE || now.has(PAD.DOWN) ? -1 : 0;
-      if (f !== pad.fwd) { pad.fwd = f; onChange?.(current()); }
+      // Falling: left stick up / down (or D-pad) glides faster / slower; right stick up / down falls faster / slower.
+      const g = y < -DEADZONE || now.has(PAD.UP) ? 1 : y > DEADZONE || now.has(PAD.DOWN) ? -1 : 0;
+      const f = ry < -DEADZONE ? 1 : ry > DEADZONE ? -1 : 0;
+      if (f !== pad.fwd || g !== pad.glide) { pad.fwd = f; pad.glide = g; onChange?.(current()); }
       if (!pad.seen) { pad.seen = true; onPad?.(); }
       for (const i of now) {
         if (pad.down.has(i)) continue; // edges only
