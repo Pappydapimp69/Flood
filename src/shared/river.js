@@ -1272,7 +1272,14 @@ function weather(world) {
   // Up to stormMax storms at once; after one ends the next waits stormGap.
   if (world.storms.length < TUNE.stormMax && world.tick >= (world.stormNext ?? TUNE.stormStart) && racing.length && (world.sky ?? 0) >= TUNE.stormMinWater) {
     const rng = stream(world.terrain.seed, `storm:${world.tick}:${world.storms.length}`);
-    const tAt = 0.25 + 0.7 * rng();
+    // Around the middle of the field: the mean slope position of the rivers
+    // from 3rd place to 3rd from last (the two out front and the two at the
+    // back don't pull it), never above the first quarter of the course.
+    const landed = racing.filter((r) => !r.dropping);
+    const ts = (landed.length ? landed : racing).map((r) => slopeT(world, r.x, r.z)).sort((a, b) => b - a);
+    const mid = ts.length >= 5 ? ts.slice(2, ts.length - 2) : ts;
+    const hi = mid[0], lo = mid[mid.length - 1], mean = mid.reduce((a, b) => a + b, 0) / mid.length;
+    const tAt = Math.min(0.95, Math.max(0.25, Math.min(hi, Math.max(lo, mean + (rng() - 0.5) * (hi - lo)))));
     const t = world.terrain, ax = t.axis.x, az = t.axis.y, half = t.worldSize / 2;
     const u = (tAt * 2 * t.long - t.long) * half, span = TUNE.stormSpan;
     const side = (rng() * 2 - 1) * span * 0.7;
