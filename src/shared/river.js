@@ -77,10 +77,10 @@ export const TUNE = {
   // water can run over ground far higher than it normally can, uphill where
   // it's aimed, without the climb bleeding its speed. The wind-up holds the
   // head still and open to rivals, and the slam spends water.
-  gougeWind: 16, // ticks rearing up (0.8 s): the head stands still
+  gougeAdd: 1.5, // times base speed Gouge adds on top of the speed the head already has
+  gougeGrow: 0.5, // size it adds for the boost (a taller, deeper head; gone when the boost ends)
   gougeBoost: 60, // ticks the boost lasts (3 s)
   gougeLift: 80, // metres higher than usual the head can pass over while boosted
-  gougeSpeed: 2, // times base speed the water keeps at least while boosted
   gougeRise: 2, // metres: a bot presses it only for a rise at least this far above what it can climb...
   gougeLook: 4, // ...within this many cells along its heading
   gougeShare: 0.1, // share of the river's volume each gouge spends...
@@ -91,9 +91,8 @@ export const TUNE = {
   // Surge, the second skill: a short wind-up, then
   // a burst of speed on the flat; costs water, its own cooldown.
   surgeOn: true,
-  surgeWind: 10, // ticks winding up (0.5 s), head still
   surgeTicks: 40, // ticks of burst (2 s)
-  surgeSpeed: 2.5, // times base speed at least while surging
+  surgeAdd: 2, // times base speed Surge adds on top of the speed the head already has
   surgeShare: 0.08, // share of volume each surge spends (min gougeMinCost)
   surgeCool: 160, // ticks from one surge to the next (8 s)
   // Comeback experiments (off by default).
@@ -479,7 +478,7 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     cut: 0, cutTicks: 0, cutAt: -1, cutLake: -1,
     stuck: false, stuckAt: 0, stuckX: 0, stuckZ: 0, // a head on a lake cutting its way out through a bank
     exitPath: null, exitStep: 0,
-    gougeT: -1, // ticks into a gouge's wind-up, or -1
+    gougeT: -1, // (unused since Gouge stopped pausing the head: always -1)
     surgeT: -1, surgeAt: 0, // Surge: ticks into it (wind-up then burst), or -1; tick it's ready again
     boost: 0, // ticks of Gouge's climb boost left
     gougeAt: 0, // tick the next gouge is ready
@@ -720,31 +719,25 @@ export function gougeTarget(world, r) {
 
 export const gougeUsable = (world, r) => gougeReady(world, r) && gougeTarget(world, r);
 
+// Gouge never stops the head: the momentum it has is kept and the boost adds
+// to it, speed and size both, for gougeBoost ticks (owner, 2026-11-03).
 function startGouge(world, r) {
   const cost = gougeCost(r);
   grow(r, -cost);
-  r.gougeT = 0;
   r.gougeAt = world.tick + TUNE.gougeCool;
-  r.speed = 0;
-  world.events.push({ type: 'gouge-wind', river: r.idx, cost, tick: world.tick });
-}
-
-// One tick of a gouge's wind-up: the head holds still (rivals can still cut
-// into it). At the slam the boost starts and the water bursts on.
-function gougeTick(world, r) {
-  r.gougeT++;
-  r.speed = 0;
-  r.depth = depthOf(r);
-  if (r.gougeT < TUNE.gougeWind) return;
-  r.gougeT = -1;
   r.boost = TUNE.gougeBoost;
-  r.speed = TUNE.baseSpeed * TUNE.gougeSpeed * Math.max(1, r.mass ?? 1);
+  r.boostSpeed = r.speed + TUNE.baseSpeed * TUNE.gougeAdd * Math.max(1, r.mass ?? 1);
+  r.speed = r.boostSpeed;
+  r.size = sizeOf(r.volume) + TUNE.gougeGrow;
+  r.depth = depthOf(r);
   // A fresh start from here: no route, exit, cut or stall held over from before.
   r.route = null; r.exit = -1; r.exitPath = null; r.stuck = false; r.filling = false;
   r.cut = 0; r.cutTicks = 0; r.cutAt = -1; r.cutLake = -1;
   r.netAt = r.stuckAt = world.tick; r.netX = r.stuckX = r.x; r.netZ = r.stuckZ = r.z; r.netT = r.travelled;
+  world.events.push({ type: 'gouge-wind', river: r.idx, cost, tick: world.tick });
   world.events.push({ type: 'gouge', river: r.idx, x: r.x, z: r.z, dx: r.dx, dz: r.dz, tick: world.tick });
 }
+
 const clampUnit = (v) => Math.max(-1, Math.min(1, v | 0));
 
 // One authoritative tick. Phases, so the result never depends on the order
@@ -792,19 +785,17 @@ function moveRiver(world, r, { s: steer, f: fwd, k: skill, u: surge }) {
   // A player's Gouge fires whenever it is ready; bots press it only facing a
   // rise the boost can carry them over (see bot.js).
   if (skill && gougeReady(world, r)) startGouge(world, r);
-  if (r.boost > 0) r.boost--;
+  if (r.boost > 0 && --r.boost === 0) r.size = sizeOf(r.volume); // the boost's extra size goes with it
   if (surge && surgeReady(world, r)) {
     const cost = Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare);
-    grow(r, -cost); r.surgeT = 0; r.surgeAt = world.tick + TUNE.surgeCool; r.speed = 0;
+    // Like Gouge, it never stops the head: the speed it has is kept and Surge adds to it.
+    grow(r, -cost); r.surgeT = 0; r.surgeAt = world.tick + TUNE.surgeCool;
+    r.surgeSpeed = r.speed + TUNE.baseSpeed * TUNE.surgeAdd * Math.max(1, r.mass ?? 1);
+    r.speed = r.surgeSpeed;
     world.events.push({ type: 'surge-wind', river: r.idx, cost, tick: world.tick });
+    world.events.push({ type: 'surge', river: r.idx, tick: world.tick });
   }
-  if (r.surgeT >= 0) {
-    r.surgeT++;
-    if (r.surgeT <= TUNE.surgeWind) { r.speed = 0; r.depth = depthOf(r); return; }
-    if (r.surgeT === TUNE.surgeWind + 1) world.events.push({ type: 'surge', river: r.idx, tick: world.tick });
-    if (r.surgeT > TUNE.surgeWind + TUNE.surgeTicks) r.surgeT = -1;
-  }
-  if (r.gougeT >= 0) return gougeTick(world, r);
+  if (r.surgeT >= 0 && ++r.surgeT > TUNE.surgeTicks) r.surgeT = -1;
   // In the sea off the wrong coast: only the one beach ends the race, so the
   // current carries the river along the coast to it (no steering out at sea).
   const kSea = cellIndex(world.terrain, r.x, r.z);
@@ -913,8 +904,8 @@ function moveRiver(world, r, { s: steer, f: fwd, k: skill, u: surge }) {
   // Momentum: more water surges up to speed just as fast, but holds it
   // longer, slowing down only slowly.
   r.speed += (target - r.speed) * (target > r.speed ? TUNE.speedEase : TUNE.slowEase / r.size);
-  if (r.boost > 0) r.speed = Math.max(r.speed, TUNE.baseSpeed * TUNE.gougeSpeed * mass); // boosted: the climb can't slow it
-  if (r.surgeT > TUNE.surgeWind) r.speed = Math.max(r.speed, TUNE.baseSpeed * TUNE.surgeSpeed * mass); // surging
+  if (r.boost > 0) r.speed = Math.max(r.speed, r.boostSpeed); // boosted: the speed it had plus the boost; the climb can't slow it
+  if (r.surgeT >= 0) r.speed = Math.max(r.speed, r.surgeSpeed); // surging: its speed plus the surge
   r.depth = depthOf(r);
 
   // More water stands taller at the head: rises that would stop a small river
@@ -1714,7 +1705,7 @@ function joinLake(world, r, lake, cell) {
 
 function grow(r, litres) {
   r.volume += litres;
-  r.size = sizeOf(r.volume);
+  r.size = sizeOf(r.volume) + (r.boost > 0 ? TUNE.gougeGrow : 0); // (a Gouge boost adds size while it lasts)
 }
 
 function afterMove(world, r) {

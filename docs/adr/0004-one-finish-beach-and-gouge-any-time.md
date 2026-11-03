@@ -31,3 +31,10 @@ pass over ground up to 80 m x size higher than usual (`gougeLift`, folded into `
 where it's aimed even uphill, at least 2x base speed, and climbing doesn't cost it speed. The
 cooldown is 10 s from the press. The trench, the breakthrough plan and the dig-phase cut queue are
 gone. Bots press it facing a rise above what they can climb but within the boost's lift.
+
+## Update (owner, 2026-11-03): no wind-up; Gouge adds to the head's momentum
+Gouge paused the head, then charged it to a fixed speed. Now the press keeps the speed the head
+has and adds `gougeAdd` x base speed on top, plus `gougeGrow` size (a taller, deeper head) for the
+3 s boost; the extra size goes when the boost ends. Surge follows the same rule: it adds
+`surgeAdd` x base speed to the current speed for 2 s. Neither skill stops the head any more, so
+the wind-up exposure the bots avoid (Brain G2) is gone; the bots' check stays as a harmless guard.

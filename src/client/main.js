@@ -832,7 +832,7 @@ function advance(inputs) {
       if (river && e.river === river.idx) showPop('Wrong beach — the current carries you to the finish');
     } else if (e.type === 'surge-wind') {
       if (river && e.river === river.idx && coach) coach.surged = true;
-      if (river && e.river === river.idx) { showPop(`Surge! −${fmtL(e.cost)}`); audio.gougeWind(); }
+      if (river && e.river === river.idx) showPop(`Surge! −${fmtL(e.cost)}`);
     } else if (e.type === 'surge') {
       const en = entries[e.river], gr = world.rivers[e.river];
       if (en) { en.slamAt = performance.now(); burstSpray(en.spray, gr.x, surfaceAt(world, gr.x, gr.z) * VERT, gr.z, 1.2 * gr.size, 40); }
@@ -841,7 +841,7 @@ function advance(inputs) {
       if (river && e.river === river.idx && coach) coach.gouged = true;
       const en = entries[e.river];
       if (en) en.gougeAt = performance.now();
-      if (river && e.river === river.idx) { showPop(`Gouge! −${fmtL(e.cost)}`); audio.gougeWind(); }
+      if (river && e.river === river.idx) showPop(`Gouge! −${fmtL(e.cost)}`);
     } else if (e.type === 'gouge') {
       // The slam: spray thrown up all round, the camera jolts, the boost is on.
       const en = entries[e.river], gr = world.rivers[e.river];
@@ -915,7 +915,7 @@ function updateSkill() {
   const state = busy ? 'busy' : left ? 'cool' : !ready ? 'dry' : 'go';
   hud.skill.dataset.state = state;
   hud.skill.style.setProperty('--cool', left && !busy ? (left / TUNE.gougeCool).toFixed(3) : 0);
-  const note = river.gougeT >= 0 ? 'winding up…' : river.boost > 0 ? `boosted · ${(river.boost / TICK_HZ).toFixed(1)} s`
+  const note = river.boost > 0 ? `boosted · ${(river.boost / TICK_HZ).toFixed(1)} s`
     : state === 'cool' ? `ready in ${Math.ceil(left / TICK_HZ)} s` : state === 'dry' ? 'need more water'
     : `climb boost · −${Math.round(gougeCost(river) / 1000)}k L`;
   if (hud.skillNote.textContent !== note) hud.skillNote.textContent = note;
@@ -925,7 +925,7 @@ function updateSkill() {
   hud.surge.hidden = !show || !TUNE.surgeOn;
   hud.surge.dataset.state = sState;
   hud.surge.style.setProperty('--cool', sLeft && !sBusy ? (sLeft / TUNE.surgeCool).toFixed(3) : 0);
-  const sNote = sBusy ? (river.surgeT <= TUNE.surgeWind ? 'winding up…' : 'surging!') : sState === 'cool' ? `ready in ${Math.ceil(sLeft / TICK_HZ)} s`
+  const sNote = sBusy ? 'surging!' : sState === 'cool' ? `ready in ${Math.ceil(sLeft / TICK_HZ)} s`
     : sState === 'dry' ? 'need more water' : `speed burst · −${Math.round(Math.max(TUNE.gougeMinCost, river.volume * TUNE.surgeShare) / 1000)}k L`;
   if (hud.surgeNote.textContent !== sNote) hud.surgeNote.textContent = sNote;
   // A rise the boost would carry you over: say so, the moment it stops you.
@@ -1301,11 +1301,11 @@ renderer.setAnimationLoop(() => {
       const s = r.size * (r.finished ? 1.4 : 1);
       // Gouge: the water rears up and draws back while it winds up, then
       // slams flat and long when the blow lands.
-      const wind = r.gougeT >= 0 && r.gougeT < TUNE.gougeWind ? (r.gougeT + alpha) / TUNE.gougeWind : 0;
+      const wind = 0; // (Gouge no longer winds up: it adds to the head at once)
       const slam = e.slamAt ? Math.max(0, 1 - (now - e.slamAt) / 450) : 0;
       const rear = wind * wind, quiver = wind > 0.6 ? Math.sin(now / 22) * 0.06 * wind : 0;
       const lift = r.boost > 0 ? Math.min(1, r.boost / 10) * (0.9 + 0.1 * Math.sin(now / 60)) : 0; // boosted: a tall standing wave
-      const dash = r.surgeT > TUNE.surgeWind ? 1 : 0; // surging: long and low
+      const dash = r.surgeT >= 0 ? 1 : 0; // surging: long and low
       e.surge.position.set(hx - e.mx * 40 * s * rear, hy + 6 * s + 70 * s * rear * (1 - slam) + 40 * s * lift, hz - e.mz * 40 * s * rear);
       e.surge.scale.set(95 * s * (1 - 0.25 * rear + 0.35 * slam + quiver + 0.3 * lift - 0.15 * dash), 46 * s * (1 + 1.8 * rear - 0.5 * slam + 1.6 * lift - 0.3 * dash), 120 * s * (1 - 0.3 * rear + 0.8 * slam + 0.3 * lift + 1.2 * dash));
       e.surge.rotation.set(0, Math.atan2(e.mx / ml, e.mz / ml), 0);
