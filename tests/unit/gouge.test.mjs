@@ -7,6 +7,7 @@ import { encodeFrame, decodeFrame } from '../../src/shared/protocol.js';
 function atRise(seed = 4) {
   const w = rollIsland(seed, 12).world;
   const r = addRiver(w, 'a');
+  r.gougeOn = r.surgeOn = true; // unlocked (they unlock with volume)
   for (let k = 0; k < 20 * 300; k++) {
     if (gougeReady(w, r) && gougeTarget(w, r)) return { w, r };
     step(w, new Map());
@@ -19,6 +20,7 @@ const press = (w, s = 0) => step(w, new Map([['a', { s, f: 0, k: 1 }]]));
 test('gouge never stops the head: it keeps its momentum and adds speed and size for 3 s', async () => {
   const { sizeOf } = await import('../../src/shared/river.js');
   const w = rollIsland(4, 12).world, r = addRiver(w, 'a');
+  r.gougeOn = r.surgeOn = true;
   for (let k = 0; k < 120; k++) step(w, new Map());
   const vol = r.volume, cost = gougeCost(r), v0 = r.speed, x = r.x, z = r.z;
   press(w);
@@ -41,13 +43,14 @@ test('boosted, a head climbs a rise that stopped it', () => {
   assert.ok(surfaceAt(w, r.x, r.z, r.idx) > h0 + 10, 'it did not climb');
 });
 
-test('cooldown is 10 s from the press, and the water floor still gates it', () => {
+test('cooldown is 10 s from the press and shared by both skills; the water floor still gates it', () => {
   const { w, r } = atRise();
   press(w);
   const at = w.tick;
   for (let k = 0; k < TUNE.gougeBoost + 2; k++) step(w, new Map());
   assert.equal(gougeReady(w, r), false, 'still recharging');
   assert.equal(r.gougeAt, at - 1 + TUNE.gougeCool);
+  assert.equal(r.surgeAt, r.gougeAt, 'one cooldown for both skills');
   const w2 = rollIsland(4, 12).world, r2 = addRiver(w2, 'a');
   r2.volume = TUNE.gougeKeep * TUNE.startVolume + TUNE.gougeMinCost - 1;
   assert.equal(gougeReady(w2, r2), false, 'too little water to pay and keep the floor');
@@ -68,6 +71,7 @@ test('skill presses travel in frames and replay to the same race', () => {
 test('surge: keeps the head momentum and adds speed at once, pays water, and recharges', async () => {
   const { surgeReady } = await import('../../src/shared/river.js');
   const w = rollIsland(4, 12).world, r = addRiver(w, 'a');
+  r.gougeOn = r.surgeOn = true;
   for (let k = 0; k < 60; k++) step(w, new Map());
   assert.ok(surgeReady(w, r));
   const vol = r.volume, x = r.x, v0 = r.speed;
@@ -101,4 +105,13 @@ test('the route preview runs the real rules on a copy and changes nothing', asyn
     if (k % 20 === 19) worst = Math.max(worst, Math.min(...path.map((p) => Math.hypot(p.x - r.x, p.z - r.z))));
   }
   assert.ok(worst < 60, `${Math.round(worst)} m off the previewed line`);
+});
+
+test('skills are locked until the river grows past their volume', () => {
+  const w = rollIsland(4, 12).world, r = addRiver(w, 'a');
+  for (let k = 0; k < 60; k++) step(w, new Map());
+  assert.ok(!r.gougeOn && !r.surgeOn, 'unlocked at the start');
+  r.volume = TUNE.gougeUnlock + 1;
+  step(w, new Map());
+  assert.ok(r.gougeOn && r.surgeOn);
 });

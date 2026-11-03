@@ -95,6 +95,10 @@ export const TUNE = {
   surgeAdd: 2, // times base speed Surge adds on top of the speed the head already has
   surgeShare: 0.08, // share of volume each surge spends (min gougeMinCost)
   surgeCool: 160, // ticks from one surge to the next (8 s)
+  // Skills unlock as a river grows (litres; once unlocked, kept), and share one
+  // cooldown: using either restarts it for both, at the length of the one used.
+  surgeUnlock: 1_200_000,
+  gougeUnlock: 1_500_000,
   // Comeback experiments (off by default).
   stormAim: 'pack', // 'pack': storms blow in just ahead of the middle of the field; 'tail': over its back
   catchUp: 0, // extra trickle share for rivers more than catchUpGap behind the leader
@@ -716,7 +720,7 @@ function readInput(v) {
 export const gougeCost = (r) => Math.max(TUNE.gougeMinCost, r.volume * TUNE.gougeShare * (TUNE.gougeSizeCost ? Math.max(1, r.size) : 1));
 
 export function gougeReady(world, r) {
-  return isRacing(r) && !r.dropping && r.pooled < 0 && r.gougeT < 0 && !(r.boost > 0) && world.tick >= r.gougeAt &&
+  return isRacing(r) && !!r.gougeOn && !r.dropping && r.pooled < 0 && r.gougeT < 0 && !(r.boost > 0) && world.tick >= r.gougeAt &&
     r.volume - gougeCost(r) >= TUNE.gougeKeep * TUNE.startVolume;
 }
 
@@ -737,7 +741,7 @@ export const gougeUsable = (world, r) => gougeReady(world, r) && gougeTarget(wor
 function startGouge(world, r) {
   const cost = gougeCost(r);
   grow(r, -cost);
-  r.gougeAt = world.tick + TUNE.gougeCool;
+  r.gougeAt = r.surgeAt = world.tick + TUNE.gougeCool; r.coolLen = TUNE.gougeCool; // one cooldown for both skills
   r.boost = TUNE.gougeBoost;
   r.boostSpeed = r.speed + TUNE.baseSpeed * TUNE.gougeAdd * Math.max(1, r.mass ?? 1);
   r.speed = r.boostSpeed;
@@ -784,7 +788,7 @@ export function step(world, inputs) {
 // (downhill along the heading is fast, across a slope slow); water can't go
 // uphill, so a heading into a rise slides along the contour if it can, or the
 // water ponds a little and then waits for the player to turn.
-export const surgeReady = (world, r) => TUNE.surgeOn && isRacing(r) && !r.dropping && r.pooled < 0 && r.gougeT < 0 && !(r.surgeT >= 0)
+export const surgeReady = (world, r) => TUNE.surgeOn && !!r.surgeOn && isRacing(r) && !r.dropping && r.pooled < 0 && r.gougeT < 0 && !(r.surgeT >= 0)
   && world.tick >= (r.surgeAt ?? 0) && r.volume - Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare) >= TUNE.gougeKeep * TUNE.startVolume;
 function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: surge }) {
   if (r.dropping) return glide(world, r, steer, fwd, glideIn);
@@ -797,6 +801,9 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
     r.dx = dx; r.dz = dz;
     normalize(r);
   }
+  // Skills unlock as the river grows, and stay unlocked.
+  if (!r.surgeOn && r.volume >= TUNE.surgeUnlock) { r.surgeOn = true; world.events.push({ type: 'unlock', skill: 'surge', river: r.idx, tick: world.tick }); }
+  if (!r.gougeOn && r.volume >= TUNE.gougeUnlock) { r.gougeOn = true; world.events.push({ type: 'unlock', skill: 'gouge', river: r.idx, tick: world.tick }); }
   // A player's Gouge fires whenever it is ready; bots press it only facing a
   // rise the boost can carry them over (see bot.js).
   if (skill && gougeReady(world, r)) startGouge(world, r);
@@ -804,7 +811,7 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   if (surge && surgeReady(world, r)) {
     const cost = Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare);
     // Like Gouge, it never stops the head: the speed it has is kept and Surge adds to it.
-    grow(r, -cost); r.surgeT = 0; r.surgeAt = world.tick + TUNE.surgeCool;
+    grow(r, -cost); r.surgeT = 0; r.surgeAt = r.gougeAt = world.tick + TUNE.surgeCool; r.coolLen = TUNE.surgeCool;
     r.surgeSpeed = r.speed + TUNE.baseSpeed * TUNE.surgeAdd * Math.max(1, r.mass ?? 1);
     r.speed = r.surgeSpeed;
     world.events.push({ type: 'surge-wind', river: r.idx, cost, tick: world.tick });
@@ -2099,7 +2106,7 @@ export function riverFingerprint(world) {
   mix(g);
   for (const r of [...world.rivers].sort((a, b) => (a.id < b.id ? -1 : 1))) {
     mix(Math.round(r.x * 100)); mix(Math.round(r.z * 100)); mix(r.finishTick); mix(r.path.length); mix(Math.round(r.volume));
-    mix(r.out ? r.out.tick : -1); mix(r.pooled); mix(r.via.size); mix(r.gougeT); mix(r.gougeAt); mix(r.boost); mix(r.surgeT ?? -1); mix(r.surgeAt ?? 0);
+    mix(r.out ? r.out.tick : -1); mix(r.pooled); mix(r.via.size); mix(r.gougeT); mix(r.gougeAt); mix(r.boost); mix(r.surgeT ?? -1); mix(r.surgeAt ?? 0); mix((r.surgeOn ? 1 : 0) + (r.gougeOn ? 2 : 0));
   }
   return (h >>> 0).toString(16).padStart(8, '0');
 }

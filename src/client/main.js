@@ -879,6 +879,8 @@ function advance(inputs) {
       if (e.to === river.idx) { tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount); audio.bubble(); }
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
+    } else if (e.type === 'unlock') {
+      if (river && e.river === river.idx) { showPop(e.skill === 'gouge' ? 'GOUGE unlocked — A / SPACE to boost over a rise' : 'SURGE unlocked — RB / Q for a speed burst'); audio.splash(1); }
     } else if (e.type === 'cloud') {
       // A cloud drains a little every tick: add it up, say it twice a second.
       if (river && e.river === river.idx) {
@@ -928,20 +930,20 @@ function updateSkill() {
   if (!show) return;
   const left = Math.max(0, river.gougeAt - world.tick);
   const busy = river.gougeT >= 0 || river.boost > 0, ready = gougeReady(world, river);
-  const state = busy ? 'busy' : left ? 'cool' : !ready ? 'dry' : 'go';
+  const state = !river.gougeOn ? 'dry' : busy ? 'busy' : left ? 'cool' : !ready ? 'dry' : 'go';
   hud.skill.dataset.state = state;
-  hud.skill.style.setProperty('--cool', left && !busy ? (left / TUNE.gougeCool).toFixed(3) : 0);
-  const note = river.boost > 0 ? `boosted · ${(river.boost / TICK_HZ).toFixed(1)} s`
+  hud.skill.style.setProperty('--cool', river.gougeOn && left && !busy ? Math.min(1, left / (river.coolLen ?? TUNE.gougeCool)).toFixed(3) : 0);
+  const note = !river.gougeOn ? `unlocks at ${fmtL(TUNE.gougeUnlock)}` : river.boost > 0 ? `boosted · ${(river.boost / TICK_HZ).toFixed(1)} s`
     : state === 'cool' ? `ready in ${Math.ceil(left / TICK_HZ)} s` : state === 'dry' ? 'need more water'
     : `climb boost · −${Math.round(gougeCost(river) / 1000)}k L`;
   if (hud.skillNote.textContent !== note) hud.skillNote.textContent = note;
   // Surge: its own button, same two gates.
   const sLeft = Math.max(0, (river.surgeAt ?? 0) - world.tick), sBusy = river.surgeT >= 0, sReady = surgeReady(world, river);
-  const sState = sBusy ? 'busy' : sLeft ? 'cool' : !sReady ? 'dry' : 'go';
+  const sState = !river.surgeOn ? 'dry' : sBusy ? 'busy' : sLeft ? 'cool' : !sReady ? 'dry' : 'go';
   hud.surge.hidden = !show || !TUNE.surgeOn;
   hud.surge.dataset.state = sState;
-  hud.surge.style.setProperty('--cool', sLeft && !sBusy ? (sLeft / TUNE.surgeCool).toFixed(3) : 0);
-  const sNote = sBusy ? 'surging!' : sState === 'cool' ? `ready in ${Math.ceil(sLeft / TICK_HZ)} s`
+  hud.surge.style.setProperty('--cool', river.surgeOn && sLeft && !sBusy ? Math.min(1, sLeft / (river.coolLen ?? TUNE.surgeCool)).toFixed(3) : 0);
+  const sNote = !river.surgeOn ? `unlocks at ${fmtL(TUNE.surgeUnlock)}` : sBusy ? 'surging!' : sState === 'cool' ? `ready in ${Math.ceil(sLeft / TICK_HZ)} s`
     : sState === 'dry' ? 'need more water' : `speed burst · −${Math.round(Math.max(TUNE.gougeMinCost, river.volume * TUNE.surgeShare) / 1000)}k L`;
   if (hud.surgeNote.textContent !== sNote) hud.surgeNote.textContent = sNote;
   // A rise the boost would carry you over: say so, the moment it stops you.
