@@ -166,6 +166,7 @@ addEventListener('resize', fitCamera);
 const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
+  padSeen = true;
   document.getElementById('help').textContent = 'Controller: left stick steers (falling: up / down glides faster / slower) · right stick up / down: fall faster / slower · A: gouge (select / race again in menus) · Y: map · X: sound';
 };
 const audio = createAudio();
@@ -710,6 +711,7 @@ function sampleSteer() {
   // screen; a long drag dives faster, a short one glides slower.
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
   if (aim) { steer = aim.s; f = aim.f; }
+  if (coach) { if (f) coach.fell = true; if (g) coach.glided = true; }
   dbg.steers.push(steer);
   watchCoach(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
@@ -884,6 +886,7 @@ function advance(inputs) {
     } else if (e.type === 'cloud') {
       // A cloud drains a little every tick: add it up, say it twice a second.
       if (river && e.river === river.idx) {
+        if (coach) coach.clouded = true;
         cloudGot += e.amount;
         const now = performance.now();
         if (now - cloudSaidAt > 500) { cloudSaidAt = now; showPop(`+${fmtL(cloudGot)} from a rain cloud`); audio.splash(0.5); }
@@ -1040,37 +1043,59 @@ function caption(key, html) {
 // First-race coach: one step at a time; each step's words and its pass test
 // live together (Brain: a prompt and its check derived from one source can't
 // drift apart). Done once per browser (flood.coached); ?nocoach skips it.
+// The Tutorial (menu) runs the longer TUTORIAL list every time.
+const key = (pad, kb, touch) => (lowPower ? touch : padSeen ? pad : kb);
 const COACH = [
-  { text: () => `Steer with <b>${lowPower ? 'the left and right of the screen' : '← →'}</b>`, pass: (c) => c.steered > 8 },
+  { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>`, pass: (c) => c.steered > 8 },
   { text: () => 'The <b>white ribbon</b> shows where your water will go', pass: (c) => c.secs > 5 },
-  { text: () => `Only the <b>gold beach</b> ends the race · <b>${lowPower ? 'tap MAP' : 'M'}</b> for the map`, pass: (c) => c.mapped || c.secs > 8 },
+  { text: () => `Only the <b>gold beach</b> ends the race · <b>${key('Y', 'M', 'tap MAP')}</b> for the map`, pass: (c) => c.mapped || c.secs > 8 },
   { text: () => 'Flow into <b>lakes</b> and out over their bank: their water feeds you', pass: (c) => river.lakes > 0 || c.secs > 14 },
-  { text: () => `A rise in the way? <b>GOUGE</b> (${lowPower ? 'tap' : 'Space'}) climbs over it`, pass: (c) => c.gouged || c.secs > 16 },
-  { text: () => `Slow on the flat? <b>SURGE</b> (${lowPower ? 'tap' : 'Q'}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
+  { text: () => `A rise in the way? <b>GOUGE</b> (${key('A', 'Space', 'tap')}) climbs over it`, pass: (c) => c.gouged || c.secs > 16 },
+  { text: () => `Slow on the flat? <b>SURGE</b> (${key('RB', 'Q', 'tap')}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
 ];
+const TUTORIAL = [
+  { drop: true, text: () => 'You are a <b>raindrop</b> falling onto the mountains. Land, then race as a river to the <b>gold beach</b>', pass: (c) => c.secs > 5 },
+  { drop: true, text: () => `Turn with <b>${key('left stick ← →', '← →', 'a drag left or right')}</b>`, pass: (c) => c.steered > 8 },
+  { drop: true, text: () => `<b>${key('Left stick ↑ ↓', '', 'A long drag')}</b> glides faster or slower across the ground`, pass: (c) => c.glided || lowPower || !padSeen || c.secs > 8 },
+  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'A long or short drag')}</b> falls faster or slower: float to stay up for clouds`, pass: (c) => c.fell || c.secs > 8 },
+  { drop: true, text: () => 'Fly through a <b>white cloud</b>: it pours its water into you (shared with anyone else inside)', pass: (c) => c.clouded || c.secs > 12 },
+  ...COACH.slice(0, 4),
+  { text: () => `Skills unlock as you grow: <b>SURGE</b> at ${(TUNE.surgeUnlock / 1e6).toFixed(1)}M L, <b>GOUGE</b> at ${(TUNE.gougeUnlock / 1e6).toFixed(1)}M L`, pass: (c) => c.secs > 7 },
+  { text: () => `<b>SURGE</b> (${key('RB', 'Q', 'tap')}): a burst of speed · <b>GOUGE</b> (${key('A', 'Space', 'tap')}): climb over a rise`, pass: (c) => c.surged || c.gouged || c.secs > 25 },
+  { text: () => 'Using one skill puts <b>both</b> on cooldown, so pick your moment', pass: (c) => c.secs > 6 },
+  { text: () => 'Dark <b>storms</b> rain on your head and your channel: get under one', pass: (c) => river.rained > c.since || c.secs > 20 },
+  { text: () => 'That\'s it. First to the <b>gold beach</b> wins!', pass: (c) => c.secs > 6 },
+];
+let padSeen = false, tutorial = false, coachSteps = COACH;
 const coachEl = document.getElementById('coach');
-let coach = null; // { step, since (tick), steered, mapped, gouged, surged }
+let coach = null; // { step, since (tick), steered, mapped, gouged, surged, glided, fell, clouded }
 function startCoach() {
-  let done = params.has('nocoach');
-  try { done ||= localStorage.getItem('flood.coached') === '1'; } catch { /* no storage */ }
-  coach = done ? null : { step: 0, since: 0, steered: 0, mapped: false, gouged: false, surged: false };
+  let done = params.has('nocoach') && !tutorial;
+  try { done ||= !tutorial && localStorage.getItem('flood.coached') === '1'; } catch { /* no storage */ }
+  coachSteps = tutorial ? TUTORIAL : COACH;
+  coach = done ? null : { step: 0, since: 0, steered: 0, mapped: false, gouged: false, surged: false, glided: false, fell: false, clouded: false };
   coachEl.hidden = true;
 }
 function watchCoach(steer) {
-  if (!coach || !river || river.dropping || !isRacing(river)) { coachEl.hidden = true; return; }
+  if (!coach || !river || !isRacing(river)) { coachEl.hidden = true; return; }
+  // Drop steps show while falling; once landed, any left are skipped.
+  while (!river.dropping && coachSteps[coach.step]?.drop) { coach.step++; coach.since = world.tick; coach.steered = 0; }
+  const s = coachSteps[coach.step];
+  if (!s || (river.dropping && !s.drop)) { coachEl.hidden = true; if (s) return; }
+  if (!s) { coach = null; return; }
   if (!coach.since) coach.since = world.tick;
   if (steer) coach.steered++;
   const c = { ...coach, secs: (world.tick - coach.since) / TICK_HZ };
-  const s = COACH[coach.step];
   if (s.pass(c)) {
     coach.step++; coach.since = world.tick; coach.steered = 0;
-    if (coach.step >= COACH.length) {
-      coach = null; coachEl.hidden = true;
+    if (coach.step >= coachSteps.length) {
+      coach = null; coachEl.hidden = true; tutorial = false;
       try { localStorage.setItem('flood.coached', '1'); } catch { /* no storage */ }
       return;
     }
+    if (river.dropping && !coachSteps[coach.step].drop) { coachEl.hidden = true; return; }
   }
-  const html = `${COACH[coach.step].text()}<small>${coach.step + 1} / ${COACH.length}</small>`;
+  const html = `${coachSteps[coach.step].text()}<small>${tutorial ? 'Tutorial · ' : ''}${coach.step + 1} / ${coachSteps.length}</small>`;
   if (coachEl.innerHTML !== html) coachEl.innerHTML = html;
   coachEl.hidden = false;
 }
@@ -1500,6 +1525,9 @@ Object.assign(dbg, {
 // Start: ?seed / ?solo / ?bots go straight to a solo race, ?online joins the server,
 // otherwise show the menu.
 const splash = document.getElementById('splash');
+// The studio card shows from page load (over the load itself); a direct start skips it.
+const studio = document.getElementById('studio');
+if (params.has('online') || params.has('seed') || params.has('solo') || params.has('bots')) studio.hidden = true;
 function leaveSplash() {
   if (splash.hidden) return;
   splash.hidden = true;
@@ -1514,7 +1542,8 @@ const pickName = () => {
   try { localStorage.setItem('flood.name', n); } catch { /* no storage */ }
   return n;
 };
-document.getElementById('play-solo').onclick = () => { hud.menu.hidden = true; newRun(); };
+document.getElementById('play-solo').onclick = () => { tutorial = false; hud.menu.hidden = true; newRun(); };
+document.getElementById('play-tutorial').onclick = () => { tutorial = true; hud.menu.hidden = true; newRun(); };
 document.getElementById('play-online').onclick = () => { hud.menu.hidden = true; goOnline(pickName()); };
 if (params.has('online')) { hud.menu.hidden = true; goOnline(params.get('name') ?? ''); }
 else if (params.has('seed') || params.has('solo') || params.has('bots')) { hud.menu.hidden = true; newRun(); }
@@ -1523,6 +1552,8 @@ else {
   useIsland(1 + Math.floor(Math.random() * 1_000_000));
   camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0);
   splash.hidden = false;
+  // The studio card plays over it first (it lets every press through).
+  setTimeout(() => { studio.hidden = true; }, 2900);
   for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, leaveSplash);
 }
 // Live getters (Object.assign would copy today's values, not the getters).
