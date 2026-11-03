@@ -4,11 +4,19 @@ A browser battle royale where every player is a river. Race downhill across an i
 lakes to grow, cut rivals off, and be the first to reach the sea.
 
 ## Play
-Steer with ← → (or A D); ↑ ↓ (W S) hurry or slow your fall. On a phone, hold the left or right side of the screen to steer; while falling, drag to aim the drop where you point (drag far to dive faster). With a controller: left stick or D-pad steers, right stick turns the camera, A selects / races again, Y opens the map, X toggles sound. `M` toggles the map on a keyboard.
+Steer with ← → (or A D); ↑ ↓ (W S) hurry or slow your fall. On a phone, hold the left or right side of the screen to steer; while falling, drag to aim the drop where you point (drag far to dive faster).
+
+- **Gouge** (Space / E, pad A or B, or the GOUGE button): your river keeps its momentum and Gouge adds to it: more speed and a bigger head for 3 s, flowing over ground up to 80 m higher than usual. 10 s cooldown; costs water.
+- **Surge** (Q / F, a pad bumper, or the SURGE button): adds a burst of speed on top of what you have, for 2 s. 8 s cooldown; costs water.
+- **Map** (M, pad Y, or the MAP button): the whole run from above, the gold finish beach at the bottom.
+- **Pause** (Esc / P, pad Start): resume, restart, music and effects volume, route preview and camera shake.
+- The white ribbon ahead of your river is where your water will go in the next 10 s if you let go of
+  the stick: yellow where it slows, orange where it finds its way round a rise, red where it stalls.
+- Rain clouds within 5 km are marked on screen (pinned to the edge when off screen) with their water and distance.
 
 - Every race is a new island. It starts with a 30 s drop from the sky: steer toward the ring to
   pick your landing. Every start sits at the same height.
-- Flow downhill to the sea; first one there wins (the race ends 90 s later). The game never steers.
+- Flow downhill to the gold beach where the slope meets the sea; first one there wins. Reaching any other coast, the sea's current carries you along the shore to the beach. The game never steers.
 - Every lake is full. Your river's water stands over the brim where it runs, so you skate across
   without losing momentum and leave over the bank you reach. Join one and your mass jumps at
   once, then it keeps feeding you through the outlet you cut, which erodes deeper the more it

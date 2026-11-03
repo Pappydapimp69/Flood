@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, gougeReady, gougeTarget, gougeCost, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, VERT } from './terrainMesh.js';
@@ -174,6 +174,7 @@ const showMute = () => { muteBtn.textContent = audio.muted ? '🔇' : audio.bloc
 // A gamepad press can't start sound in a browser: say so until a click or key wakes it.
 setInterval(showMute, 1000);
 muteBtn.onclick = () => { audio.toggle(); showMute(); };
+document.getElementById('mapbtn').onclick = () => pendingActions.push('map');
 showMute();
 const hud = {
   dist: document.getElementById('dist'),
@@ -191,9 +192,12 @@ const hud = {
   hint: document.getElementById('hint'),
   skill: document.getElementById('skill'),
   skillNote: document.querySelector('#skill small'),
+  surge: document.getElementById('surge'),
+  surgeNote: document.querySelector('#surge small'),
 };
 // The skill button: a tap works like Space / E / pad B.
 hud.skill.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); input.pressSkill(); });
+hud.surge.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); input.pressSurge(); });
 let gougeShakeAt = 0; // ms: when your own gouge landed (the camera jolts)
 
 const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
@@ -201,6 +205,11 @@ const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
 // A race: the world plus what draws it. `river` is null when spectating.
 let trees, rocks, lava; // scenery for the current race
 let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, endShown, mode, raceOver, finalShown;
+let recordBanked = false, recordNotes = [];
+let paused = false; // solo: the race clock stops; online: just the menu over a running race
+// Settings, kept in this browser.
+const settings = (() => { try { return { preview: true, shake: true, ...JSON.parse(localStorage.getItem('flood.settings') || '{}') }; } catch { return { preview: true, shake: true }; } })();
+const saveSettings = () => { try { localStorage.setItem('flood.settings', JSON.stringify(settings)); } catch { /* no storage */ } }; // this race's results banked into flood.record yet; personal bests it set
 // The end of the race: once the first river reaches the sea, the rest have
 // FINISH_WINDOW to follow it; whole seconds left (null before that).
 const firstFinish = () => Math.min(...world.rivers.filter((r) => r.finished).map((r) => r.finishTick));
@@ -270,6 +279,31 @@ function updateSkyClouds() {
   skyClouds(world).forEach((c, i) => { skyMeshes[i].visible = c.taken < 0 && (c.low ? !lite : falling && !mapView); });
 }
 
+// The map: straight down on the island from above the middle of the run, the
+// summits at the top of the screen and the finish beach at the bottom, the
+// whole slope in view (it was a far orbit: the island filled a tenth of it).
+const mapFog = scene.fog;
+function frameMap() {
+  const top = spawnBand(world).top, n = terrain.size;
+  const sx = ((top % n) / (n - 1) - 0.5) * W, sz = (Math.floor(top / n) / (n - 1) - 0.5) * W;
+  const bx = world.beachAt.x, bz = world.beachAt.z, cx = (sx + bx) / 2, cz = (sz + bz) / 2;
+  const half = Math.hypot(bx - sx, bz - sz) / 2 * 1.35, ax = (bx - sx) / (2 * half / 1.35 || 1), az = (bz - sz) / (2 * half / 1.35 || 1);
+  const fov = (camera.fov * Math.PI) / 180, aspect = camera.aspect || 1;
+  const fit = Math.max(half, (half * 0.6) / Math.min(1, aspect)); // the run is long; leave the width room on tall screens
+  const h = fit / Math.tan(fov / 2);
+  const y = surfaceAt(world, cx, cz) * VERT;
+  controls.target.set(cx, y, cz);
+  // A slight lean from the beach side keeps 'up' on screen pointing to the summits.
+  camera.position.set(cx + ax * h * 0.08, y + h, cz + az * h * 0.08);
+  camera.lookAt(controls.target);
+  controls.update();
+}
+// On the map, the finish is a big gold disc you can't miss.
+const finishDisc = new THREE.Mesh(new THREE.RingGeometry(0.6, 1, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ffd166', transparent: true, opacity: 0.85, depthTest: false, side: THREE.DoubleSide }));
+finishDisc.renderOrder = 6;
+finishDisc.visible = false;
+scene.add(finishDisc);
+
 // The finish: red and white posts along the one beach that ends the race
 // (two instanced meshes: one draw call per colour, however long the beach).
 let finishFlags = null;
@@ -294,6 +328,8 @@ function placeFinishFlags() {
     finishFlags.add(inst);
   }
   scene.add(finishFlags);
+  finishDisc.scale.setScalar(TUNE.beachRadius * 1.1);
+  finishDisc.position.set(world.beachAt.x, 60, world.beachAt.z);
 }
 
 // Storm clouds follow their storms across the island (height easing over the hills).
@@ -349,6 +385,7 @@ let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 
 // rolled: a world already built for this seed (solo rolls it), else built here.
 function beginRace(seed, raceIds, me, rolled) {
+  recordBanked = false; recordNotes = [];
   for (const e of entries) {
     scene.remove(e.ribbon.mesh, e.head, e.streak, e.surge, e.spray, e.line);
     if (e.pond) { scene.remove(e.pond); e.pond.geometry.dispose(); e.pond.material.dispose(); }
@@ -373,6 +410,8 @@ function beginRace(seed, raceIds, me, rolled) {
   pendingActions.length = 0; // presses from the menu don't carry into the race
   lakeShown.clear();
   showHint();
+  startCoach();
+  if (coach) hud.hint.hidden = true; // the coach teaches the same things, one at a time
   document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
   markBeach(terrainMesh, world.beachLand);
@@ -421,6 +460,7 @@ function goOnline(name) {
   mode = 'online';
   input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true, river.dropping ? input.forward() : 0); };
   input.onSkill = () => { if (river && isRacing(river) && !river.dropping) net?.skill(input.sample()); };
+  input.onSurge = () => { if (river && isRacing(river) && !river.dropping) net?.surge(input.sample()); };
   if (!terrain) { useIsland(1); camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0); }
   status('Connecting…');
   net = connect({
@@ -510,6 +550,42 @@ function placeTags() {
   });
 }
 
+// Rain-cloud markers: every untaken slope cloud within 5 km, with its water and
+// distance, pinned to the screen edge when it's off screen (Brain: seen at 2 km
+// a cloud gave about 6 s to steer for; at 5 km it becomes a detour you can weigh).
+const cloudTagPool = [];
+function placeCloudTags() {
+  const me = river;
+  const near = mapView || !me || me.dropping ? [] : skyClouds(world)
+    .filter((c) => c.low && c.taken < 0)
+    .map((c) => ({ c, d: Math.hypot(c.x - me.x, c.z - me.z) }))
+    .filter((o) => o.d < 5000)
+    .sort((a, b) => a.d - b.d)
+    .slice(0, 3);
+  while (cloudTagPool.length < near.length) {
+    const el = document.createElement('div');
+    tagBox.append(el);
+    cloudTagPool.push(el);
+  }
+  cloudTagPool.forEach((el, i) => {
+    const o = near[i];
+    if (!o) { el.hidden = true; return; }
+    tmpV.set(o.c.x, surfaceAt(world, o.c.x, o.c.z) * VERT + o.c.alt, o.c.z).project(camera);
+    // Behind the camera, or off screen: pin it to the nearest edge, pointing out.
+    let x = tmpV.x, y = tmpV.y, edge = '';
+    if (tmpV.z > 1) { x = -x; y = -y; }
+    if (tmpV.z > 1 || Math.abs(x) > 0.92 || Math.abs(y) > 0.85) {
+      const k = Math.max(Math.abs(x) / 0.92, Math.abs(y) / 0.85);
+      x /= k; y /= k;
+      edge = Math.abs(x) >= 0.91 ? (x > 0 ? ' ▶' : ' ◀') : y > 0 ? ' ▲' : ' ▼';
+    }
+    el.hidden = false;
+    el.className = 'cloud';
+    el.textContent = `☁ +${Math.round(o.c.water / 1000)}k L · ${(o.d / 1000).toFixed(1)} km${edge}`;
+    el.style.transform = `translate(${((x + 1) / 2) * innerWidth}px, ${((1 - y) / 2) * innerHeight}px) translate(-50%, -100%)`;
+  });
+}
+
 // Lake markers: the lakes ahead, seen through the trees, with how full each
 // is and whether it already feeds you. (Bots read the same lakes.)
 const lakeTagPool = [];
@@ -574,12 +650,39 @@ function menuActions() {
 }
 const pendingActions = [];
 
+// Pause: Esc / P / Start. Resume, restart (solo), volumes, preview and shake.
+const pauseEl = document.getElementById('pause');
+function setPaused(on) {
+  paused = on && !!world;
+  pauseEl.hidden = !paused;
+  if (paused) {
+    const v = audio.volumes;
+    document.getElementById('vol-music').value = v.music;
+    document.getElementById('vol-sfx').value = v.sfx;
+    document.getElementById('opt-preview').checked = settings.preview;
+    document.getElementById('opt-shake').checked = settings.shake;
+    document.getElementById('restart').hidden = mode !== 'solo';
+    document.getElementById('resume').focus();
+  }
+}
+document.getElementById('resume').onclick = () => setPaused(false);
+document.getElementById('restart').onclick = () => { setPaused(false); newRun(); };
+document.getElementById('to-menu').onclick = () => location.reload();
+document.getElementById('vol-music').oninput = (e) => audio.setVolumes({ music: Number(e.target.value) });
+document.getElementById('vol-sfx').oninput = (e) => audio.setVolumes({ sfx: Number(e.target.value) });
+document.getElementById('opt-preview').onchange = (e) => { settings.preview = e.target.checked; saveSettings(); };
+document.getElementById('opt-shake').onchange = (e) => { settings.shake = e.target.checked; saveSettings(); };
+
 function handleActions() {
   for (const a of pendingActions.splice(0)) {
+    if (a === 'pause') { setPaused(!paused); continue; }
     if (a === 'map') {
+      if (coach) coach.mapped = true;
       mapView = !mapView;
       controls.enabled = mapView;
-      if (mapView) { controls.target.set(0, 0, 0); camera.position.set(W * 0.4, W * 0.7, W * 0.6); }
+      if (mapView) frameMap();
+      scene.fog = mapView ? null : mapFog;
+      finishDisc.visible = mapView;
     } else if ((a === 'restart' || a === 'tap') && mode === 'solo' && river && !isRacing(river)) {
       newRun();
       return true;
@@ -597,9 +700,10 @@ function sampleSteer() {
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
   if (aim) { steer = aim.s; f = aim.f; }
   dbg.steers.push(steer);
+  watchCoach(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
-  const k = dbg.forceSkill ? 1 : input.takeSkill();
-  return f || k ? { s: steer, f, k } : steer;
+  const k = dbg.forceSkill ? 1 : input.takeSkill(), u = k ? 0 : input.takeSurge();
+  return f || k || u ? { s: steer, f, k, u } : steer;
 }
 
 // Draw the drag stick while it aims the drop.
@@ -726,10 +830,18 @@ function advance(inputs) {
       if (river && e.river === river.idx) { highlightZone(terrainMesh, dropZone(world), false); audio.splash(1.2); }
     } else if (e.type === 'offcourse') {
       if (river && e.river === river.idx) showPop('Wrong beach — the current carries you to the finish');
+    } else if (e.type === 'surge-wind') {
+      if (river && e.river === river.idx && coach) coach.surged = true;
+      if (river && e.river === river.idx) showPop(`Surge! −${fmtL(e.cost)}`);
+    } else if (e.type === 'surge') {
+      const en = entries[e.river], gr = world.rivers[e.river];
+      if (en) { en.slamAt = performance.now(); burstSpray(en.spray, gr.x, surfaceAt(world, gr.x, gr.z) * VERT, gr.z, 1.2 * gr.size, 40); }
+      if (river && e.river === river.idx) { audio.splash(1.4); gougeShakeAt = performance.now() - 250; }
     } else if (e.type === 'gouge-wind') {
+      if (river && e.river === river.idx && coach) coach.gouged = true;
       const en = entries[e.river];
       if (en) en.gougeAt = performance.now();
-      if (river && e.river === river.idx) { showPop(`Gouge! −${fmtL(e.cost)}`); audio.gougeWind(); }
+      if (river && e.river === river.idx) showPop(`Gouge! −${fmtL(e.cost)}`);
     } else if (e.type === 'gouge') {
       // The slam: spray thrown up all round, the camera jolts, the boost is on.
       const en = entries[e.river], gr = world.rivers[e.river];
@@ -796,16 +908,26 @@ let gougeHintAt = -1e9;
 function updateSkill() {
   const show = !!river && isRacing(river) && !river.dropping && !mapView;
   hud.skill.hidden = !show;
+  hud.surge.hidden = !show || !TUNE.surgeOn;
   if (!show) return;
   const left = Math.max(0, river.gougeAt - world.tick);
   const busy = river.gougeT >= 0 || river.boost > 0, ready = gougeReady(world, river);
   const state = busy ? 'busy' : left ? 'cool' : !ready ? 'dry' : 'go';
   hud.skill.dataset.state = state;
   hud.skill.style.setProperty('--cool', left && !busy ? (left / TUNE.gougeCool).toFixed(3) : 0);
-  const note = river.gougeT >= 0 ? 'winding up…' : river.boost > 0 ? `boosted · ${(river.boost / TICK_HZ).toFixed(1)} s`
+  const note = river.boost > 0 ? `boosted · ${(river.boost / TICK_HZ).toFixed(1)} s`
     : state === 'cool' ? `ready in ${Math.ceil(left / TICK_HZ)} s` : state === 'dry' ? 'need more water'
     : `climb boost · −${Math.round(gougeCost(river) / 1000)}k L`;
   if (hud.skillNote.textContent !== note) hud.skillNote.textContent = note;
+  // Surge: its own button, same two gates.
+  const sLeft = Math.max(0, (river.surgeAt ?? 0) - world.tick), sBusy = river.surgeT >= 0, sReady = surgeReady(world, river);
+  const sState = sBusy ? 'busy' : sLeft ? 'cool' : !sReady ? 'dry' : 'go';
+  hud.surge.hidden = !show || !TUNE.surgeOn;
+  hud.surge.dataset.state = sState;
+  hud.surge.style.setProperty('--cool', sLeft && !sBusy ? (sLeft / TUNE.surgeCool).toFixed(3) : 0);
+  const sNote = sBusy ? 'surging!' : sState === 'cool' ? `ready in ${Math.ceil(sLeft / TICK_HZ)} s`
+    : sState === 'dry' ? 'need more water' : `speed burst · −${Math.round(Math.max(TUNE.gougeMinCost, river.volume * TUNE.surgeShare) / 1000)}k L`;
+  if (hud.surgeNote.textContent !== sNote) hud.surgeNote.textContent = sNote;
   // A rise the boost would carry you over: say so, the moment it stops you.
   if (state === 'go' && river.speed < TUNE.climbSpeed && gougeTarget(world, river) && performance.now() - gougeHintAt > 8000) {
     gougeHintAt = performance.now();
@@ -836,14 +958,45 @@ function showResults(table, final) {
   if (river && place > 5) rows.push(river);
   const list = rows.map((r) => `<li class="${r === river ? 'me' : ''}"><span>${ordinal(table.indexOf(r) + 1)} ${escapeHtml(nameOf(r))}</span><span>${status(r)}</span></li>`).join('');
   const sub = river ? `<span>${ordinal(place)} of ${world.rivers.length} · ${fmtTime(secs)} · ${fmtL(river.volume)} · ${river.lakes} lake${river.lakes === 1 ? '' : 's'}</span>` : '';
+  // Stars against paired baselines from this very race (Brain: anchor stars to
+  // named baselines, not a pooled cut): 1 reached the beach, 2 beat the middle
+  // bot to it, 3 first to the beach. Records are banked once per race.
+  let stars = '', recordLine = '';
+  if (river) {
+    const botTimes = world.rivers.filter((r) => r !== river && r.finished).map((r) => r.finishTick).sort((a, b) => a - b);
+    const midBot = botTimes.length ? botTimes[botTimes.length >> 1] : Infinity;
+    const n = !river.finished ? 0 : place === 1 ? 3 : river.finishTick <= midBot ? 2 : 1;
+    stars = `<span class="stars" title="1: reached the beach · 2: beat the middle of the field · 3: first">${'★'.repeat(n)}${'☆'.repeat(3 - n)}</span>`;
+    if (!recordBanked) { recordBanked = true; bankRecord({ place, finished: river.finished, secs, volume: river.volume, stars: n }); }
+    const rec = loadRecord(), pb = recordNotes.length ? `<em>${recordNotes.join(' · ')}</em>` : '';
+    recordLine = `<span class="record">${pb}${rec.races} race${rec.races === 1 ? '' : 's'} · ${rec.wins} win${rec.wins === 1 ? '' : 's'} · best ${rec.bestPlace ? ordinal(rec.bestPlace) : '—'}${rec.bestTime ? ` · fastest ${fmtTime(rec.bestTime)}` : ''} · ★ ${rec.stars}</span>`;
+  }
   const again = mode === 'solo'
     ? `<button id="again">Race again</button>`
     : `<small>${final ? 'Next race starts soon' : 'The race goes on — watch it out'}</small>`;
-  hud.banner.innerHTML = `<b>${head}</b>${sub}<ol>${list}</ol>${final || !river ? '' : '<small>Final results when the race ends</small>'}${again}`;
+  hud.banner.innerHTML = `<b>${head}</b>${stars}${sub}${recordLine}<ol>${list}</ol>${final || !river ? '' : '<small>Final results when the race ends</small>'}${again}`;
   hud.banner.hidden = false;
   document.getElementById('again')?.addEventListener('click', () => newRun());
 }
 const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+// Your record across races, kept in this browser (flood.record). Personal bests
+// are noted on the results the race they're set.
+function loadRecord() {
+  const blank = { races: 0, wins: 0, finishes: 0, stars: 0, bestPlace: 0, bestTime: 0, mostWater: 0 };
+  try { return { ...blank, ...JSON.parse(localStorage.getItem('flood.record') || '{}') }; } catch { return blank; }
+}
+function bankRecord({ place, finished, secs, volume, stars }) {
+  const r = loadRecord();
+  recordNotes = [];
+  r.races++; r.stars += stars;
+  if (finished) r.finishes++;
+  if (place === 1 && finished) r.wins++;
+  if (!r.bestPlace || place < r.bestPlace) { if (r.races > 1) recordNotes.push('best place yet!'); r.bestPlace = place; }
+  if (finished && (!r.bestTime || secs < r.bestTime)) { if (r.bestTime) recordNotes.push('fastest yet!'); r.bestTime = secs; }
+  if (volume > r.mostWater) { if (r.mostWater) recordNotes.push('most water yet!'); r.mostWater = Math.round(volume); }
+  try { localStorage.setItem('flood.record', JSON.stringify(r)); } catch { /* private mode: nothing kept */ }
+}
 
 let hintTimer;
 function showHint() {
@@ -866,6 +1019,44 @@ function caption(key, html) {
   captionEl.classList.add('on');
   captionOff = performance.now() + 2800;
 }
+// First-race coach: one step at a time; each step's words and its pass test
+// live together (Brain: a prompt and its check derived from one source can't
+// drift apart). Done once per browser (flood.coached); ?nocoach skips it.
+const COACH = [
+  { text: () => `Steer with <b>${lowPower ? 'the left and right of the screen' : '← →'}</b>`, pass: (c) => c.steered > 8 },
+  { text: () => 'The <b>white ribbon</b> shows where your water will go', pass: (c) => c.secs > 5 },
+  { text: () => `Only the <b>gold beach</b> ends the race · <b>${lowPower ? 'tap MAP' : 'M'}</b> for the map`, pass: (c) => c.mapped || c.secs > 8 },
+  { text: () => 'Flow into <b>lakes</b> and out over their bank: their water feeds you', pass: (c) => river.lakes > 0 || c.secs > 14 },
+  { text: () => `A rise in the way? <b>GOUGE</b> (${lowPower ? 'tap' : 'Space'}) climbs over it`, pass: (c) => c.gouged || c.secs > 16 },
+  { text: () => `Slow on the flat? <b>SURGE</b> (${lowPower ? 'tap' : 'Q'}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
+];
+const coachEl = document.getElementById('coach');
+let coach = null; // { step, since (tick), steered, mapped, gouged, surged }
+function startCoach() {
+  let done = params.has('nocoach');
+  try { done ||= localStorage.getItem('flood.coached') === '1'; } catch { /* no storage */ }
+  coach = done ? null : { step: 0, since: 0, steered: 0, mapped: false, gouged: false, surged: false };
+  coachEl.hidden = true;
+}
+function watchCoach(steer) {
+  if (!coach || !river || river.dropping || !isRacing(river)) { coachEl.hidden = true; return; }
+  if (!coach.since) coach.since = world.tick;
+  if (steer) coach.steered++;
+  const c = { ...coach, secs: (world.tick - coach.since) / TICK_HZ };
+  const s = COACH[coach.step];
+  if (s.pass(c)) {
+    coach.step++; coach.since = world.tick; coach.steered = 0;
+    if (coach.step >= COACH.length) {
+      coach = null; coachEl.hidden = true;
+      try { localStorage.setItem('flood.coached', '1'); } catch { /* no storage */ }
+      return;
+    }
+  }
+  const html = `${COACH[coach.step].text()}<small>${coach.step + 1} / ${COACH.length}</small>`;
+  if (coachEl.innerHTML !== html) coachEl.innerHTML = html;
+  coachEl.hidden = false;
+}
+
 let finishShown = false;
 function watchCaptions(now, place) {
   if (now > captionOff) captionEl.classList.remove('on');
@@ -902,36 +1093,48 @@ chevron.renderOrder = 3;
 chevron.visible = false;
 scene.add(chevron);
 let downAt = 0, downTurn = 0;
-// Flow guide: where your water will actually run, holding your heading, for
-// the next ~1.2 km (the same trace the bots read). White while it runs on,
-// turning red where it would be stopped by a rise it can't get over.
+// Route preview: where your water will actually go in the next 10 s if you
+// let go of the stick, from the real movement rules run on a copy of your
+// river (median error 9 m at 1 km, 45 m at 3 km). A ribbon on the ground:
+// white where it runs, yellow where it slows, orange where it finds its way
+// round a rise, red where it would stall.
+const PREVIEW_PTS = 50;
 const flowLine = (() => {
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(12 * 3), 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(12 * 3), 3));
-  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.8, depthTest: false }));
-  line.renderOrder = 5;
-  line.frustumCulled = false;
-  line.visible = false;
-  scene.add(line);
-  return line;
+  geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PREVIEW_PTS * 2 * 3), 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(PREVIEW_PTS * 2 * 3), 3));
+  const idx = [];
+  for (let i = 1; i < PREVIEW_PTS; i++) idx.push(2 * i - 2, 2 * i - 1, 2 * i, 2 * i - 1, 2 * i + 1, 2 * i);
+  geo.setIndex(idx);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55, depthTest: false, side: THREE.DoubleSide }));
+  mesh.renderOrder = 5;
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+  scene.add(mesh);
+  return mesh;
 })();
+const KIND = { run: [1, 1, 1], slow: [1, 0.85, 0.3], route: [1, 0.55, 0.15], stuck: [1, 0.2, 0.15] };
 let flowAt = 0;
 function showFlow(now) {
   const me = river;
-  const on = !!me && isRacing(me) && !me.dropping && !mapView;
+  const on = !!me && isRacing(me) && !me.dropping && me.gougeT < 0 && !mapView && settings.preview;
   flowLine.visible = on;
-  if (!on || now - flowAt < 100) return;
+  if (!on || now - flowAt < 250) return;
   flowAt = now;
-  const path = [{ x: me.x, z: me.z }, ...flowFrom(world, me, me.dx, me.dz)].slice(0, 12);
+  const path = [{ x: me.x, z: me.z, kind: 'run' }, ...predictPath(world, me, (PREVIEW_PTS - 1) * 4, 4)].slice(0, PREVIEW_PTS);
   const pos = flowLine.geometry.attributes.position, col = flowLine.geometry.attributes.color;
-  const blocked = path[path.length - 1].blocked;
-  path.forEach((p, i) => {
-    pos.setXYZ(i, p.x, surfaceAt(world, p.x, p.z) * VERT + 12, p.z);
-    const end = blocked && i >= path.length - 2;
-    col.setXYZ(i, 1, end ? 0.25 : 1, end ? 0.2 : 1);
-  });
-  flowLine.geometry.setDrawRange(0, path.length);
+  const half = Math.max(18, widthOf(me) * 0.18);
+  for (let i = 0; i < path.length; i++) {
+    const a = path[Math.max(0, i - 1)], b = path[Math.min(path.length - 1, i + 1)];
+    const dx = b.x - a.x, dz = b.z - a.z, l = Math.hypot(dx, dz) || 1, p = path[i];
+    const y = surfaceAt(world, p.x, p.z) * VERT + 14, fade = 1 - (i / PREVIEW_PTS) * 0.6;
+    pos.setXYZ(2 * i, p.x - (dz / l) * half, y, p.z + (dx / l) * half);
+    pos.setXYZ(2 * i + 1, p.x + (dz / l) * half, y, p.z - (dx / l) * half);
+    const c = KIND[p.kind] ?? KIND.run;
+    col.setXYZ(2 * i, c[0] * fade, c[1] * fade, c[2] * fade);
+    col.setXYZ(2 * i + 1, c[0] * fade, c[1] * fade, c[2] * fade);
+  }
+  flowLine.geometry.setDrawRange(0, Math.max(0, (path.length - 1) * 6));
   pos.needsUpdate = col.needsUpdate = true;
 }
 
@@ -1044,7 +1247,8 @@ renderer.setAnimationLoop(() => {
   // Fixed-step sim, decoupled from frame rate; render interpolates between ticks.
   acc += frameDt;
   if (mode === 'solo') {
-    while (acc >= DT) { soloTick(); acc -= DT; }
+    if (paused) { handleActions(); acc = 0; }
+    else while (acc >= DT) { soloTick(); acc -= DT; }
   } else {
     handleActions();
     // Online: one frame per tick of time, but only frames we have. A backlog
@@ -1097,12 +1301,13 @@ renderer.setAnimationLoop(() => {
       const s = r.size * (r.finished ? 1.4 : 1);
       // Gouge: the water rears up and draws back while it winds up, then
       // slams flat and long when the blow lands.
-      const wind = r.gougeT >= 0 && r.gougeT < TUNE.gougeWind ? (r.gougeT + alpha) / TUNE.gougeWind : 0;
+      const wind = 0; // (Gouge no longer winds up: it adds to the head at once)
       const slam = e.slamAt ? Math.max(0, 1 - (now - e.slamAt) / 450) : 0;
       const rear = wind * wind, quiver = wind > 0.6 ? Math.sin(now / 22) * 0.06 * wind : 0;
       const lift = r.boost > 0 ? Math.min(1, r.boost / 10) * (0.9 + 0.1 * Math.sin(now / 60)) : 0; // boosted: a tall standing wave
+      const dash = r.surgeT >= 0 ? 1 : 0; // surging: long and low
       e.surge.position.set(hx - e.mx * 40 * s * rear, hy + 6 * s + 70 * s * rear * (1 - slam) + 40 * s * lift, hz - e.mz * 40 * s * rear);
-      e.surge.scale.set(95 * s * (1 - 0.25 * rear + 0.35 * slam + quiver + 0.3 * lift), 46 * s * (1 + 1.8 * rear - 0.5 * slam + 1.6 * lift), 120 * s * (1 - 0.3 * rear + 0.8 * slam + 0.3 * lift));
+      e.surge.scale.set(95 * s * (1 - 0.25 * rear + 0.35 * slam + quiver + 0.3 * lift - 0.15 * dash), 46 * s * (1 + 1.8 * rear - 0.5 * slam + 1.6 * lift - 0.3 * dash), 120 * s * (1 - 0.3 * rear + 0.8 * slam + 0.3 * lift + 1.2 * dash));
       e.surge.rotation.set(0, Math.atan2(e.mx / ml, e.mz / ml), 0);
     }
     updateSpray(e.spray, hx, hy, hz, e.mx, e.mz, 1 + (r.size - 1) * 2, Math.min(1, r.speed / 200), frameDt, flowing && !r.finished);    e.screen = isRacing(r) ? [hx, hy + 30 * r.size, hz] : null;
@@ -1130,6 +1335,7 @@ renderer.setAnimationLoop(() => {
 
   placeTags();
   placeLakeTags();
+  placeCloudTags();
   pulseLava(lava, now / 1000);
   updateSpills(now / 1000);
   updateWeather(now / 1000);
@@ -1205,7 +1411,7 @@ renderer.setAnimationLoop(() => {
     if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * (1 - Math.exp(-frameDt * 3)); camera.updateProjectionMatrix(); }
     const jolt = gougeShakeAt ? Math.max(0, 1 - (now - gougeShakeAt) / 500) : 0;
     const shake = falling || done ? 0 : Math.max(Math.min(18, 14 * Math.max(0, sz - 1) * fast + 3 * fast * fast), 45 * jolt * jolt);
-    if (shake > 0.5) {
+    if (shake > 0.5 && settings.shake) {
       camera.position.x += (Math.random() - 0.5) * shake;
       camera.position.y += (Math.random() - 0.5) * shake;
       camera.position.z += (Math.random() - 0.5) * shake;
@@ -1241,6 +1447,12 @@ renderer.setAnimationLoop(() => {
     : me.inLake >= 0 && heatGap(me) < 0 ? 'the heat front is drying this lake'
     : `pouring ${fmtL(dischargeOf(me) * TICK_HZ + me.inflow * TICK_HZ)}/s · head ${headOf(me).toFixed(1)} m · cutting ${me.depth.toFixed(1)} m` + (fedBy ? ` · fed by ${fedBy}` : '');
   updateSkill();
+  // In a rival's live channel: say once that it's slower, not a slipstream
+  // (Brain: following the leader finished 8 of 24 against 20 of 24).
+  if (river && isRacing(river) && !river.dropping) {
+    const k = cellIndex(terrain, river.x, river.z), o = world.owner[k];
+    if (o >= 0 && o !== river.idx && isLive(world, k)) caption('draft', `In ${escapeHtml(nameOf(world.rivers[o]))}'s channel: <b>their water drags at you</b>, it's no slipstream`);
+  }
   watchCaptions(now, place);
   tugFeedback(now);
   if (river && !isRacing(river) && !endShown && (!river.finished || world.tick - river.finishTick > 3 * TICK_HZ)) {

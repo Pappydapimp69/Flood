@@ -52,6 +52,7 @@ export function connect({ name, onMessage, onStatus }) {
     },
     // The skill button: one press, sent at once with the current steer.
     skill(s, f = 0) { send(f ? { t: 'in', s, f, k: 1 } : { t: 'in', s, k: 1 }); },
+    surge(s) { send({ t: 'in', s, u: 1 }); },
     fingerprint(k, fp) { send({ t: 'fp', k, fp }); },
     close() { closed = true; ws.close(); },
   };

@@ -68,7 +68,30 @@
       background: linear-gradient(90deg, #c8642acc calc((1 - var(--cool, 0)) * 100%), #0b2a36cc 0); box-shadow: 0 4px 14px #0005; }
     #skill b { font: 700 10px system-ui, sans-serif; opacity: 0.8; margin-left: 4px; }
     #skill small { font: 600 11px system-ui, sans-serif; letter-spacing: 0; opacity: 0.9; }
-    #skill[hidden] { display: none; }
+    #mapbtn { position: fixed; left: calc(14px + env(safe-area-inset-left, 0px)); bottom: calc(34px + env(safe-area-inset-bottom, 0px));
+      font: 800 13px system-ui, sans-serif; background: #eaf5fbd9; border: 0; border-radius: 10px; height: 40px; padding: 0 12px; cursor: pointer; }
+    #skill[hidden], #surge[hidden], #pause[hidden], #coach[hidden] { display: none; }
+    #coach { position: fixed; left: 50%; top: calc(14% + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
+      background: #0b2a36e6; color: #fff; font: 600 17px system-ui, sans-serif; padding: 10px 18px; border-radius: 14px;
+      box-shadow: 0 4px 16px #0006; pointer-events: none; text-align: center; max-width: min(92vw, 560px); }
+    #coach b { color: #ffcf3a; }
+    #coach small { display: block; opacity: 0.7; font-weight: 400; font-size: 12px; margin-top: 2px; }
+    #pause { position: fixed; inset: 0; display: grid; place-content: center; gap: 10px; background: #08202bcc; color: #fff;
+      font: 600 16px system-ui, sans-serif; text-align: center; z-index: 20; }
+    #pause b { font-size: 34px; letter-spacing: 0.06em; margin-bottom: 6px; }
+    #pause button { font: 700 17px system-ui, sans-serif; padding: 10px 26px; border-radius: 12px; border: 0; background: #eaf5fb; color: #0b2a36; cursor: pointer; }
+    #pause button:focus-visible { outline: 3px solid #ffcf3a; }
+    #pause label { display: flex; gap: 10px; align-items: center; justify-content: center; }
+    #pause small { opacity: 0.7; font-weight: 400; }
+    #surge { position: fixed; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(136px + env(safe-area-inset-bottom, 0px));
+      min-width: 96px; height: 56px; padding: 0 18px; border-radius: 28px; border: 3px solid #ffffffcc; cursor: pointer; touch-action: none;
+      font: 900 14px system-ui, sans-serif; letter-spacing: 0.04em; color: #fff; text-shadow: 0 1px 3px #0008;
+      display: grid; place-content: center; gap: 2px; text-align: center; -webkit-user-select: none; user-select: none;
+      background: linear-gradient(90deg, #2a8cc8cc calc((1 - var(--cool, 0)) * 100%), #0b2a36cc 0); box-shadow: 0 4px 14px #0005; }
+    #surge small { font: 600 11px system-ui, sans-serif; letter-spacing: 0; opacity: 0.9; }
+    #surge[data-state="go"] { background: radial-gradient(circle, #5ad1ff, #1a78c8); }
+    #surge[data-state="dry"] { background: #4a5a62b0; color: #ffffffb0; }
+    #surge[data-state="busy"] { background: radial-gradient(circle, #b8f0ff, #3aa0ff); transform: scale(1.08); }
     #skill[data-state="go"] { background: radial-gradient(circle, #ff9a3c, #c8481a); animation: skillReady 1.2s ease-in-out infinite; }
     #skill[data-state="idle"], #skill[data-state="dry"] { background: #4a5a62b0; color: #ffffffb0; }
     #skill[data-state="busy"] { background: radial-gradient(circle, #ffd27a, #ff7a1a); transform: scale(1.08); }
@@ -94,6 +117,10 @@
     #tags div.prey { background: #1f6b2cd9; }
     #tags div[hidden] { display: none; }
     #tags div.lake { background: #1d6f8ad9; font-weight: 600; }
+    #banner .stars { display: block; font-size: 30px; color: #ffcf3a; letter-spacing: 6px; text-shadow: 0 2px 6px #0006; }
+    #banner .record { display: block; font-size: 13px; opacity: 0.85; margin-top: 4px; }
+    #banner .record em { display: block; color: #ffcf3a; font-style: normal; font-weight: 800; }
+    #tags div.cloud { background: #e9f3ffe6; color: #10303d; font-weight: 700; }
     #tags div.lake.dry { background: #7a6a45d9; }
     #tags div.lake.mine { background: #2a8f6fd9; }
     #tags div.drop { background: none; font-size: 11px; text-shadow: 0 1px 3px #000c; border-bottom: 1px solid #fff9; border-radius: 0; }
@@ -140,6 +167,7 @@
   <div id="app"></div>
   <div id="hud" hidden><h1>FLOOD</h1><div id="stats"><div id="rank"></div><div id="dist"></div><div id="litres"></div><div id="depth"></div><div id="time"></div></div></div>
   <div id="caption"></div>
+  <div id="coach" hidden></div>
   <div id="finish"></div>
   <div id="build"></div>
   <div id="stick"><i></i></div>
@@ -148,12 +176,25 @@
   <div id="tags"></div>
   <div id="pop"></div>
   <div id="feed"></div>
-  <div id="help">Steer: ← → or A D · on a phone, hold the left or right side · Blocked by a rise? Space: GOUGE to climb over it · M: map</div>
+  <div id="help">Steer: ← → or A D · on a phone, hold the left or right side · Blocked by a rise? Space: GOUGE to climb over it · Q: SURGE on the flat · M: map · Esc: pause</div>
   <div id="status" hidden></div>
   <div id="downhill" hidden></div>
   <div id="hint" hidden>← → steer · ↑ ↓ while falling · join lakes to grow · touch smaller <b class="g">▼</b> rivers to absorb them, avoid bigger <b class="r">▲</b> ones · every trail is live water; grey beds belong to drained rivers</div>
   <button id="mute" aria-label="Sound on or off"></button>
+  <button id="mapbtn" aria-label="Map (M)">MAP</button>
   <button id="skill" hidden aria-label="Gouge: climb boost for 3 s (Space, E or pad A)">GOUGE<small></small></button>
+  <div id="pause" hidden>
+    <b>Paused</b>
+    <button id="resume">Resume</button>
+    <button id="restart">Restart race</button>
+    <label>Music <input id="vol-music" type="range" min="0" max="1" step="0.05"></label>
+    <label>Effects <input id="vol-sfx" type="range" min="0" max="1" step="0.05"></label>
+    <label><input id="opt-preview" type="checkbox"> Route preview</label>
+    <label><input id="opt-shake" type="checkbox"> Camera shake</label>
+    <button id="to-menu">Main menu</button>
+    <small>Esc / P / controller Start to resume</small>
+  </div>
+  <button id="surge" hidden aria-label="Surge: a burst of speed for 2 s (Q, F or pad bumper)">SURGE<small></small></button>
   <div id="splash" hidden>
     <h2>FLOOD</h2>
     <p>Every player is a river. Race downhill to the sea.</p>

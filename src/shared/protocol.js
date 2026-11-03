@@ -6,7 +6,7 @@
 //
 // client -> server
 //   { t: 'hello', token?, name? }       join (token resumes a seat)
-//   { t: 'in', s, f?, k? }              steer -1 | 0 | 1; f: hurry +1 / slow -1 the drop; k: 1 skill pressed
+//   { t: 'in', s, f?, k?, u? }          steer -1 | 0 | 1; f: hurry +1 / slow -1 the drop; k: 1 Gouge, u: 1 Surge pressed
 //   { t: 'fp', k, fp }                  sim fingerprint after tick k
 // server -> client
 //   { t: 'welcome', token, id }
@@ -21,10 +21,12 @@
 // of plain steering reads the same.
 const CHARS = ['abc', '-0+', 'xyz'];
 const SKILL = ['ABC', 'DEF', 'XYZ'];
+const SURGE = ['GHI', 'JKL', 'MNO']; // the second skill, Surge (a frame carries one skill press)
 const DECODE = new Map();
 for (let f = -1; f <= 1; f++) for (let s = -1; s <= 1; s++) {
   DECODE.set(CHARS[f + 1][s + 1], f ? { s, f } : s);
   DECODE.set(SKILL[f + 1][s + 1], { s, f, k: 1 });
+  DECODE.set(SURGE[f + 1][s + 1], { s, f, u: 1 });
 }
 
 const unit = (v) => Math.max(-1, Math.min(1, v | 0));
@@ -35,7 +37,7 @@ export function encodeFrame(ids, steers) {
   for (const id of ids) {
     const v = steers.get(id), o = v && typeof v === 'object';
     const s = unit(o ? v.s : v), f = unit(o ? v.f : 0);
-    out += (o && v.k ? SKILL : CHARS)[f + 1][s + 1];
+    out += (o && v.k ? SKILL : o && v.u ? SURGE : CHARS)[f + 1][s + 1];
   }
   return out;
 }

@@ -282,7 +282,7 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
     await set(-1);
     // Hold until the sim has run some ticks with it; frames are slow headless.
     let steers = [];
-    for (let i = 0; i < 100 && !steers.includes(-1); i++) {
+    for (let i = 0; i < 300 && !steers.includes(-1); i++) { // 30 s: CI's software renderer can stall for seconds
       await page.waitForTimeout(100);
       steers = await page.evaluate(() => __flood.steers.slice());
     }
