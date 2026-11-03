@@ -267,12 +267,15 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   const button = (i, on) => page.evaluate(([i, on]) => { __pad.buttons[i].pressed = on; __pad.buttons[i].value = on ? 1 : 0; }, [i, on]);
   // Held longer than a slow headless frame, so the per-frame poll sees it.
   const tap = async (i) => { await button(i, true); await page.waitForTimeout(1200); await button(i, false); await page.waitForTimeout(1200); };
-  // A leaves the splash (music starts) and focuses "Play solo"; down stays on it (the only button); then A.
+  // A leaves the splash (music starts) and focuses "Play solo"; down moves to "Tutorial", up back; then A.
   await tap(0);
   if (await page.evaluate(() => !document.getElementById('splash').hidden)) throw new Error('A did not leave the splash');
   await tap(13);
+  const down = await page.evaluate(() => document.activeElement?.id);
+  if (down !== 'play-tutorial') throw new Error(`down: menu focus on ${down}`);
+  await tap(12);
   const focused = await page.evaluate(() => document.activeElement?.id);
-  if (focused !== 'play-solo') throw new Error(`menu focus on ${focused}`);
+  if (focused !== 'play-solo') throw new Error(`up: menu focus on ${focused}`);
   await tap(0);
   await until(page, (s) => s.ready && s.tick > 5, 'solo race from the gamepad');
   const help = await page.evaluate(() => document.getElementById('help').textContent);
