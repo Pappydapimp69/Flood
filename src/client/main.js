@@ -646,6 +646,7 @@ function menuActions() {
     const menuOpen = !hud.menu.hidden;
     const again = document.getElementById('again');
     if (!splash.hidden) { if (a === 'confirm') leaveSplash(); continue; }
+    if (lesson && a === 'confirm') { endLesson(); continue; }
     if (a === 'mute') { audio.toggle(); showMute(); }
     else if (menuOpen && (a === 'up' || a === 'down')) {
       const btns = [...hud.menu.querySelectorAll('button:not([hidden])')];
@@ -840,7 +841,11 @@ function advance(inputs) {
     if (e.type === 'land') {
       const en = entries[e.river], lr = world.rivers[e.river];
       if (en) burstSpray(en.spray, lr.x, surfaceAt(world, lr.x, lr.z) * VERT, lr.z, 1.2, 70);
-      if (river && e.river === river.idx) { highlightZone(terrainMesh, dropZone(world), false); audio.splash(1.2); }
+      if (river && e.river === river.idx) {
+        highlightZone(terrainMesh, dropZone(world), false); audio.splash(1.2);
+        teach('beach', 'The finish', 'You landed, and now you are a <b>river</b>. Race downhill to <b>this gold beach</b>: it is the only finish. Other beaches just carry you here on the current.', world.beachAt.x, world.beachAt.z);
+        teach('ribbon', 'Your route', 'The <b>white ribbon</b> ahead of you shows where your water will run if you hold this heading. Steer to change it.', lr.x, lr.z);
+      }
     } else if (e.type === 'offcourse') {
       if (river && e.river === river.idx) showPop('Wrong beach — the current carries you to the finish');
     } else if (e.type === 'surge-wind') {
@@ -862,7 +867,7 @@ function advance(inputs) {
       if (river && e.river === river.idx) { audio.gouge(gr.size); gougeShakeAt = performance.now(); showPop('Boosted — climb anything for 3 s'); }
       else if (river && en && Math.hypot(gr.x - river.x, gr.z - river.z) < 3000) audio.gouge(0.5);
     } else if (e.type === 'pool') {
-      if (river && e.river === river.idx) showPop('Lake — your water pours in and raises it');
+      if (river && e.river === river.idx) { showPop('Lake — your water pours in and raises it'); teach('lake', 'A lake', 'Your water pours into the lake and raises it until it spills over the far bank. Cut the outlet and <b>everything that drains through it feeds you</b>. Lakes are the biggest source of water.', river.x, river.z); }
     } else if (e.type === 'pond') {
       if (river && e.river === river.idx) showPop('Stuck — your water fills the hollow until it spills');
     } else if (e.type === 'overflow') {
@@ -873,6 +878,8 @@ function advance(inputs) {
       const from = world.rivers[e.from], to = world.rivers[e.to];
       if (to === river) showPop(`You cut into ${nameOf(from)} — its water flows into you`);
       if (from === river) showPop(`${nameOf(to)} cut your channel — your water runs into it!`);
+      if (to === river) teach(`cut:${e.from}>${e.to}`, `You cut into ${nameOf(from)}`, `Your channel crossed <b>${nameOf(from)}</b>'s right here. Yours is <b>deeper</b>, so their water now drains into you at this junction for as long as the cut stays open. Bigger rivers dig deeper channels and win junctions.`, e.x, e.z);
+      if (from === river) teach(`cut:${e.from}>${e.to}`, `${nameOf(to)} cut your channel`, `<b>${nameOf(to)}</b>'s channel crossed yours right here. Theirs is <b>deeper</b>, so <b>your</b> water now drains into them at this junction. Grow bigger (lakes, clouds, storms) before you cross a bigger river, or steer clear of it.`, e.x, e.z);
       feed(`${nameOf(to)} cut into ${nameOf(from)}`);
     } else if (e.type === 'steam') {
       if (river && e.river === river.idx) { steamed += e.amount; audio.hiss(); }
@@ -882,11 +889,13 @@ function advance(inputs) {
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
     } else if (e.type === 'unlock') {
+      if (river && e.river === river.idx) teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `You're big enough for <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
       if (river && e.river === river.idx) { showPop(e.skill === 'gouge' ? 'GOUGE unlocked — A / SPACE to boost over a rise' : 'SURGE unlocked — RB / Q for a speed burst'); audio.splash(1); }
     } else if (e.type === 'cloud') {
       // A cloud drains a little every tick: add it up, say it twice a second.
       if (river && e.river === river.idx) {
         if (coach) coach.clouded = true;
+        teach('cloud', 'A rain cloud', 'Inside a cloud its water <b>pours into you</b>, shared equally with anyone else inside. It shrinks and rises as it empties. Water you carry makes you heavier: you fall faster and turn slower.', river.x, river.z);
         cloudGot += e.amount;
         const now = performance.now();
         if (now - cloudSaidAt > 500) { cloudSaidAt = now; showPop(`+${fmtL(cloudGot)} from a rain cloud`); audio.splash(0.5); }
@@ -895,6 +904,7 @@ function advance(inputs) {
       showPop('A heat wave is rolling down the mountain — the lakes behind it are drying up');
       feed('The heat front is coming: lakes behind it dry out');
     } else if (e.type === 'storm') {
+      if (e.on) teach('storm', 'A storm', 'Storms form from water that evaporates off the rivers. Under one, rain pours into <b>your head and your channel</b>. It shrinks as it rains out and drifts as it goes, so chase it.', e.x, e.z);
       if (e.on) { feed('A storm breaks over the slope ahead — free water'); if (river && isRacing(river)) showPop('Storm ahead! Get under it to soak up the rain'); }
     } else if (e.type === 'swell') {
       // A pulse reached a head: it swells, more for a bigger slug of water.
@@ -911,7 +921,8 @@ function advance(inputs) {
       if (en && river && e.river === river.idx && e.amount > 50_000) showPop('A low lake on your channel is soaking up your water');
     } else if (e.type === 'merge') {
       const w = world.rivers[e.winner], l = world.rivers[e.loser];
-      if (w === river) { showPop(`You drained ${nameOf(l)} dry`); audio.merge(true); }
+      if (w === river) { showPop(`You drained ${nameOf(l)} dry`); audio.merge(true); teach(`merge:${e.loser}`, `You drained ${nameOf(l)}`, `All of <b>${nameOf(l)}</b>'s water ran into you: it is out of the race.`, l.x, l.z); }
+      if (l === river) teach('drained', 'You were drained', `<b>${nameOf(w)}</b> took all your water. Next time, keep away from bigger rivers until you have grown.`, river.x, river.z);
       if (l === river) audio.merge(false);
       feed(`${nameOf(w)} drained ${nameOf(l)} dry`);
       // Spectate whoever drained the river we were watching.
@@ -1040,6 +1051,34 @@ function caption(key, html) {
   captionEl.classList.add('on');
   captionOff = performance.now() + 2800;
 }
+// Tutorial lessons: the race stops, the camera flies to where it happened,
+// and a card explains it; A / Space / Enter / a click carries on.
+const lessonEl = document.getElementById('lesson');
+let lesson = null; const lessonQueue = [], taught = new Set();
+function teach(key, title, html, x, z) {
+  if (!tutorial || mode !== 'solo' || taught.has(key)) return;
+  taught.add(key);
+  lessonQueue.push({ title, html, x, z });
+  if (!lesson) nextLesson();
+}
+function nextLesson() {
+  lesson = lessonQueue.shift() ?? null;
+  lessonEl.hidden = !lesson;
+  if (!lesson) return;
+  coachEl.hidden = true; // one thing at a time
+  lessonEl.querySelector('h3').textContent = lesson.title;
+  lessonEl.querySelector('p').innerHTML = lesson.html;
+  lessonEl.querySelector('small').textContent = `${key('A', 'Space / Enter', 'Tap')} to carry on`;
+  lesson.shownAt = performance.now();
+}
+function endLesson() {
+  if (!lesson || performance.now() - lesson.shownAt < 600) return; // a held button doesn't skip it
+  input.takeSkill(); input.takeSurge(); // the press that closed it fires nothing
+  nextLesson();
+}
+lessonEl.onclick = endLesson;
+addEventListener('keydown', (e) => { if (lesson && (e.code === 'Enter' || e.code === 'Space')) { endLesson(); e.preventDefault(); } });
+
 // First-race coach: one step at a time; each step's words and its pass test
 // live together (Brain: a prompt and its check derived from one source can't
 // drift apart). Done once per browser (flood.coached); ?nocoach skips it.
@@ -1054,17 +1093,13 @@ const COACH = [
   { text: () => `Slow on the flat? <b>SURGE</b> (${key('RB', 'Q', 'tap')}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
 ];
 const TUTORIAL = [
-  { drop: true, text: () => 'You are a <b>raindrop</b> falling onto the mountains. Land, then race as a river to the <b>gold beach</b>', pass: (c) => c.secs > 5 },
-  { drop: true, text: () => `Turn with <b>${key('left stick ← →', '← →', 'a drag left or right')}</b>`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `<b>${key('Left stick ↑ ↓', '', 'A long drag')}</b> glides faster or slower across the ground`, pass: (c) => c.glided || lowPower || !padSeen || c.secs > 8 },
-  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'A long or short drag')}</b> falls faster or slower: float to stay up for clouds`, pass: (c) => c.fell || c.secs > 8 },
-  { drop: true, text: () => 'Fly through a <b>white cloud</b>: it pours its water into you (shared with anyone else inside)', pass: (c) => c.clouded || c.secs > 12 },
-  ...COACH.slice(0, 4),
-  { text: () => `Skills unlock as you grow: <b>SURGE</b> at ${(TUNE.surgeUnlock / 1e6).toFixed(1)}M L, <b>GOUGE</b> at ${(TUNE.gougeUnlock / 1e6).toFixed(1)}M L`, pass: (c) => c.secs > 7 },
-  { text: () => `<b>SURGE</b> (${key('RB', 'Q', 'tap')}): a burst of speed · <b>GOUGE</b> (${key('A', 'Space', 'tap')}): climb over a rise`, pass: (c) => c.surged || c.gouged || c.secs > 25 },
-  { text: () => 'Using one skill puts <b>both</b> on cooldown, so pick your moment', pass: (c) => c.secs > 6 },
-  { text: () => 'Dark <b>storms</b> rain on your head and your channel: get under one', pass: (c) => river.rained > c.since || c.secs > 20 },
-  { text: () => 'That\'s it. First to the <b>gold beach</b> wins!', pass: (c) => c.secs > 6 },
+  { drop: true, text: () => `Turn your falling drop with <b>${key('left stick ← →', '← →', 'a drag left or right')}</b>`, pass: (c) => c.steered > 8 },
+  { drop: true, text: () => `<b>${key('Left stick ↑', '', 'A long drag')}</b> glides faster, <b>${key('↓', '', 'a short one')}</b> slower`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: dive to land sooner, or float to catch clouds`, pass: (c) => c.fell },
+  { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
+  { text: () => `Steer your river with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>`, pass: (c) => c.steered > 8 },
+  { text: () => `<b>${key('Y', 'M', 'MAP')}</b> shows the whole course`, pass: (c) => c.mapped },
+  { text: () => 'Race to the <b>gold beach</b>. The game stops to explain anything new.', pass: (c) => c.secs > 8 },
 ];
 let padSeen = false, tutorial = false, coachSteps = COACH;
 const coachEl = document.getElementById('coach');
@@ -1073,11 +1108,12 @@ function startCoach() {
   let done = params.has('nocoach') && !tutorial;
   try { done ||= !tutorial && localStorage.getItem('flood.coached') === '1'; } catch { /* no storage */ }
   coachSteps = tutorial ? TUTORIAL : COACH;
+  taught.clear(); lessonQueue.length = 0; lesson = null; lessonEl.hidden = true;
   coach = done ? null : { step: 0, since: 0, steered: 0, mapped: false, gouged: false, surged: false, glided: false, fell: false, clouded: false };
   coachEl.hidden = true;
 }
 function watchCoach(steer) {
-  if (!coach || !river || !isRacing(river)) { coachEl.hidden = true; return; }
+  if (!coach || !river || !isRacing(river) || lesson) { coachEl.hidden = true; return; }
   // Drop steps show while falling; once landed, any left are skipped.
   while (!river.dropping && coachSteps[coach.step]?.drop) { coach.step++; coach.since = world.tick; coach.steered = 0; }
   const s = coachSteps[coach.step];
@@ -1290,8 +1326,9 @@ renderer.setAnimationLoop(() => {
   // Fixed-step sim, decoupled from frame rate; render interpolates between ticks.
   acc += frameDt;
   if (mode === 'solo') {
-    if (paused) { handleActions(); acc = 0; }
-    else while (acc >= DT) { soloTick(); acc -= DT; }
+    if (paused || lesson) { handleActions(); acc = 0; }
+    else while (acc >= DT && !lesson) { soloTick(); acc -= DT; }
+    if (lesson) acc = 0;
   } else {
     handleActions();
     // Online: one frame per tick of time, but only frames we have. A backlog
@@ -1392,7 +1429,14 @@ renderer.setAnimationLoop(() => {
   const intro = now < introUntil && !mapView && !!river?.dropping;
   document.body.classList.toggle('intro', intro);
   updateMapLines(now);
-  if (mapView) {
+  if (lesson && lesson.x !== undefined && !mapView) {
+    // A lesson: fly to the spot, high and to the south of it, and look down on it.
+    const g = surfaceAt(world, lesson.x, lesson.z) * VERT;
+    const want = new THREE.Vector3(lesson.x + 700, g + 1500, lesson.z + 1700), k = 1 - Math.exp(-frameDt * 3);
+    camera.position.lerp(want, k);
+    camLook.lerp(new THREE.Vector3(lesson.x, g, lesson.z), k);
+    camera.lookAt(camLook);
+  } else if (mapView) {
     controls.update();
   } else if (intro) {
     // High above the falling comets, behind the summits, looking down on them

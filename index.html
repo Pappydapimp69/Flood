@@ -75,6 +75,14 @@
       background: #0b2a36e6; color: #fff; font: 600 17px system-ui, sans-serif; padding: 10px 18px; border-radius: 14px;
       box-shadow: 0 4px 16px #0006; pointer-events: none; text-align: center; max-width: min(92vw, 560px); }
     #coach b { color: #ffcf3a; }
+    #lesson { position: fixed; left: 50%; bottom: calc(12% + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 15;
+      width: min(560px, calc(100vw - 32px)); box-sizing: border-box; background: #0b2a36f2; color: #eefaff; border-radius: 16px;
+      padding: 16px 20px; font: 16px/1.45 system-ui, sans-serif; box-shadow: 0 6px 24px #0008; border: 2px solid #ffcf3a; cursor: pointer; }
+    #lesson[hidden] { display: none; }
+    #lesson h3 { margin: 0 0 6px; font-size: 20px; color: #ffcf3a; }
+    #lesson p { margin: 0; }
+    #lesson b { color: #ffcf3a; }
+    #lesson small { display: block; margin-top: 10px; opacity: 0.75; font-weight: 600; }
     #coach small { display: block; opacity: 0.7; font-weight: 400; font-size: 12px; margin-top: 2px; }
     #pause { position: fixed; inset: 0; display: grid; place-content: center; gap: 10px; background: #08202bcc; color: #fff;
       font: 600 16px system-ui, sans-serif; text-align: center; z-index: 20; }
@@ -177,6 +185,7 @@
   <div id="hud" hidden><h1>FLOOD</h1><div id="stats"><div id="rank"></div><div id="dist"></div><div id="litres"></div><div id="depth"></div><div id="time"></div></div></div>
   <div id="caption"></div>
   <div id="coach" hidden></div>
+  <div id="lesson" hidden><h3></h3><p></p><small></small></div>
   <div id="finish"></div>
   <div id="build"></div>
   <div id="stick"><i></i></div>

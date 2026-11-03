@@ -118,7 +118,7 @@ export const TUNE = {
   // nearest cell of the start contour: every start is at the same elevation.
   dropTicks: 800, // a fall at the steady rate lasts this long (40 s)...
   dropAlt: 6000, // metres above the ground at the start
-  diveRate: 0.7, // ...diving falls up to this much faster (about 12 s)...
+  diveRate: 1.6, // ...diving falls up to this much faster (about 12 s)...
   floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
   // Rain clouds hang in the sky over the summits: fall through one and its
   // water is yours, a bigger start; each can only be taken once.
@@ -137,10 +137,10 @@ export const TUNE = {
   stormMaxWater: 5_000_000, // ...carrying at most this much, rained out until it's empty
   cloudWater: [150_000, 450_000],
   slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
-  glideSpeed: 140, // m/s sideways while falling (x0.5 slowed, x1.5 hurried)
+  glideSpeed: 260, // m/s across the ground while falling (left stick: x0.4 slow, x1.8 fast)
   settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
   zoneSlack: 2400, // metres a falling drop may stray from the landing rings: wide enough to glide to another mountain's
-  glideTurn: 0.1, // radians per tick while falling: a full circle in about 3 s
+  glideTurn: 0.16, // radians per tick while falling: a full circle in about 2 s
   startElevation: 0.91, // starts ring each summit cone this far up its peak
   startTolerance: 0.006, // starts within ±0.6% of the peak's height of each other
   fairReach: 0.025, // and within ±2.5% of the same route length to the sea // +- share of the peak
@@ -534,7 +534,7 @@ function glide(world, r, steer, fwd, g = 0) {
     r.dx = dx; r.dz = dz;
     normalize(r);
   }
-  const v = TUNE.glideSpeed * (1 + 0.5 * g);
+  const v = TUNE.glideSpeed * (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g);
   const heavy = 1 + TUNE.heavyFall * Math.max(0, r.size - 1); // cloud water makes a drop heavier: it falls faster
   const p = keepInZone(world, r.x + r.dx * v * DT, r.z + r.dz * v * DT);
   r.x = p.x;
@@ -1144,7 +1144,10 @@ function resolveContacts(world) {
     // ago holds for pairHold ticks first (hysteresis, so it can't flicker).
     if (rev && world.tick - rev.made < TUNE.pairHold) continue;
     world.junctions.delete(`${win.id}|${lose.id}`);
-    if (!world.junctions.has(jk)) world.events.push({ type: 'junction', from: lose.idx, to: win.idx, tick: world.tick });
+    if (!world.junctions.has(jk)) {
+      const t = world.terrain, n = t.size;
+      world.events.push({ type: 'junction', from: lose.idx, to: win.idx, x: ((k % n) / (n - 1) - 0.5) * t.worldSize, z: (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize, tick: world.tick });
+    }
     world.junctions.set(jk, { from: lose, to: win, made: world.junctions.get(jk)?.made ?? world.tick, until: world.tick + TUNE.liveTicks, share: dw / (dw + dl), s: nearestS(world, lose, k), at: nearestIndex(world, win, k) });
   }
   for (const jk of [...world.junctions.keys()].sort()) {
