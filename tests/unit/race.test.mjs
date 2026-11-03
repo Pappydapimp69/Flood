@@ -186,17 +186,18 @@ test('drop: diving lands sooner and floating later, steerable anywhere, touchdow
   assert.equal(landingCell(w, w.rivers[2].x, w.rivers[2].z) >= 0, true);
 });
 
-test('drop: a rain cloud flown through is yours, once', async () => {
+test('drop: a rain cloud drains equally into every river inside, shrinking and rising', async () => {
   const { skyClouds } = await import('../../src/shared/river.js');
   const w = createWorld(rolled(2));
   const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
   const c = skyClouds(w)[0];
   for (const r of [a, b]) Object.assign(r, { x: c.x, z: c.z, alt: c.alt + 5 });
-  const v0 = a.volume;
+  const va = a.volume, vb = b.volume, water = c.water, r0 = c.radius, alt = c.alt;
   step(w, new Map());
-  assert.equal(c.taken, a.idx, 'the first river through did not take the cloud');
-  assert.ok(Math.abs(a.volume - v0 - c.water) < 1, 'the cloud\'s water did not reach it');
-  assert.equal(b.volume, v0, 'a second river took the same cloud');
+  const ga = a.volume - va, gb = b.volume - vb;
+  assert.ok(ga > 0 && Math.abs(ga - gb) < 1, `shares ${ga} and ${gb}`);
+  assert.ok(Math.abs(water - c.water - ga - gb) < 1, 'the water did not add up');
+  assert.ok(c.radius < r0 && c.alt > alt, 'did not shrink and rise');
 });
 
 test('drop: every drop stays over the landing ring and touches down where it is', async () => {

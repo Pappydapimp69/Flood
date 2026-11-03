@@ -41,26 +41,27 @@ test('water pouring in still counts against the heat: a fed lake behind the fron
   assert.equal(Math.round(w.lakeVol[lake.id] - v0), Math.round(TUNE.heatEvery * 2000 - dry));
 });
 
-test('storms sweep across the island ahead of the pack and rain into rivers under them', () => {
+test('storms form from the sky past the first quarter, rain into rivers under them, and shrink', () => {
   const w = createWorld(t5);
   const r = addRiver(w, 'a');
   w.tick = TUNE.stormStart;
   step(w, new Map());
+  assert.equal(w.storms.length, 0, 'a storm with an empty sky');
+  w.sky = TUNE.stormMinWater;
+  step(w, new Map());
   const s = w.storms[0];
-  assert.ok(s, 'no storm at stormStart');
-  assert.ok(slopeT(w, s.x, s.z) > slopeT(w, r.x, r.z), 'storm opened behind the pack');
-  // It blows in from one side and sweeps across: halfway through its life it's over the island.
-  const mid = { x: s.x + s.vx * ((s.until - w.tick) / 2) / 20, z: s.z + s.vz * ((s.until - w.tick) / 2) / 20 };
-  assert.ok(w.terrain.filled[cellIndex(w.terrain, mid.x, mid.z)] > 0, 'storm never crosses the island');
-  // Under it, a river gains the rain on top of what it gathers anyway (put
-  // the storm over the river, out on the slope, for this).
-  Object.assign(s, { x: r.x, z: r.z });
-  const v0 = r.volume;
+  assert.ok(s, 'no storm with a full sky');
+  assert.ok(slopeT(w, s.x, s.z) >= 0.25 - 0.01, 'storm formed in the first quarter');
+  // Under it, a river gains the rain, and the storm pays double.
+  Object.assign(s, { x: r.x, z: r.z, vx: 0, vz: 0 });
+  const v0 = r.volume, w0 = s.water;
   step(w, new Map());
   assert.ok(r.volume - v0 >= TUNE.stormRain * 0.99 || r.inLake >= 0, `gained ${r.volume - v0}`);
-  // It ends on time.
+  assert.ok(w0 - s.water >= 2 * TUNE.stormRain * 0.99, 'not double off the cloud');
+  assert.ok(s.radius < TUNE.stormRadius, 'did not shrink');
+  // It ends by its time at the latest.
   while (w.tick < s.until + 1) step(w, new Map());
-  assert.equal(w.storms.length, 0);
+  assert.ok(!w.storms.some((x) => x.id === s.id));
 });
 
 test('weather is deterministic', () => {
