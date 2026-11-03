@@ -166,7 +166,7 @@ addEventListener('resize', fitCamera);
 const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
-  document.getElementById('help').textContent = 'Controller: left stick steers (up / down while falling) · right stick turns the camera · A: gouge (select / race again in menus) · Y: map · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (falling: up / down glides faster / slower) · right stick up / down: fall faster / slower · A: gouge (select / race again in menus) · Y: map · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -468,7 +468,7 @@ function newRun() {
 let everOpen = false;
 function goOnline(name) {
   mode = 'online';
-  input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true, river.dropping ? input.forward() : 0); };
+  input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true, river.dropping ? input.forward() : 0, river.dropping ? input.glide() : 0); };
   input.onSkill = () => { if (river && isRacing(river) && !river.dropping) net?.skill(input.sample()); };
   input.onSurge = () => { if (river && isRacing(river) && !river.dropping) net?.surge(input.sample()); };
   if (!terrain) { useIsland(1); camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0); }
@@ -705,6 +705,7 @@ function handleActions() {
 function sampleSteer() {
   let steer = dbg.forceSteer ?? input.sample();
   let f = river?.dropping ? (dbg.forceFwd ?? input.forward()) : 0;
+  const g = river?.dropping ? input.glide() : 0;
   // Falling, a drag aims the drop: it turns toward the dragged direction on
   // screen; a long drag dives faster, a short one glides slower.
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
@@ -713,7 +714,7 @@ function sampleSteer() {
   watchCoach(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
   const k = dbg.forceSkill ? 1 : input.takeSkill(), u = k ? 0 : input.takeSurge();
-  return f || k || u ? { s: steer, f, k, u } : steer;
+  return f || g || k || u ? { s: steer, f, g, k, u } : steer;
 }
 
 // Draw the drag stick while it aims the drop.
@@ -1275,7 +1276,7 @@ renderer.setAnimationLoop(() => {
     sendAcc += frameDt;
     if (sendAcc >= DT) {
       sendAcc = 0;
-      if (river && isRacing(river)) { const v = sampleSteer(); net.steer(v.s ?? v, now, false, v.f ?? 0); }
+      if (river && isRacing(river)) { const v = sampleSteer(); net.steer(v.s ?? v, now, false, v.f ?? 0, v.g ?? 0); }
     }
   }
   const alpha = Math.min(1, acc / DT);

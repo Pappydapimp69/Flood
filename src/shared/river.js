@@ -522,14 +522,15 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
 }
 
 // While falling: turn, and hurry (+1) or slow (-1) the glide, anywhere over the map.
-function glide(world, r, steer, fwd) {
+// steer turns, fwd hurries (+1) or slows (-1) the fall, g glides faster or slower across the ground.
+function glide(world, r, steer, fwd, g = 0) {
   if (steer) {
     const a = (TUNE.glideTurn * -steer) / Math.max(1, r.size); // heavier turns slower
     const dx = r.dx + r.dz * a, dz = r.dz - r.dx * a;
     r.dx = dx; r.dz = dz;
     normalize(r);
   }
-  const v = TUNE.glideSpeed * (1 + 0.5 * fwd);
+  const v = TUNE.glideSpeed * (1 + 0.5 * g);
   const heavy = 1 + TUNE.heavyFall * Math.max(0, r.size - 1); // cloud water makes a drop heavier: it falls faster
   const p = keepInZone(world, r.x + r.dx * v * DT, r.z + r.dz * v * DT);
   r.x = p.x;
@@ -705,8 +706,8 @@ function normalize(r) {
 // Inputs: Map<id, steer> with steer -1 | 0 | 1, or Map<id, { s, f, k }> where f
 // (-1 | 0 | 1) slows or hurries a falling drop and k (0 | 1) is the skill button.
 function readInput(v) {
-  if (v && typeof v === 'object') return { s: clampUnit(v.s), f: clampUnit(v.f), k: v.k ? 1 : 0, u: v.u ? 1 : 0 };
-  return { s: clampUnit(v), f: 0, k: 0, u: 0 };
+  if (v && typeof v === 'object') return { s: clampUnit(v.s), f: clampUnit(v.f), g: clampUnit(v.g), k: v.k ? 1 : 0, u: v.u ? 1 : 0 };
+  return { s: clampUnit(v), f: 0, g: 0, k: 0, u: 0 };
 }
 
 // ---- Gouge. Two gates, read alike by the sim, the HUD and the bots: ready
@@ -785,8 +786,8 @@ export function step(world, inputs) {
 // water ponds a little and then waits for the player to turn.
 export const surgeReady = (world, r) => TUNE.surgeOn && isRacing(r) && !r.dropping && r.pooled < 0 && r.gougeT < 0 && !(r.surgeT >= 0)
   && world.tick >= (r.surgeAt ?? 0) && r.volume - Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare) >= TUNE.gougeKeep * TUNE.startVolume;
-function moveRiver(world, r, { s: steer, f: fwd, k: skill, u: surge }) {
-  if (r.dropping) return glide(world, r, steer, fwd);
+function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: surge }) {
+  if (r.dropping) return glide(world, r, steer, fwd, glideIn);
   if (steer) {
     // Turn by adding a sideways component, then renormalising (angle = atan(a)).
     // A bigger river answers the stick as well as a small one: more water is
