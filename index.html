@@ -145,6 +145,15 @@
     #menu input { background: #eaf5fb; color: #10303d; text-align: center; }
     #menu button { background: #45d2ff; color: #062430; cursor: pointer; }
     #menu button.alt { background: transparent; color: #eefaff; outline: 2px solid #45d2ff88; }
+    #studio { position: fixed; inset: 0; z-index: 30; display: grid; place-content: center; text-align: center; background: #05080c;
+      color: #f2f6fa; font: 16px system-ui, sans-serif; pointer-events: none; animation: studio 2.8s ease-in-out forwards; }
+    #studio[hidden] { display: none; }
+    #studio .mark { width: 74px; height: 74px; margin: 0 auto 18px; border: 3px solid #45d2ff; border-radius: 50% 50% 50% 0;
+      transform: rotate(135deg); box-shadow: 0 0 28px #45d2ff66; }
+    #studio h1 { margin: 0; font-size: clamp(30px, 7vw, 56px); font-weight: 800; letter-spacing: 0.2em; }
+    #studio p { margin: 8px 0 0; font-size: clamp(12px, 2.4vw, 16px); letter-spacing: 0.5em; color: #9fb4c4; }
+    @keyframes studio { 0% { opacity: 0; } 18% { opacity: 1; } 78% { opacity: 1; } 100% { opacity: 0; visibility: hidden; } }
+    @media (prefers-reduced-motion: reduce) { #studio { animation-duration: 1.4s; } }
     #splash { position: fixed; inset: 0; display: grid; place-content: center; gap: 18px; text-align: center; cursor: pointer;
       background: radial-gradient(circle at 50% 40%, #1d6f8ccc, #062430f2 70%); color: #eefaff; font: 16px system-ui, sans-serif; z-index: 10; }
     #splash h2 { margin: 0; font-size: clamp(56px, 14vw, 120px); letter-spacing: 0.18em; text-shadow: 0 4px 24px #45d2ff88; }
@@ -195,6 +204,11 @@
     <small>Esc / P / controller Start to resume</small>
   </div>
   <button id="surge" hidden aria-label="Surge: a burst of speed for 2 s (Q, F or pad bumper)">SURGE<small></small></button>
+  <div id="studio" aria-label="ZanePaul Studios">
+    <div class="mark"></div>
+    <h1>ZANEPAUL</h1>
+    <p>STUDIOS</p>
+  </div>
   <div id="splash" hidden>
     <h2>FLOOD</h2>
     <p>Every player is a river. Race downhill to the sea.</p>
@@ -208,6 +222,7 @@
     <input id="name" maxlength="12" placeholder="Your name" autocomplete="nickname" hidden>
     <button id="play-online" hidden>Play online</button>
     <button id="play-solo">Play solo vs bots</button>
+    <button id="play-tutorial" class="alt">Tutorial</button>
   </div>
   <div id="fallback" hidden></div>
   <script type="module" src="./src/client/main.js"></script>

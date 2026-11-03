@@ -267,11 +267,17 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   const button = (i, on) => page.evaluate(([i, on]) => { __pad.buttons[i].pressed = on; __pad.buttons[i].value = on ? 1 : 0; }, [i, on]);
   // Held longer than a slow headless frame, so the per-frame poll sees it.
   const tap = async (i) => { await button(i, true); await page.waitForTimeout(1200); await button(i, false); await page.waitForTimeout(1200); };
-  // A leaves the splash (music starts) and focuses "Play solo"; down stays on it (the only button); then A.
+  // A leaves the splash (music starts) and focuses "Play solo"; down moves to "Tutorial", up back; then A.
   await tap(0);
   if (await page.evaluate(() => !document.getElementById('splash').hidden)) throw new Error('A did not leave the splash');
-  await tap(13);
-  const focused = await page.evaluate(() => document.activeElement?.id);
+  // (Two buttons: a press a slow frame counts twice wraps straight back, so
+  // only require that D-pad moves focus between them, then settle on Play solo.)
+  const focusId = () => page.evaluate(() => document.activeElement?.id);
+  const seen = new Set([await focusId()]);
+  for (let i = 0; i < 4 && seen.size < 2; i++) { await tap(13); seen.add(await focusId()); }
+  if (!seen.has('play-tutorial')) throw new Error(`D-pad never reached Tutorial: ${[...seen]}`);
+  for (let i = 0; i < 4 && (await focusId()) !== 'play-solo'; i++) await tap(12);
+  const focused = await focusId();
   if (focused !== 'play-solo') throw new Error(`menu focus on ${focused}`);
   await tap(0);
   await until(page, (s) => s.ready && s.tick > 5, 'solo race from the gamepad');
