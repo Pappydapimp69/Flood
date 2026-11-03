@@ -220,7 +220,7 @@ export function lakeGain(lake) {
 }
 
 // The game surface: filled terrain minus every carved channel.
-export function createWorld(terrain, { forest = true } = {}) {
+export function createWorld(terrain, { forest = true, lava = true } = {}) {
   const n = terrain.size;
   // owner: which river last dug each cell. A river never feels its own channel
   // (it would sit at the bottom of its own trench and stall), only rivals'.
@@ -251,7 +251,7 @@ export function createWorld(terrain, { forest = true } = {}) {
   world.cooled = []; // cells that turned from lava to rock, for presentation
   world.rock = new Float32Array(n * n); // metres of cooled rock on top of the ground
   world.basins = makeBasins(world);
-  makeLava(world);
+  if (lava) makeLava(world);
   if (forest) addForest(world);
   return world;
 }
