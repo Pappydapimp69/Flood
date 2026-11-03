@@ -357,6 +357,7 @@ function followStorm() {
       scene.add(c);
       stormClouds.set(s.id, c);
     }
+    c.scale.x = c.scale.z = s.radius; // shrinks as it rains out
     const ground = surfaceAt(world, s.x, s.z) * VERT, y = c.position.y;
     c.position.set(s.x, y + (ground + 2600 - y) * 0.03, s.z);
   }

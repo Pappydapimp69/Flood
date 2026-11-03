@@ -1265,24 +1265,24 @@ function weather(world) {
       }
     }
   }
-  // Storms: each one blows in from one side of the island ahead of the pack
-  // and sweeps right across it to the other, drifting down the slope as it
-  // goes, raining into every river (head or channel) and lake under it.
+  // Storms: each one forms at a random spot past the first quarter of the
+  // course and heads off in a random direction, raining steadily as it goes
+  // (it shrinks as it empties) and raining into every river (head or channel)
+  // and lake under it. A river under it costs the storm double what it gains.
   // Up to stormMax storms at once; after one ends the next waits stormGap.
   if (world.storms.length < TUNE.stormMax && world.tick >= (world.stormNext ?? TUNE.stormStart) && racing.length && (world.sky ?? 0) >= TUNE.stormMinWater) {
-    const rng = stream(world.terrain.seed, `storm:${world.tick}`);
-    const ts = racing.map((r) => slopeT(world, r.x, r.z)).sort((a, b) => a - b);
-    const tAt = TUNE.stormAim === 'tail' ? Math.min(0.95, ts[Math.floor(ts.length * 0.12)] + 0.03 + 0.06 * rng()) : Math.min(0.95, ts[ts.length >> 1] + 0.05 + 0.12 * rng());
+    const rng = stream(world.terrain.seed, `storm:${world.tick}:${world.storms.length}`);
+    const tAt = 0.25 + 0.7 * rng();
     const t = world.terrain, ax = t.axis.x, az = t.axis.y, half = t.worldSize / 2;
-    const u = (tAt * 2 * t.long - t.long) * half;
-    const from = rng() < 0.5 ? -1 : 1, span = TUNE.stormSpan;
-    const x = ax * u - az * span * from, z = az * u + ax * span * from;
-    const across = -from * (TUNE.stormSpeed[0] + (TUNE.stormSpeed[1] - TUNE.stormSpeed[0]) * rng());
-    const along = TUNE.stormDrift[0] + (TUNE.stormDrift[1] - TUNE.stormDrift[0]) * rng();
-    const ticks = Math.ceil(((2 * span) / Math.abs(across)) * TICK_HZ);
+    const u = (tAt * 2 * t.long - t.long) * half, span = TUNE.stormSpan;
+    const side = (rng() * 2 - 1) * span * 0.7;
+    const x = ax * u - az * side, z = az * u + ax * side;
+    const heading = rng() * Math.PI * 2;
+    const speed = TUNE.stormSpeed[0] + (TUNE.stormSpeed[1] - TUNE.stormSpeed[0]) * rng();
+    const ticks = Math.ceil(((2 * span) / speed) * TICK_HZ);
     const water = Math.min(world.sky, TUNE.stormMaxWater);
     world.sky -= water;
-    const s = { id: world.tick, x, z, vx: ax * along - az * across, vz: az * along + ax * across, until: world.tick + ticks, radius: TUNE.stormRadius, water, water0: water };
+    const s = { id: world.tick * 4 + world.storms.length, x, z, vx: Math.cos(heading) * speed, vz: Math.sin(heading) * speed, until: world.tick + ticks, radius: TUNE.stormRadius, water, water0: water, drizzle: water / ticks };
     world.storms.push(s);
     world.events.push({ type: 'storm', on: true, id: s.id, x, z, radius: s.radius, tick: world.tick });
   }
@@ -1297,6 +1297,14 @@ function weather(world) {
     }
     s.x += s.vx * DT;
     s.z += s.vz * DT;
+    // Off the island (past the summit, the sea or the sides), it's gone.
+    const st = slopeT(world, s.x, s.z), side = -s.x * t.axis.y + s.z * t.axis.x;
+    if (st < 0 || st > 1.05 || Math.abs(side) > TUNE.stormSpan * 1.1) s.until = world.tick;
+    const ledger = (world.water ??= { pumped: 0, sky: 0, ground: 0, sea: 0 });
+    // It rains as it travels, onto the ground, and shrinks as it empties.
+    const drizzle = Math.min(s.water, s.drizzle);
+    s.water -= drizzle; ledger.ground += drizzle;
+    s.radius = TUNE.stormRadius * Math.max(0.35, Math.sqrt(Math.max(0, s.water) / s.water0));
     const r2 = s.radius * s.radius;
     for (const r of racing) {
       // Rain on the head counts in full; rain on the channel behind it counts
@@ -1313,9 +1321,9 @@ function weather(world) {
         wet = Math.min(1, under / (2 * s.radius));
       }
       if (wet <= 0) continue;
-      const rain = Math.min(s.water, TUNE.stormRain * wet);
+      const rain = Math.min(s.water / 2, TUNE.stormRain * wet);
       if (rain <= 0) break;
-      s.water -= rain;
+      s.water -= 2 * rain; ledger.ground += rain; // double off the cloud: half soaks in
       if (r.inLake >= 0) world.lakePending[r.inLake] += rain;
       else grow(r, rain);
       r.rained = world.tick;
