@@ -792,8 +792,8 @@ function sampleSteer() {
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
   if (aim) { steer = aim.s; f = aim.f; }
   const pa = river?.dropping && dbg.forceSteer === undefined ? padAim() : null;
-  if (pa) { steer = pa.s; g = pa.g; }
-  if (coach) { if (f) coach.fell = true; if (g) coach.glided = true; }
+  if (pa) { if (pa.s !== null) steer = pa.s; g = pa.g; }
+  if (coach) { if (f) coach.fell = true; if (g > 0) coach.glided = true; }
   dbg.steers.push(steer);
   watchCoach(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
@@ -846,7 +846,7 @@ function padAim() {
   const v = input.stick();
   if (!v) return null;
   const len = Math.hypot(v.x, v.y);
-  if (len < 0.3) return null; // centred: leave the heading alone
+  if (len < 0.3) return { s: null, g: -1 }; // let go: keep the heading and hover (slow glide) to wait for a cloud
   const ax = terrain.axis.x, az = terrain.axis.y; // screen up, on the ground (down the slope)
   const wx = -az * v.x + ax * -v.y, wz = ax * v.x + az * -v.y, wl = Math.hypot(wx, wz) || 1; // screen right is (-az, ax)
   const cross = river.dx * (wz / wl) - river.dz * (wx / wl), dot = river.dx * (wx / wl) + river.dz * (wz / wl);

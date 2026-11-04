@@ -16,7 +16,7 @@ yaw at all, and the drop's heading stays readable from the arrow ahead of it.
 With a fixed view, turning left or right relative to the heading reads backwards whenever the drop
 faces down the screen (Brain opticon#E42: map input through the view the player actually sees). So
 while falling, the left stick and D-pad aim by screen direction. Push where you want to go, and the
-drop turns that way by the shorter side. Push all the way to glide fast. The client turns this into
+drop turns that way by the shorter side. Push all the way to glide fast; let go to hover (a slow glide) and wait for a cloud. The client turns this into
 the same steer and glide inputs as before, so frames, the server and replays are unchanged. The
 right stick still sets the fall speed. Keyboard steering is unchanged (turn left and right), and
 touch already aimed by screen direction.

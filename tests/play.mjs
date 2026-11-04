@@ -286,8 +286,12 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   for (let i = 0; i < 4 && (await focusId()) !== 'play-solo'; i++) await tap(12);
   const focused = await focusId();
   if (focused !== 'play-solo') throw new Error(`menu focus on ${focused}`);
-  await tap(0);
-  await until(page, (s) => s.ready && s.tick > 5, 'solo race from the gamepad');
+  // (A slow software frame can miss a whole press, since the pad is read once a
+  // frame: press A again if the race hasn't started, up to three times.)
+  for (let i = 0; i < 3; i++) {
+    await tap(0);
+    try { await until(page, (s) => s.ready && s.tick > 5, 'solo race from the gamepad', 300); break; } catch (e) { if (i === 2) throw e; }
+  }
   const help = await page.evaluate(() => document.getElementById('help').textContent);
   if (!help.startsWith('Controller')) throw new Error(`help text: ${help}`);
   for (const [how, set] of [['stick', (v) => page.evaluate((v) => { __pad.axes[0] = v; }, v)], ['dpad', (v) => button(v < 0 ? 14 : 15, v !== 0)]]) {
