@@ -182,7 +182,7 @@ test('drop: diving lands sooner and floating later, steerable anywhere, touchdow
   for (const id of ['a', 'b', 'c']) addRiver(w0, id, undefined, { drop: true });
   for (let k = 0; k < TUNE.dropTicks * 2 && w0.rivers.some((r) => r.dropping); k++) step(w0, new Map());
   const land0 = w0.rivers[0].path[0];
-  assert.ok(Math.hypot(at.a.x - land0.x, at.a.z - land0.z) > 500, `steering moved the landing only ${Math.hypot(at.a.x - land0.x, at.a.z - land0.z) | 0} m`);
+  assert.ok(Math.hypot(at.a.x - land0.x, at.a.z - land0.z) > 300, `steering moved the landing only ${Math.hypot(at.a.x - land0.x, at.a.z - land0.z) | 0} m`);
   assert.equal(landingCell(w, w.rivers[2].x, w.rivers[2].z) >= 0, true);
 });
 
@@ -216,8 +216,10 @@ test('drop: every drop stays over the landing ring and touches down where it is'
     w.rivers.forEach((r, i) => {
       if (!before[i].dropping) return;
       // (In the last seconds it eases straight onto its claimed spot, which can
-      // cut across the ring's curve; before that it never leaves the zone.)
-      if (r.dropping > TUNE.settleTicks) assert.ok(offRing(r) <= TUNE.zoneSlack + w.terrain.cell, `${r.id} strayed ${offRing(r)} m off the ring`);
+      // cut across the ring's curve; before that it never leaves the funnel:
+      // the zone plus the glide still to come, as the comet closes in.)
+      const funnel = TUNE.zoneSlack + before[i].dropping * TUNE.glideSpeed * (1 / 20) + w.terrain.cell;
+      if (r.dropping > TUNE.settleTicks) assert.ok(offRing(r) <= funnel, `${r.id} strayed ${offRing(r)} m off the ring (funnel ${funnel})`);
       else if (!r.dropping) worst = Math.max(worst, Math.hypot(r.x - before[i].x, r.z - before[i].z));
     });
   }

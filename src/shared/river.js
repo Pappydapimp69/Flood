@@ -35,7 +35,7 @@ export const TUNE = {
   maxWidth: 420,
   // Mass. Volume is in litres; size = (volume / start) ^ 1/4. More mass: more
   // momentum (slower to speed up, slow down and turn), faster flow, deeper cuts.
-  startVolume: 1_000_000,
+  startVolume: 500_000,
   trickle: 25, // litres gained per metre of trail: longer trails hold more water
   speedPerSize: 1, // speed multiplier gained per unit of size above 1: twice the size, twice the speed
   // Lakes are reservoirs. They hold still until water flows in: every river
@@ -117,12 +117,16 @@ export const TUNE = {
   // (turn, and faster or slower) to choose where it lands. It lands on the
   // nearest cell of the start contour: every start is at the same elevation.
   dropTicks: 800, // a fall at the steady rate lasts this long (40 s)...
-  dropAlt: 6000, // metres above the ground at the start
+  dropAlt: 6000, // metres above the start line's height at the start
+  // The drop comes in like a comet: it starts this share of a steady glide's
+  // run behind its start spot, so flying straight lands it there on time.
+  cometRun: 1,
+  cloudSpread: 4500, // metres either side of the comet path the first clouds sit; they close in toward the start line
   diveRate: 1.6, // ...diving falls up to this much faster (about 12 s)...
   floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
   // Rain clouds hang in the sky over the summits: fall through one and its
   // water is yours, a bigger start; each can only be taken once.
-  skyClouds: 6, // rain clouds in the drop's sky, over the landing ring...
+  skyClouds: 10, // rain clouds along the comet path in, closer together near the start line...
   slopeClouds: 14, // ...and low rain clouds spread evenly down the slope, caught by flowing under them
   cloudRadius: 500, // metres across the sky...
   cloudDepth: 400, // ...and this far above or below its height
@@ -145,10 +149,11 @@ export const TUNE = {
   bumpRadius: 220, // metres
   bumpDepth: 200, // metres of height
   bumpKnock: 1.4, // knock speed per m/s of closing speed, shared by weight
-  bumpDecay: 0.88, // knock left after each tick
+  bumpDecay: 0.93, // knock left after each tick (a bump carries them well apart)
+  bumpMin: 80, // m/s of closing speed below which drops just touch: no bump
   bumpLoss: 0.02, // share of volume lost to a knock as fast as the base glide (head-on at full glide: about 4%)
   bumpLossMax: 0.08, // most of its volume a drop can lose to one bump
-  bumpCool: 20, // ticks before the same two drops can bump again
+  bumpCool: 40, // ticks before the same two drops can bump again
   zoneSlack: 2400, // metres a falling drop may stray from the landing rings: wide enough to glide to another mountain's
   glideTurn: 0.16, // radians per tick while falling: a full circle in about 2 s
   startElevation: 0.91, // starts ring each summit cone this far up its peak
@@ -400,7 +405,7 @@ export function spawnBand(world) {
       cells = [];
       while (queue.length) {
         const c = queue.pop(), cx = c % n, cy = (c - cx) / n;
-        if (Math.abs(h[c] - target) <= tol && t.filled[c] - h[c] < 0.5 && (cx - tx) * ax + (cy - ty) * ay >= 0) cells.push(c);
+        if (Math.abs(h[c] - target) <= tol && t.filled[c] - h[c] < 0.5 && (cx - tx) * ax + (cy - ty) * ay >= 0 && (!t.mask || t.mask[c])) cells.push(c); // never on the scenery
         for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
           const x = cx + dx, y = cy + dy;
           if (x < 8 || y < 8 || x >= n - 8 || y >= n - 8) continue;
@@ -474,6 +479,11 @@ export function spawnPoint(world, id) {
   return best;
 }
 
+const cometRun = () => TUNE.cometRun * TUNE.glideSpeed * TUNE.dropTicks * DT;
+// The height a drop's altitude counts from: the start line's (a comet flies
+// over the scenery behind, so not the ground under it).
+export const skyBase = (world) => spawnBand(world).target;
+
 // opts.drop: start as a falling drop (the game); without it the river starts on
 // the ground at once (tests and tools).
 export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
@@ -531,6 +541,10 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     // Start the fall heading down the slope: drops that don't steer fall
     // side by side and keep apart, instead of all closing on one spot.
     river.dx = world.terrain.axis.x; river.dz = world.terrain.axis.y;
+    // A comet: it comes in from behind the mountains, a steady glide's run
+    // back from its start spot, so flying straight brings it down there.
+    const run = cometRun();
+    river.x -= river.dx * run; river.z -= river.dz * run;
   }
   return river;
 }
@@ -549,7 +563,8 @@ function glide(world, r, steer, fwd, g = 0) {
   r.glideV = v;
   const kx = r.kx ?? 0, kz = r.kz ?? 0; // a bump's knock, fading
   r.kx = kx * TUNE.bumpDecay; r.kz = kz * TUNE.bumpDecay;
-  const p = keepInZone(world, r.x + (r.dx * v + kx) * DT, r.z + (r.dz * v + kz) * DT);
+  // Held within reach of the start line: the zone is as wide as the glide still to come (a funnel to it).
+  const p = keepInZone(world, r.x + (r.dx * v + kx) * DT, r.z + (r.dz * v + kz) * DT, TUNE.zoneSlack + r.dropping * TUNE.glideSpeed * DT);
   r.x = p.x;
   r.z = p.z;
   // Dive to land sooner (a head start), or float to stay up for the clouds.
@@ -576,15 +591,21 @@ function glide(world, r, steer, fwd, g = 0) {
 export function skyClouds(world) {
   if (world.clouds) return world.clouds;
   const t = world.terrain, n = t.size, rng = stream(t.seed, 'sky-clouds'), ring = spawnBand(world).ring;
+  // Along the comet path in: each cloud sits where a steady fall passes at
+  // its height, spread wide early on and closing in toward the middle of the
+  // start line near the end, packed closer there, so the drops converge and bump.
+  const fair = spawnBand(world).cells, ax = t.axis.x, az = t.axis.y, run = cometRun();
+  const sx = fair.reduce((a, k) => a + ((k % n) / (n - 1) - 0.5) * t.worldSize, 0) / fair.length;
+  const sz = fair.reduce((a, k) => a + (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize, 0) / fair.length;
   world.clouds = Array.from({ length: TUNE.skyClouds }, (_, id) => {
-    // Within the drop zone (zoneSlack of the landing ring): a falling drop is held there, so a
-    // cloud further out could never be reached (half of them couldn't, before).
-    const k = ring[Math.floor(rng() * ring.length)], d = rng() * TUNE.zoneSlack * 0.8, a = rng() * 2 - 1, b = rng() * 2 - 1, l = Math.sqrt(a * a + b * b) || 1;
+    const p = 0.12 + 0.8 * Math.pow((id + 0.3 + 0.4 * rng()) / TUNE.skyClouds, 0.6); // denser toward the line
+    const side = (rng() * 2 - 1) * (TUNE.cloudSpread * Math.pow(1 - p, 0.8) + 250);
+    const back = run * (1 - p);
     return {
       id,
-      x: ((k % n) / (n - 1) - 0.5) * t.worldSize + (a / l) * d,
-      z: (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize + (b / l) * d,
-      alt: 900 + rng() * (TUNE.dropAlt - 1800),
+      x: sx - ax * back - az * side,
+      z: sz - az * back + ax * side,
+      alt: Math.max(300, TUNE.dropAlt * (1 - p) + (rng() - 0.5) * 300),
       water: TUNE.cloudWater[0] + rng() * (TUNE.cloudWater[1] - TUNE.cloudWater[0]),
       taken: -1,
     };
@@ -624,13 +645,13 @@ export function skyClouds(world) {
 // A falling drop stays over the landing ring: never more than zoneSlack from
 // the summit contour, so it can glide all the way round but never out to a
 // coast, and touches down on the fair spot nearest where it is.
-export function keepInZone(world, x, z) {
+export function keepInZone(world, x, z, slack = TUNE.zoneSlack) {
   if (!world.ringZone) world.ringZone = new Set(spawnBand(world).ring);
   const t = world.terrain, n = t.size, k = landingCell(world, x, z, world.ringZone);
   const cx = ((k % n) / (n - 1) - 0.5) * t.worldSize, cz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
   const dx = x - cx, dz = z - cz, d = Math.sqrt(dx * dx + dz * dz);
-  if (d <= TUNE.zoneSlack) return { x, z };
-  return { x: cx + (dx * TUNE.zoneSlack) / d, z: cz + (dz * TUNE.zoneSlack) / d };
+  if (d <= slack) return { x, z };
+  return { x: cx + (dx * slack) / d, z: cz + (dz * slack) / d };
 }
 
 export function dropZone(world) {
@@ -1248,7 +1269,7 @@ function dropBumps(world) {
     const nx = d > 1e-6 ? dx / d : 1, nz = d > 1e-6 ? dz / d : 0;
     const va = a.glideV ?? TUNE.glideSpeed, vb = b.glideV ?? TUNE.glideSpeed;
     const close = (a.dx * va + (a.kx ?? 0) - b.dx * vb - (b.kx ?? 0)) * nx + (a.dz * va + (a.kz ?? 0) - b.dz * vb - (b.kz ?? 0)) * nz;
-    if (close <= 0) continue; // drifting apart already
+    if (close <= TUNE.bumpMin) continue; // drifting apart, or only brushing
     bumps.set(key, world.tick + TUNE.bumpCool);
     const ma = Math.max(0.2, a.size), mb = Math.max(0.2, b.size);
     const ka = close * TUNE.bumpKnock * (mb / (ma + mb)), kb = close * TUNE.bumpKnock * (ma / (ma + mb));

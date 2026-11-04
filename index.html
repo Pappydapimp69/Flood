@@ -70,7 +70,7 @@
     #skill small { font: 600 11px system-ui, sans-serif; letter-spacing: 0; opacity: 0.9; }
     #mapbtn { position: fixed; left: calc(14px + env(safe-area-inset-left, 0px)); bottom: calc(34px + env(safe-area-inset-bottom, 0px));
       font: 800 13px system-ui, sans-serif; background: #eaf5fbd9; border: 0; border-radius: 10px; height: 40px; padding: 0 12px; cursor: pointer; }
-    #skill[hidden], #surge[hidden], #pause[hidden], #coach[hidden] { display: none; }
+    #skill[hidden], #surge[hidden], #pause[hidden], #coach[hidden], #mapbtn[hidden] { display: none; }
     #coach { position: fixed; left: 50%; top: calc(14% + env(safe-area-inset-top, 0px)); transform: translateX(-50%);
       background: #0b2a36e6; color: #fff; font: 600 17px system-ui, sans-serif; padding: 10px 18px; border-radius: 14px;
       box-shadow: 0 4px 16px #0006; pointer-events: none; text-align: center; max-width: min(92vw, 560px); }
@@ -199,12 +199,12 @@
   <div id="tags"></div>
   <div id="pop"></div>
   <div id="feed"></div>
-  <div id="help">Steer: ← → or A D · on a phone, hold the left or right side · Blocked by a rise? Space: GOUGE to climb over it · Q: SURGE on the flat · M: map · Esc: pause</div>
+  <div id="help">Steer: ← → or A D · on a phone, hold the left or right side · Blocked by a rise? Space: GOUGE to climb over it · Q: SURGE on the flat · Esc: pause</div>
   <div id="status" hidden></div>
   <div id="downhill" hidden></div>
   <div id="hint" hidden>← → steer · ↑ ↓ while falling · join lakes to grow · touch smaller <b class="g">▼</b> rivers to absorb them, avoid bigger <b class="r">▲</b> ones · every trail is live water; grey beds belong to drained rivers</div>
   <button id="mute" aria-label="Sound on or off"></button>
-  <button id="mapbtn" aria-label="Map (M)">MAP</button>
+  <button id="mapbtn" aria-label="Map (M)" hidden>MAP</button>
   <button id="skill" hidden aria-label="Gouge: climb boost for 3 s (Space, E or pad A)">GOUGE<small></small></button>
   <div id="pause" hidden>
     <b>Paused</b>

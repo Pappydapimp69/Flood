@@ -30,6 +30,7 @@ jobs:
           find _site/src -name '*.js' -print0 | xargs -0 sed -i -E "s#(from |import\()'(\.\.?/[^']+\.js)'#\1'\2?v=$v'#g"
           sed -i -E "s#src=\"\./src/client/main\.js\"#src=\"./src/client/main.js?v=$v\"#" _site/index.html
           sed -i "s#__BUILD__#$v#" _site/src/client/main.js
+          echo "$v" > _site/version.txt # the live build, which a stale page checks uncached and reloads to
           touch _site/.nojekyll
       - uses: actions/configure-pages@v5
         with:
