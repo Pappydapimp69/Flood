@@ -1651,12 +1651,18 @@ const splash = document.getElementById('splash');
 // The studio card shows from page load (over the load itself); a direct start skips it.
 const studio = document.getElementById('studio');
 if (params.has('online') || params.has('seed') || params.has('solo') || params.has('bots')) studio.hidden = true;
+let splashLeftAt = -1e9;
 function leaveSplash() {
   if (splash.hidden) return;
   splash.hidden = true;
+  splashLeftAt = performance.now();
   audio.music();
   hud.menu.hidden = false;
-  document.getElementById('play-solo').focus();
+  // New players land on the Tutorial; anyone who has played lands on Play solo.
+  let played = false;
+  try { played = localStorage.getItem('flood.coached') === '1'; } catch { /* no storage */ }
+  const first = document.getElementById(played ? 'play-solo' : 'play-tutorial');
+  first.focus(); markSel(first);
 }
 const nameBox = document.getElementById('name');
 try { nameBox.value = localStorage.getItem('flood.name') ?? ''; } catch { /* no storage */ }
@@ -1665,8 +1671,24 @@ const pickName = () => {
   try { localStorage.setItem('flood.name', n); } catch { /* no storage */ }
   return n;
 };
-document.getElementById('play-solo').onclick = () => { tutorial = false; hud.menu.hidden = true; newRun(); };
-document.getElementById('play-tutorial').onclick = () => { tutorial = true; hud.menu.hidden = true; newTutorial(); };
+// The selected menu button is marked by a class, not :focus, so it shows even
+// when the window itself isn't focused (a pad user who never clicked).
+const markSel = (el) => { for (const b of hud.menu.querySelectorAll('button')) b.classList.toggle('sel', b === el); };
+hud.menu.addEventListener('focusin', (e) => { if (e.target.tagName === 'BUTTON') markSel(e.target); });
+hud.menu.addEventListener('mouseover', (e) => { if (e.target.tagName === 'BUTTON') e.target.focus(); });
+// Arrow keys move through the menu too (the pad's D-pad already does).
+addEventListener('keydown', (e) => {
+  if (hud.menu.hidden || (e.code !== 'ArrowUp' && e.code !== 'ArrowDown')) return;
+  const btns = [...hud.menu.querySelectorAll('button:not([hidden])')];
+  const i = btns.indexOf(document.activeElement);
+  btns[i < 0 ? 0 : (i + (e.code === 'ArrowDown' ? 1 : btns.length - 1)) % btns.length].focus();
+  e.preventDefault();
+});
+const fresh = () => performance.now() - splashLeftAt < 500; // the press that left the splash
+document.getElementById('play-solo').onclick = () => {
+  if (fresh()) return; tutorial = false; hud.menu.hidden = true; newRun(); };
+document.getElementById('play-tutorial').onclick = () => {
+  if (fresh()) return; tutorial = true; hud.menu.hidden = true; newTutorial(); };
 document.getElementById('play-online').onclick = () => { hud.menu.hidden = true; goOnline(pickName()); };
 if (params.has('online')) { hud.menu.hidden = true; goOnline(params.get('name') ?? ''); }
 else if (params.has('seed') || params.has('solo') || params.has('bots')) { hud.menu.hidden = true; newRun(); }
