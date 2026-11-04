@@ -295,9 +295,22 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
     await set(-1);
     // Hold until the sim has run some ticks with it; frames are slow headless.
     let steers = [];
-    for (let i = 0; i < 300 && !steers.includes(-1); i++) { // 30 s: CI's software renderer can stall for seconds
+    for (let i = 0; i < 300 && !steers.some((v) => v !== 0); i++) { // 30 s: CI's software renderer can stall for seconds
       await page.waitForTimeout(100);
       steers = await page.evaluate(() => __flood.steers.slice());
+    }
+    // Falling, the view is top-down and fixed, so left means SCREEN left: the
+    // drop turns until it heads that way (either way round). On the ground it's a left turn.
+    const falling = await page.evaluate(() => __flood.river.dropping > 0);
+    if (falling) {
+      let lean = -1;
+      for (let i = 0; i < 300 && lean < 0.9; i++) {
+        await page.waitForTimeout(100);
+        lean = await page.evaluate(() => { const r = __flood.river, a = __flood.world.terrain.axis; return r.dropping ? r.dx * a.y - r.dz * a.x : 1; }); // heading . screen-left (az, -ax)
+      }
+      await set(0);
+      if (lean < 0.9) throw new Error(`${how} left: the drop heads ${lean.toFixed(2)} toward screen left`);
+      continue;
     }
     await set(0);
     if (!steers.includes(-1)) throw new Error(`${how} left gave ${steers.join('')}`);

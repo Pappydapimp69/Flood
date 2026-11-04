@@ -167,7 +167,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (falling: up / down glides faster / slower) · right stick up / down: fall faster / slower · A: gouge (select / race again in menus) · Y: map · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (falling: push where you want to go, all the way to glide fast) · right stick up / down: fall faster / slower · A: gouge (select / race again in menus) · Y: map · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -568,8 +568,8 @@ function placeTags() {
 const cloudTagPool = [];
 function placeCloudTags() {
   const me = river;
-  const near = mapView || !me || me.dropping ? [] : skyClouds(world)
-    .filter((c) => c.low && c.taken < 0)
+  const near = mapView || !me ? [] : skyClouds(world)
+    .filter((c) => (me.dropping ? !c.low && c.water > 0 && c.alt < me.alt + TUNE.cloudDepth : c.low && c.taken < 0))
     .map((c) => ({ c, d: Math.hypot(c.x - me.x, c.z - me.z) }))
     .filter((o) => o.d < 5000)
     .sort((a, b) => a.d - b.d)
@@ -592,8 +592,12 @@ function placeCloudTags() {
       edge = Math.abs(x) >= 0.91 ? (x > 0 ? ' ▶' : ' ◀') : y > 0 ? ' ▲' : ' ▼';
     }
     el.hidden = false;
-    el.className = 'cloud';
-    el.textContent = `☁ +${Math.round(o.c.water / 1000)}k L · ${(o.d / 1000).toFixed(1)} km${edge}`;
+    // Falling, say how far below you it is: from above, height can't be seen.
+    const dh = me.dropping ? me.alt - o.c.alt : 0, level = me.dropping && Math.abs(dh) <= TUNE.cloudDepth;
+    el.className = level ? 'cloud level' : 'cloud';
+    el.textContent = me.dropping
+      ? `☁ +${Math.round(o.c.water / 1000)}k L · ${level ? 'your height: fly in!' : `${Math.round(dh / 100) * 100} m below`}${edge}`
+      : `☁ +${Math.round(o.c.water / 1000)}k L · ${(o.d / 1000).toFixed(1)} km${edge}`;
     el.style.transform = `translate(${((x + 1) / 2) * innerWidth}px, ${((1 - y) / 2) * innerHeight}px) translate(-50%, -100%)`;
   });
 }
@@ -781,11 +785,13 @@ function handleActions() {
 function sampleSteer() {
   let steer = dbg.forceSteer ?? input.sample();
   let f = river?.dropping ? (dbg.forceFwd ?? input.forward()) : 0;
-  const g = river?.dropping ? input.glide() : 0;
+  let g = river?.dropping ? input.glide() : 0;
   // Falling, a drag aims the drop: it turns toward the dragged direction on
   // screen; a long drag dives faster, a short one glides slower.
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
   if (aim) { steer = aim.s; f = aim.f; }
+  const pa = river?.dropping && dbg.forceSteer === undefined ? padAim() : null;
+  if (pa) { steer = pa.s; g = pa.g; }
   if (coach) { if (f) coach.fell = true; if (g) coach.glided = true; }
   dbg.steers.push(steer);
   watchCoach(steer);
@@ -828,6 +834,22 @@ function dragAim() {
   // Steering left (-1) turns the heading toward negative cross; within ~6 degrees, hold.
   const s = dot > 0.995 ? 0 : cross < 0 ? -1 : 1;
   return { s, f: len > STICK_FAR ? 1 : 0 };
+}
+
+// Falling, the camera looks straight down with the beach at the top of the
+// screen and never turns (Brain T182: no yaw to make anyone sick), so the left
+// stick / D-pad aims the drop by SCREEN direction: push where you want to go and
+// the drop turns that way; push all the way to glide fast (opticon#E42: map
+// input through the view the player actually sees).
+function padAim() {
+  const v = input.stick();
+  if (!v) return null;
+  const len = Math.hypot(v.x, v.y);
+  if (len < 0.3) return null; // centred: leave the heading alone
+  const ax = terrain.axis.x, az = terrain.axis.y; // screen up, on the ground (down the slope)
+  const wx = -az * v.x + ax * -v.y, wz = ax * v.x + az * -v.y, wl = Math.hypot(wx, wz) || 1; // screen right is (-az, ax)
+  const cross = river.dx * (wz / wl) - river.dz * (wx / wl), dot = river.dx * (wx / wl) + river.dz * (wz / wl);
+  return { s: dot > 0.995 ? 0 : cross < 0 ? -1 : 1, g: len > 0.85 ? 1 : 0 };
 }
 
 function soloTick() {
@@ -1167,8 +1189,8 @@ const COACH = [
   { text: () => `Slow on the flat? <b>SURGE</b> (${key('RB', 'Q', 'tap')}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
 ];
 const TUTORIAL = [
-  { drop: true, text: () => `Turn your falling drop with <b>${key('left stick ← →', '← →', 'a drag left or right')}</b>`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `<b>${key('Left stick ↑', '', 'A long drag')}</b> glides faster, <b>${key('↓', '', 'a short one')}</b> slower`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => `${key('Push the <b>left stick</b> where you want to glide', 'Turn your falling drop with <b>← →</b>', 'Drag toward where you want to glide')}`, pass: (c) => c.steered > 8 },
+  { drop: true, text: () => `${key('Push it <b>all the way</b> to glide fast', '', 'A <b>long drag</b> glides fast')}`, pass: (c) => c.glided || lowPower || !padSeen },
   { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: dive to land sooner, or float to catch clouds`, pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
@@ -1529,6 +1551,21 @@ renderer.setAnimationLoop(() => {
     const lx = tx + ax * (2500 + 1500 * t), lz = tz + az * (2500 + 1500 * t);
     camera.lookAt(lx, th + 1500 * (1 - t), lz);
     camTarget.set(tx, th, tz);
+  } else if (focus.dropping) {
+    // Falling: high over the drop, looking almost straight down, the beach at
+    // the top of the screen. It moves with the drop but never turns (no yaw:
+    // Brain T182). A slight lean ahead keeps "up" defined and shows a little
+    // depth; clouds below read their height from the tags (seven#E52: a view
+    // from above hides height, so say it).
+    const ax = terrain.axis.x, az = terrain.axis.y, H = 7000, lean = 0.08;
+    const k = 1 - Math.exp(-frameDt * 4);
+    camera.position.lerp(new THREE.Vector3(fx - ax * H * lean, fy + H, fz - az * H * lean), k);
+    camTarget.lerp(new THREE.Vector3(fx + ax * 300, fy - 400, fz + az * 300), k);
+    camera.lookAt(camLook.copy(camTarget));
+    camDir.set(ax, az); // landing hands the chase camera this facing
+    camYaw = 0;
+    const fov = baseFov * 0.8; // a narrower lens from higher up: less perspective, closer to a true top-down map
+    if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * k; camera.updateProjectionMatrix(); }
   } else {
     // Chase camera. It must never fight the player: it follows the river's
     // course over the last few hundred metres (not the head's tick-to-tick heading,
@@ -1707,4 +1744,5 @@ Object.defineProperties(dbg, {
   river: { get: () => river },
   focus: { get: () => focus },
   camYaw: { get: () => camYaw },
+  cam: { get: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z, tx: camTarget.x, ty: camTarget.y, tz: camTarget.z, fov: camera.fov }) },
 });

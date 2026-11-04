@@ -36,7 +36,7 @@ export function createInput(target) {
     onChange?.(current());
   };
   const keys = { left: false, right: false, fwd: false, back: false };
-  const pad = { left: false, right: false, down: new Set(), stickY: 0, seen: false, fwd: 0, glide: 0, look: 0 };
+  const pad = { left: false, right: false, down: new Set(), stickY: 0, seen: false, fwd: 0, glide: 0, look: 0, vec: { x: 0, y: 0 } };
   // Forward / back: hurry or slow the fall. Keys or right stick up / down.
   const forward = () => {
     const k = keys.fwd === keys.back ? 0 : keys.fwd ? 1 : -1;
@@ -102,6 +102,8 @@ export function createInput(target) {
     // Hurry (+1) or slow (-1) the drop.
     forward,
     glide: () => pad.glide,
+    // Left stick / D-pad as a screen vector (x right, y down), length 0..1; null with no pad.
+    stick: () => (pad.seen ? pad.vec : null),
     // 1 once for each skill press (key, pad B or the on-screen button), then 0.
     takeSkill() { const k = skillPulse; skillPulse = 0; return k; },
     takeSurge() { const u = surgePulse; surgePulse = 0; return u; },
@@ -119,19 +121,24 @@ export function createInput(target) {
     // Y/Back 'map', D-pad or stick up/down 'up'/'down' for menus.
     poll() {
       const pads = navigator.getGamepads?.() ?? [];
-      let l = false, r = false, y = 0, ry = 0, look = 0;
+      let l = false, r = false, y = 0, ry = 0, look = 0, vx = 0, vy = 0;
       const now = new Set();
       for (const gp of pads) {
         if (!gp) continue;
         const x = gp.axes[0] ?? 0;
         y = gp.axes[1] ?? 0;
         ry = gp.axes[3] ?? 0; // right stick: up / down only (sideways is ignored)
+        // The left stick (or D-pad) as a screen direction, for the top-down drop.
+        const b = (i) => (gp.buttons[i]?.pressed ? 1 : 0);
+        vx = x + b(PAD.RIGHT) - b(PAD.LEFT); vy = y + b(PAD.DOWN) - b(PAD.UP);
         if (x < -DEADZONE || gp.buttons[PAD.LEFT]?.pressed) l = true;
         if (x > DEADZONE || gp.buttons[PAD.RIGHT]?.pressed) r = true;
         gp.buttons.forEach((b, i) => { if (b.pressed) now.add(i); });
       }
       if (!pads.some(Boolean)) return;
       pad.look = look;
+      const vl = Math.hypot(vx, vy);
+      pad.vec = vl > 1 ? { x: vx / vl, y: vy / vl } : { x: vx, y: vy };
       // Falling: left stick up / down (or D-pad) glides faster / slower; right stick up / down falls faster / slower.
       const g = y < -DEADZONE || now.has(PAD.UP) ? 1 : y > DEADZONE || now.has(PAD.DOWN) ? -1 : 0;
       const f = ry < -DEADZONE ? 1 : ry > DEADZONE ? -1 : 0;
