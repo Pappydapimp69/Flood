@@ -126,6 +126,7 @@ export const TUNE = {
   lineTol: 0.004, // share of that distance either side drawn as the line
   ceilSlope: 1.3, // highest a drop can be: this many metres up per metre still to go to the line
   floorGap: 60, // lowest: this far over the ground, easing to 0 in the last 1.5 km
+  dropCloudShare: 0.25, // descent clouds hold this share of cloudWater (they gave far too much)
   cloudSpread: 4500, // metres either side of the comet path the first clouds sit; they close in toward the start line
   diveRate: 1.6, // ...diving falls up to this much faster (about 12 s)...
   floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
@@ -176,6 +177,7 @@ export const TUNE = {
   treeBreak: 1.3,
   treeHeight: 14, // (no longer a rise: see forestDrag)
   forestDrag: 0.35, // a small river among trees runs at this share of its speed
+  treeCost: 0.005, // share of its speed a river loses for every tree it knocks down
   // The heat front: from heatStart ticks (counted from the start of the drop)
   // a heat wave rolls down the mountain at heatSpeed m/s. It never touches a
   // river: the lakes behind it slowly dry out.
@@ -641,12 +643,12 @@ export function skyClouds(world) {
       x: sx - ax * back - az * side,
       z: sz - az * back + ax * side,
       alt: Math.max(150, back * (0.3 + 0.9 * rng())), // anywhere a drop can reach there: dive or float to it
-      water: TUNE.cloudWater[0] + rng() * (TUNE.cloudWater[1] - TUNE.cloudWater[0]),
+      water: (TUNE.cloudWater[0] + rng() * (TUNE.cloudWater[1] - TUNE.cloudWater[0])) * TUNE.dropCloudShare,
       taken: -1,
     };
   });
   // Drop clouds are reservoirs: their size follows their water, and they drain as rivers pass through.
-  for (const c of world.clouds) { c.water0 = c.water; c.radius = TUNE.cloudRadius * Math.cbrt(c.water / TUNE.cloudWater[1]) * 1.2; }
+  for (const c of world.clouds) { c.water0 = c.water; c.radius = TUNE.cloudRadius * Math.cbrt(c.water / (TUNE.cloudWater[1] * TUNE.dropCloudShare)) * 1.2; } // (size as before: less water, same cloud)
   // Low clouds down the slope, one per band of distance to the sea from the
   // start ring to the coast, so there is water to chase the whole way down,
   // not only in the sky at the start. Caught by a head flowing under one.
@@ -1345,7 +1347,7 @@ function dropClouds(world) {
       grow(r, share);
       world.events.push({ type: 'cloud', river: r.idx, amount: share, cloud: c.id, tick: world.tick });
     }
-    c.radius = Math.max(TUNE.cloudRadius * 0.25, TUNE.cloudRadius * 1.2 * Math.cbrt(c.water / TUNE.cloudWater[1]));
+    c.radius = Math.max(TUNE.cloudRadius * 0.25, TUNE.cloudRadius * 1.2 * Math.cbrt(c.water / (TUNE.cloudWater[1] * TUNE.dropCloudShare)));
     c.alt += TUNE.cloudLift * (drain / c.water0);
     if (c.water <= 0) c.taken = inside[0].idx;
   }
@@ -2096,6 +2098,7 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
         // A big river knocks the trees flat; a small one's water stops at them.
         if (r.size < TUNE.treeBreak) continue;
         fell(world, k);
+        r.speed *= 1 - TUNE.treeCost; // each tree it knocks down costs it a little momentum
       }
       if (world.lava[k]) {
         // Water meets lava: it cools into rock instead of being dug.
