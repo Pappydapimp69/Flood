@@ -195,14 +195,23 @@ function botGlide(world, bot) {
   const r = bot.river;
   // A rain cloud it can still reach on the way down: steer for it.
   let cloud = null, cd = Infinity;
+  // (Clouds are shared reservoirs now: any with water left counts, and the
+  // closing-in clouds near the start line pull the bots together too.)
+  let fast = false;
   for (const c of skyClouds(world)) {
-    if (c.taken >= 0 || c.alt > r.alt) continue;
-    const d = Math.sqrt((c.x - r.x) ** 2 + (c.z - r.z) ** 2), reach = ((r.alt - c.alt) / (TUNE.dropAlt / TUNE.dropTicks)) * TUNE.glideSpeed * DT;
-    if (d < reach * 0.9 && d < cd) { cd = d; cloud = c; }
+    if (c.low || !(c.water > 0) || c.alt > r.alt + TUNE.cloudDepth) continue;
+    const ticks = Math.max(0, r.alt - c.alt) / (TUNE.dropAlt / TUNE.dropTicks);
+    const d = Math.sqrt((c.x - r.x) ** 2 + (c.z - r.z) ** 2), reach = ticks * TUNE.glideSpeed * DT;
+    // A crowded cloud costs: every other drop near it counts as 900 m further (they'd bump it there).
+    const crowd = world.rivers.filter((o) => o !== r && o.dropping && (o.x - c.x) ** 2 + (o.z - c.z) ** 2 < 700 * 700).length;
+    const score = d + 900 * crowd;
+    if (d < reach * 1.6 + 300 && score < cd) { cd = score; cloud = c; fast = d > reach * 0.9; }
   }
   if (cloud) {
     const cross = r.dx * (cloud.z - r.z) - r.dz * (cloud.x - r.x);
-    return Math.abs(cross) < cd * 0.1 ? 0 : cross < 0 ? -1 : 1;
+    const dist = Math.hypot(cloud.x - r.x, cloud.z - r.z);
+    const s = Math.abs(cross) < dist * 0.1 ? 0 : cross < 0 ? -1 : 1;
+    return fast ? { s, f: 0, g: 1 } : s;
   }
   let near = null, best = Infinity;
   for (const o of world.rivers) {
@@ -210,7 +219,7 @@ function botGlide(world, bot) {
     const d = (o.x - r.x) ** 2 + (o.z - r.z) ** 2;
     if (d < best) { best = d; near = o; }
   }
-  if (!near || best > 3000 * 3000) return 0;
+  if (!near || best > 1500 * 1500) return 0;
   // Which side of our heading is it on? Turn the other way.
   const side = (near.x - r.x) * r.dz - (near.z - r.z) * r.dx; // > 0: on the left
   return side > 0 ? 1 : -1;

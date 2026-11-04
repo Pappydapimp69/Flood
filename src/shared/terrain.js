@@ -118,7 +118,21 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   // Wide enough at the top for three summits side by side inside the walls.
   const topW = ((S.gap + SUMMIT.room) / 0.62) * (1 - smooth(0.15, 0.35, t));
   const side = Math.abs(wv) / Math.max(halfW, topW); // 0 down the middle, 1 at the wall tops
-  if (side > 1 || t < -0.03 || t > 1.08) {
+  inCourse = !(side > 1 || t < -0.03 || t > 1.08);
+  if (!inCourse) {
+    // Behind and beside the summits: the mountain's far side, falling away to
+    // the sea. Scenery only: no spawns, no landings, no lakes (the course mask).
+    const bt = clamp01((SUMMIT.at + 0.02 - t) / BACK.len); // 0 at the summits, 1 at the far shore
+    const sideB = Math.abs(wv) / (Math.max(halfW, topW) * (1 + BACK.spread * bt));
+    if (t < SUMMIT.at + 0.12 && t > -BACK.len && sideB < 1.6) {
+      const crest = SUMMIT.top * maxHeight * 0.95;
+      const rough = ridged(x * 3.4, y * 3.4, seed + 71, 5);
+      const along = (1 - bt) * (1 - bt) * (0.75 + 0.3 * rough); // high near the peaks, down to the shore
+      const across = 1 - smooth(0.9, 1.6, sideB); // falls away to the sides
+      const edge = 1 - smooth(0.82, 0.95, Math.max(Math.abs(x), Math.abs(y))); // always open sea at the map edge
+      const land = (crest * along * across + 160 * (rough - 0.5) * across) * edge - 30 * (1 - edge);
+      if (land > 0) return land;
+    }
     // Outside the slope: cliffs into deep sea.
     const out = Math.max(side - 1, -t, t - 1.08, 0);
     return -seaDepth * lerp(0.35, 1, smooth(0, 0.25, out));
@@ -180,6 +194,9 @@ const GATES = () => ISLAND.gates; // rock gates across the lower slope
 const GATE = { height: 45, thick: 0.007, gap: 0.12, spread: 0.06 };
 
 const SUMMIT = { top: 1.2, grade: 7500, at: 0.1, room: 0.06 };
+// The land behind the start line (scenery): how far back it runs (in slope lengths) and how much wider it spreads.
+const BACK = { len: 0.2, spread: 0.8 };
+let inCourse = true; // set by rawHeight for the cell it just made
 
 // The three peaks' cells, where each summit cone stands highest.
 function summitCells(height, n, S) {
@@ -237,17 +254,18 @@ function fillDepressions(h, n) {
 
 export function generateIsland(seed = 1, opts = {}) {
   const { size: n, worldSize, maxHeight, seaDepth, course } = { ...DEFAULTS, ...opts };
-  const height = new Float32Array(n * n);
+  const height = new Float32Array(n * n), mask = new Uint8Array(n * n); // mask: 1 on the race slope, 0 on scenery and sea
   const shape = opts.course === 'tutorial' ? tutorialShape() : shapeOf(seed);
   for (let y = 0; y < n; y++) {
     const v = (y / (n - 1)) * 2 - 1;
     for (let x = 0; x < n; x++) {
       const u = (x / (n - 1)) * 2 - 1;
       height[y * n + x] = rawHeight(u, v, seed, maxHeight, seaDepth, shape);
+      mask[y * n + x] = inCourse ? 1 : 0;
     }
   }
   const filled = fillDepressions(height, n);
-  return { seed, course, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
+  return { seed, course, mask, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
     summits: summitCells(height, n, shape), axis: { x: shape.ax, y: shape.ay }, long: shape.long };
 }
 
@@ -357,7 +375,7 @@ export function findLakes(t) {
   const lakes = [];
   const queue = new Int32Array(n * n);
   for (let s = 0; s < n * n; s++) {
-    if (label[s] >= 0 || filled[s] - height[s] <= LAKE_MIN_DEPTH) continue;
+    if (label[s] >= 0 || filled[s] - height[s] <= LAKE_MIN_DEPTH || (t.mask && !t.mask[s])) continue; // no lakes on the scenery
     const id = lakes.length;
     let head = 0, tail = 0, volume = 0, sx = 0, sy = 0;
     queue[tail++] = s;
@@ -372,7 +390,7 @@ export function findLakes(t) {
           const x = cx + dx, y = cy + dy;
           if (x < 0 || y < 0 || x >= n || y >= n) continue;
           const k = y * n + x;
-          if (label[k] < 0 && filled[k] - height[k] > LAKE_MIN_DEPTH) { label[k] = id; queue[tail++] = k; }
+          if (label[k] < 0 && filled[k] - height[k] > LAKE_MIN_DEPTH && (!t.mask || t.mask[k])) { label[k] = id; queue[tail++] = k; }
         }
       }
     }

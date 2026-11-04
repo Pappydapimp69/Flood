@@ -109,8 +109,9 @@ export function createInput(target) {
     takeSurge() { const u = surgePulse; surgePulse = 0; return u; },
     pressSurge,
     pressSkill,
-    // Camera turn: no longer on the right stick (it only sets the fall). Always 0 from a pad.
+    // Right stick sideways, -1..1: look left / right (once landed).
     look: () => pad.look,
+    rise: () => pad.rise ?? 0,
     takeActions() { return actions.splice(0); },
     // The drag stick: offset from where the finger went down, in screen pixels,
     // with its start point; null while no finger (or mouse button) is down.
@@ -127,7 +128,9 @@ export function createInput(target) {
         if (!gp) continue;
         const x = gp.axes[0] ?? 0;
         y = gp.axes[1] ?? 0;
-        ry = gp.axes[3] ?? 0; // right stick: up / down only (sideways is ignored)
+        ry = gp.axes[3] ?? 0; // right stick up / down: the fall while dropping, the raised view once landed
+        const rx = gp.axes[2] ?? 0;
+        if (Math.abs(rx) > 0.2 && Math.abs(rx) > Math.abs(look)) look = rx; // right stick sideways: look left / right once landed
         // The left stick (or D-pad) as a screen direction, for the top-down drop.
         const b = (i) => (gp.buttons[i]?.pressed ? 1 : 0);
         vx = x + b(PAD.RIGHT) - b(PAD.LEFT); vy = y + b(PAD.DOWN) - b(PAD.UP);
@@ -137,6 +140,7 @@ export function createInput(target) {
       }
       if (!pads.some(Boolean)) return;
       pad.look = look;
+      pad.rise = ry < -0.2 ? Math.min(1, (-ry - 0.2) / 0.7) : 0; // right stick up: 0..1
       const vl = Math.hypot(vx, vy);
       pad.vec = vl > 1 ? { x: vx / vl, y: vy / vl } : { x: vx, y: vy };
       // Falling: left stick up / down (or D-pad) glides faster / slower; right stick up / down falls faster / slower.

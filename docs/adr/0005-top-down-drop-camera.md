@@ -26,3 +26,16 @@ A view from above hides height (Brain seven#E52: the perspective was a mechanic)
 catches a cloud near its own height (`TUNE.cloudDepth`, 400 m). So each drop cloud you can still
 reach carries a tag giving its height below you, and the tag turns gold and reads "your height: fly
 in!" once you are level with it.
+
+## Update 2026-11-04: a comet approach instead of top-down
+The owner found the top-down view made it hard to tell where the drop was relative to the clouds
+(it looked above them when it wasn't). Drops now come in like comets: each starts a steady glide's
+run (`TUNE.cometRun`) behind its start spot, over new scenery land behind the start line (a dead
+zone: terrain `mask` 0, no spawns, landings or lakes), and is held in a funnel that narrows to the
+start line as the fall runs out, so it always lands on the line and never before it. The camera
+chases from behind and a little above, always facing down the slope, so there is still no yaw
+(T182 stays settled). Height reads from a ground shadow and stem under every drop, cloud shadows
+and the height tags. Altitudes count from the start line's height (`skyBase`), not the ground
+underneath. Drop clouds sit along the comet path, spread wide early and packed close to the
+middle of the start line near the end, so drops converge and bump. Once landed, the right stick
+looks up to 30 degrees aside (drifting back) and up raises the view; the map is off.

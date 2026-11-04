@@ -319,12 +319,20 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
     await set(0);
     if (!steers.includes(-1)) throw new Error(`${how} left gave ${steers.join('')}`);
   }
-  // Right stick sideways does nothing now (it only sets the fall): the camera stays put.
+  // Right stick sideways: while falling it does nothing to the camera; once
+  // landed it looks up to 30 degrees aside and drifts back when let go.
+  const fallingNow = await page.evaluate(() => __flood.river.dropping > 0);
   await page.evaluate(() => { __pad.axes[2] = 1; });
-  await page.waitForTimeout(1500);
-  const yaw = await page.evaluate(() => __flood.camYaw);
+  await page.waitForTimeout(2500);
+  const yaw = await page.evaluate(() => __flood.camYaw), stillFalling = await page.evaluate(() => __flood.river.dropping > 0);
   await page.evaluate(() => { __pad.axes[2] = 0; });
-  if (Math.abs(yaw) > 0.05) throw new Error(`right stick sideways turned the camera: ${yaw}`);
+  if (fallingNow && stillFalling && Math.abs(yaw) > 0.05) throw new Error(`right stick turned the falling camera: ${yaw}`);
+  if (!fallingNow && !stillFalling) {
+    if (yaw < 0.2 || yaw > 0.53) throw new Error(`right stick look: ${yaw} rad (want up to 0.52)`);
+    let back = yaw;
+    for (let i = 0; i < 100 && back > yaw * 0.3; i++) { await page.waitForTimeout(100); back = await page.evaluate(() => __flood.camYaw); } // (frames are slow headless)
+    if (back > yaw * 0.3) throw new Error(`the look didn't drift back: ${back}`);
+  }
   // Finish the run by force (after the spawn grace), then A on the results card starts a new one.
   const t0 = (await state(page)).tick;
   await until(page, (st) => st.tick > Math.max(t0, 140), 'past spawn grace');

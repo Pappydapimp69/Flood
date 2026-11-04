@@ -10,7 +10,7 @@ test('lakes label exactly the deep filled cells', () => {
   const { label, lakes } = findLakes(t42);
   assert.ok(lakes.length > 10);
   for (let i = 0; i < label.length; i++) {
-    assert.equal(label[i] >= 0, t42.filled[i] - t42.height[i] > LAKE_MIN_DEPTH, `cell ${i}`);
+    assert.equal(label[i] >= 0, t42.filled[i] - t42.height[i] > LAKE_MIN_DEPTH && t42.mask[i] === 1, `cell ${i}`); // (none on the scenery behind the start)
   }
   const counts = new Array(lakes.length).fill(0);
   for (const l of label) if (l >= 0) counts[l]++;

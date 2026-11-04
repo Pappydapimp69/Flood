@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes, TUTORIAL as COURSE } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, VERT } from './terrainMesh.js';
@@ -19,6 +19,15 @@ const params = new URLSearchParams(location.search);
 // Stamped with the commit at deploy (see .github/workflows/pages.yml); shown small, so a stale cache is visible.
 const BUILD = '__BUILD__';
 document.getElementById('build').textContent = BUILD.startsWith('__') ? 'dev' : `build ${BUILD}`;
+// A browser can keep an old index.html for ten minutes (GitHub Pages' cache),
+// and with it the old build. Ask, uncached, which build is live; if it's newer,
+// load it under a fresh URL (once: the ?v= marks the reload).
+if (!BUILD.startsWith('__')) {
+  fetch('./version.txt', { cache: 'no-store' }).then((r) => (r.ok ? r.text() : '')).then((live) => {
+    live = live.trim();
+    if (live && live !== BUILD && params.get('v') !== live) { params.set('v', live); location.replace(`${location.pathname}?${params}`); }
+  }).catch(() => {});
+}
 const PLAYER = 'you';
 
 function fail(msg) {
@@ -120,6 +129,8 @@ const guides = [marker, beam, course, arrow, zoneDots];
 for (const g of guides) g.visible = false;
 
 // One render entry per river: ribbon, head and last-tick position for interpolation.
+const shadowGeo = new THREE.CircleGeometry(1, 24).rotateX(-Math.PI / 2), stemGeo = new THREE.CylinderGeometry(1, 1, 1, 6, 1, true).translate(0, 0.5, 0);
+const skyY = () => skyBase(world) * VERT; // falling drops and drop clouds count their height from the start line's
 function makeEntry(r, i) {
   const mine = r === river;
   const color = mine ? PLAYER_COLOR : BOT_COLORS[i % BOT_COLORS.length];
@@ -137,8 +148,12 @@ function makeEntry(r, i) {
   scene.add(line);
   // On the ground the head is a foaming surge throwing spray, as in the trailer.
   const surge = makeSurge(mine), spray = makeSpray();
-  scene.add(ribbon.mesh, head, streak, surge, spray);
-  return { r, ribbon, head, streak, surge, spray, line, color, prev: { x: r.x, z: r.z }, mx: r.dx, mz: r.dz };
+  // Falling: a shadow on the ground under the drop and a thin stem down to it,
+  // so where it is over the ground (and over the clouds' shadows) reads at once.
+  const shadow = new THREE.Mesh(shadowGeo, new THREE.MeshBasicMaterial({ color: '#000000', transparent: true, opacity: mine ? 0.45 : 0.25, depthWrite: false }));
+  const stem = new THREE.Mesh(stemGeo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: mine ? 0.55 : 0.25, depthWrite: false }));
+  scene.add(ribbon.mesh, head, streak, surge, spray, shadow, stem);
+  return { r, ribbon, head, streak, surge, spray, line, shadow, stem, color, prev: { x: r.x, z: r.z }, mx: r.dx, mz: r.dz };
 }
 
 const camera = new THREE.PerspectiveCamera(55, 1, 20, 400000);
@@ -167,7 +182,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (falling: push where you want to go, all the way to glide fast) · right stick up / down: fall faster / slower · A: gouge (select / race again in menus) · Y: map · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (falling: push where you want to go, all the way to glide fast) · right stick up / down: fall faster / slower; once landed it looks around, up for a raised view · A: gouge (select / race again in menus) · RB: surge · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -247,12 +262,20 @@ function updateWeather(time) {
   }
 }
 // Rain clouds in the sky during the drop: puffs of white, gone once taken.
-let skyMeshes = null, skyWorld = null;
+let skyMeshes = null, skyWorld = null, cloudShadows = [];
 let cloudGot = 0, cloudSaidAt = 0;
 function updateSkyClouds() {
   if (skyWorld !== world) {
     if (skyMeshes) for (const m of skyMeshes) { scene.remove(m); m.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); }); }
+    for (const s of cloudShadows) if (s) { scene.remove(s); s.material.dispose(); }
     skyWorld = world; cloudGot = 0;
+    // A drop cloud's shadow on the ground: line your own shadow up with it.
+    cloudShadows = skyClouds(world).map((c) => {
+      if (c.low) return null;
+      const s = new THREE.Mesh(shadowGeo, new THREE.MeshBasicMaterial({ color: '#0a2030', transparent: true, opacity: 0.28, depthWrite: false }));
+      scene.add(s);
+      return s;
+    });
     const mat = new THREE.MeshLambertMaterial({ color: '#f4f8ff', transparent: true, opacity: 0.92 });
     skyMeshes = skyClouds(world).map((c, i) => {
       const g = new THREE.Group();
@@ -271,7 +294,7 @@ function updateSkyClouds() {
         shaft.position.y = -c.alt / 440;
         g.add(shaft);
       }
-      g.position.set(c.x, surfaceAt(world, c.x, c.z) * VERT + c.alt, c.z);
+      g.position.set(c.x, (c.low ? surfaceAt(world, c.x, c.z) * VERT : skyY()) + c.alt, c.z);
       scene.add(g);
       return g;
     });
@@ -285,7 +308,9 @@ function updateSkyClouds() {
     m.visible = c.water > 0 && c.taken < 0 && falling && !mapView;
     const rad = c.radius ?? TUNE.cloudRadius;
     m.scale.set(rad, TUNE.cloudDepth * Math.max(0.4, rad / TUNE.cloudRadius), rad);
-    m.position.y = surfaceAt(world, c.x, c.z) * VERT + c.alt;
+    m.position.y = skyY() + c.alt;
+    const sh = cloudShadows[i];
+    if (sh) { sh.visible = m.visible; sh.position.set(c.x, surfaceAt(world, c.x, c.z) * VERT + 10, c.z); sh.scale.set(rad, 1, rad); }
   });
 }
 
@@ -398,7 +423,8 @@ let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 function beginRace(seed, raceIds, me, rolled) {
   recordBanked = false; recordNotes = [];
   for (const e of entries) {
-    scene.remove(e.ribbon.mesh, e.head, e.streak, e.surge, e.spray, e.line);
+    scene.remove(e.ribbon.mesh, e.head, e.streak, e.surge, e.spray, e.line, e.shadow, e.stem);
+    e.shadow.material.dispose(); e.stem.material.dispose();
     if (e.pond) { scene.remove(e.pond); e.pond.geometry.dispose(); e.pond.material.dispose(); }
     e.line.geometry.dispose(); e.line.material.dispose();
     e.ribbon.geo.dispose(); e.head.material.dispose(); e.streak.material.dispose();
@@ -525,6 +551,7 @@ let camYaw = 0, lookIdle = 0;
 // The opening shot runs until this time (ms); any key, click or steer skips it.
 let introUntil = 0;
 let lastCamMode = ''; // the camera's current view; a change is a cut
+let camRise = 0; // 0..1: how far the right stick has raised the view
 for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, () => { introUntil = 0; });
 // 1: cuts deeper than you (touching it drains you), -1: shallower (you drain
 // it), 0: too close to call — the same deadband the sim uses.
@@ -583,7 +610,7 @@ function placeCloudTags() {
   cloudTagPool.forEach((el, i) => {
     const o = near[i];
     if (!o) { el.hidden = true; return; }
-    tmpV.set(o.c.x, surfaceAt(world, o.c.x, o.c.z) * VERT + o.c.alt, o.c.z).project(camera);
+    tmpV.set(o.c.x, (o.c.low ? surfaceAt(world, o.c.x, o.c.z) * VERT : skyY()) + o.c.alt, o.c.z).project(camera);
     // Behind the camera, or off screen: pin it to the nearest edge, pointing out.
     let x = tmpV.x, y = tmpV.y, edge = '';
     if (tmpV.z > 1) { x = -x; y = -y; }
@@ -767,14 +794,9 @@ document.getElementById('opt-shake').onchange = (e) => { settings.shake = e.targ
 function handleActions() {
   for (const a of pendingActions.splice(0)) {
     if (a === 'pause') { setPaused(!paused); continue; }
-    if (a === 'map') {
-      if (coach) coach.mapped = true;
-      mapView = !mapView;
-      controls.enabled = mapView;
-      if (mapView) frameMap();
-      scene.fog = mapView ? null : mapFog;
-      finishDisc.visible = mapView;
-    } else if ((a === 'restart' || a === 'tap') && mode === 'solo' && river && !isRacing(river)) {
+    // (The map, Y / M, is off for now: the right stick's raised view does its job. frameMap stays for later.)
+    if (a === 'map') continue;
+    if ((a === 'restart' || a === 'tap') && mode === 'solo' && river && !isRacing(river)) {
       newRun();
       return true;
     }
@@ -988,7 +1010,7 @@ function advance(inputs) {
     } else if (e.type === 'bump') {
       // Two drops collided: spray where they met, and say what it cost you.
       const ra = world.rivers[e.a], rb = world.rivers[e.b], en = entries[e.a];
-      if (en) burstSpray(en.spray, e.x, surfaceAt(world, e.x, e.z) * VERT + (ra.alt ?? 0), e.z, 1.4, 50);
+      if (en) burstSpray(en.spray, e.x, skyY() + (ra.alt ?? 0), e.z, 1.4, 50);
       const mine = river === ra ? [rb, e.lossA, e.lossB] : river === rb ? [ra, e.lossB, e.lossA] : null;
       if (mine) {
         showPop(`Bumped ${nameOf(mine[0])}! −${fmtL(mine[1])} (they lost ${fmtL(mine[2])})`);
@@ -1194,7 +1216,7 @@ const key = (pad, kb, touch) => (lowPower ? touch : padSeen ? pad : kb);
 const COACH = [
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>`, pass: (c) => c.steered > 8 },
   { text: () => 'The <b>white ribbon</b> shows where your water will go', pass: (c) => c.secs > 5 },
-  { text: () => `Only the <b>gold beach</b> ends the race · <b>${key('Y', 'M', 'tap MAP')}</b> for the map`, pass: (c) => c.mapped || c.secs > 8 },
+  { text: () => `Only the <b>gold beach</b> ends the race${key(' · <b>right stick</b> looks around, <b>up</b> for a view ahead', '', '')}`, pass: (c) => c.secs > 8 },
   { text: () => 'Flow into <b>lakes</b> and out over their bank: their water feeds you', pass: (c) => river.lakes > 0 || c.secs > 14 },
   { text: () => `A rise in the way? <b>GOUGE</b> (${key('A', 'Space', 'tap')}) climbs over it`, pass: (c) => c.gouged || c.secs > 16 },
   { text: () => `Slow on the flat? <b>SURGE</b> (${key('RB', 'Q', 'tap')}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
@@ -1389,6 +1411,7 @@ let markerAt = 0;
 function showMarker(now, hx, hy, hz) {
   const on = !!river?.dropping && isRacing(river) && !mapView && now >= introUntil;
   for (const g of guides) g.visible = on;
+  beam.visible = false; // (the tall beam blocked the comet chase view; the ring on the ground marks the touchdown)
   if (!on) return;
   // The arrow follows the drop every frame, just ahead of it.
   const sz = 220;
@@ -1403,7 +1426,7 @@ function showMarker(now, hx, hy, hz) {
   // Fly the rest of the fall on this heading, held inside the landing ring as the sim does.
   let q = { x: river.x, z: river.z };
   const stepM = (TUNE.glideSpeed * left) / 30;
-  for (let i = 0; i < 30; i++) q = keepInZone(world, q.x + river.dx * stepM, q.z + river.dz * stepM);
+  for (let i = 0; i < 30; i++) q = keepInZone(world, q.x + river.dx * stepM, q.z + river.dz * stepM, TUNE.zoneSlack + TUNE.glideSpeed * left * (1 - (i + 1) / 30));
   const px = q.x, pz = q.z;
   const k = landingCell(world, px, pz);
   const x = ((k % n) / (n - 1) - 0.5) * W, z = (Math.floor(k / n) / (n - 1) - 0.5) * W;
@@ -1462,7 +1485,14 @@ renderer.setAnimationLoop(() => {
     const r = e.r;
     const hx = e.prev.x + (r.x - e.prev.x) * alpha, hz = e.prev.z + (r.z - e.prev.z) * alpha;
     // A falling drop sits its altitude above the ground (true metres, not exaggerated).
-    const hy = surfaceAt(world, hx, hz, r.idx) * VERT + (r.dropping ? (r.alt - (r.alt - (e.prevAlt ?? r.alt)) * (1 - alpha)) : 0);
+    const ground = surfaceAt(world, hx, hz, r.idx) * VERT;
+    const hy = r.dropping ? skyY() + (r.alt - (r.alt - (e.prevAlt ?? r.alt)) * (1 - alpha)) : ground;
+    e.shadow.visible = e.stem.visible = !!r.dropping && !r.out && !mapView;
+    if (e.shadow.visible) {
+      const s = 110 * Math.max(1, r.size);
+      e.shadow.position.set(hx, ground + 12, hz); e.shadow.scale.set(s, 1, s);
+      e.stem.position.set(hx, ground, hz); e.stem.scale.set(r === river ? 9 : 5, Math.max(1, hy - ground), r === river ? 9 : 5);
+    }
     const big = mapView ? 6 : 1; // heads read as markers on the map
     // Falling: a stretched drop with its streak. Flowing: the surge.
     e.head.visible = !r.out && (!!r.dropping || mapView);
@@ -1559,44 +1589,46 @@ renderer.setAnimationLoop(() => {
   } else if (mapView) {
     controls.update();
   } else if (intro) {
-    // High above the falling comets, behind the summits, looking down on them
-    // and the three peaks they rain onto, the slope running away beyond.
+    // The opening shot: high behind the comets as they come in over the far
+    // side of the mountains, looking ahead along their path to the peaks and
+    // the slope beyond. It closes in on the pack, then the chase view takes over.
     const top = spawnBand(world).top, n = terrain.size;
     const tx = ((top % n) / (n - 1) - 0.5) * W, tz = (Math.floor(top / n) / (n - 1) - 0.5) * W, th = terrain.height[top] * VERT;
     const ax = terrain.axis.x, az = terrain.axis.y; // down the slope
-    const t = 1 - (introUntil - now) / 4500;
-    const back = 9000 - 3000 * t, above = th + TUNE.dropAlt + 7000 - 3000 * t;
+    const t = 1 - (introUntil - now) / 4500, run = TUNE.cometRun * TUNE.glideSpeed * TUNE.dropTicks / TICK_HZ;
+    const back = run + 5000 - 3500 * t, above = skyY() + TUNE.dropAlt + 2600 - 1600 * t;
     camera.position.set(tx - ax * back, above, tz - az * back);
-    const lx = tx + ax * (2500 + 1500 * t), lz = tz + az * (2500 + 1500 * t);
-    camera.lookAt(lx, th + 1500 * (1 - t), lz);
+    camera.lookAt(tx + ax * 2000, th, tz + az * 2000);
     camTarget.set(tx, th, tz);
   } else if (focus.dropping) {
-    // Falling: high over the drop, looking almost straight down, the beach at
-    // the top of the screen. It moves with the drop but never turns (no yaw:
-    // Brain T182). A slight lean ahead keeps "up" defined and shows a little
-    // depth; clouds below read their height from the tags (seven#E52: a view
-    // from above hides height, so say it).
-    const ax = terrain.axis.x, az = terrain.axis.y, H = 4800, lean = 0.08; // low enough that the ground visibly rushes past
+    // Falling: a comet chase. Behind the drop and a little above it, always
+    // looking down the slope (it never turns with the drop: no yaw, Brain T182),
+    // so the clouds ahead sit at their true height beside you and the ground
+    // shadows (yours and theirs) show where you are over it.
+    const ax = terrain.axis.x, az = terrain.axis.y, back = 1500, up = 520;
     const k = cut ? 1 : 1 - Math.exp(-frameDt * 4);
-    camera.position.lerp(new THREE.Vector3(fx - ax * H * lean, fy + H, fz - az * H * lean), k);
-    camTarget.lerp(new THREE.Vector3(fx + ax * 300, fy - 400, fz + az * 300), k);
+    camera.position.lerp(new THREE.Vector3(fx - ax * back, fy + up, fz - az * back), k);
+    camTarget.lerp(new THREE.Vector3(fx + ax * 1100, fy - 300, fz + az * 1100), k);
     camera.lookAt(camLook.copy(camTarget));
     camDir.set(ax, az); // landing hands the chase camera this facing
     camYaw = 0;
     // A bump jolts the view.
     const jolt = gougeShakeAt ? Math.max(0, 1 - (now - gougeShakeAt) / 500) : 0;
-    if (jolt > 0 && settings.shake) { camera.position.x += (Math.random() - 0.5) * 140 * jolt; camera.position.z += (Math.random() - 0.5) * 140 * jolt; }
-    const fov = baseFov * 0.8; // a narrower lens from higher up: less perspective, closer to a true top-down map
-    if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * k; camera.updateProjectionMatrix(); }
+    if (jolt > 0 && settings.shake) { camera.position.x += (Math.random() - 0.5) * 90 * jolt; camera.position.y += (Math.random() - 0.5) * 60 * jolt; }
+    if (Math.abs(camera.fov - baseFov) > 0.05) { camera.fov += (baseFov - camera.fov) * k; camera.updateProjectionMatrix(); }
   } else {
     // Chase camera. It must never fight the player: it follows the river's
     // course over the last few hundred metres (not the head's tick-to-tick heading,
     // which gravity tugs constantly), ignores small changes, turns slowly, and
     // only its height reacts quickly (up fast, down slowly, so it doesn't bob).
     // Right stick swings the camera round; let go and it eases back behind.
-    const look = input.look();
-    if (look) { camYaw = Math.max(-Math.PI, Math.min(Math.PI, camYaw + look * frameDt * 2.2)); lookIdle = 0; }
-    else if ((lookIdle += frameDt) > 1.5) camYaw *= Math.exp(-frameDt * 1.5);
+    // Right stick (once landed): sideways looks up to 30 degrees left or right
+    // and drifts back to centre when let go; up raises the camera and tilts it
+    // down for a look far ahead.
+    const look = input.look(), riseIn = input.rise();
+    const yawWant = look * 0.52;
+    camYaw += (yawWant - camYaw) * (1 - Math.exp(-frameDt * (look ? 5 : 2.5)));
+    camRise += (riseIn - camRise) * (1 - Math.exp(-frameDt * (riseIn > camRise ? 4 : 3)));
     const course = courseOf(focus, fx, fz);
     if (cut) { camDir.set(course.x, course.y).normalize(); camYaw = 0; } // a new shot starts behind the river
     const ang = Math.atan2(camDir.x * course.y - camDir.y * course.x, camDir.x * course.x + camDir.y * course.y);
@@ -1615,7 +1647,7 @@ renderer.setAnimationLoop(() => {
     const done = !!focus.finished;
     // Pulls back only a little as the river grows, so a big river fills more
     // of the screen and the ground rushes past faster.
-    const back = falling ? 1300 : done ? 700 : 560 + 50 * sz, up = falling ? 1100 : done ? 2600 : 300 + 40 * sz;
+    const back = (falling ? 1300 : done ? 700 : 560 + 50 * sz) + 900 * camRise, up = (falling ? 1100 : done ? 2600 : 300 + 40 * sz) + 2400 * camRise;
     const want = new THREE.Vector3(fx - view.x * back, Math.max(fy, 0) + up, fz - view.y * back);
     // Stay above the ground along the whole sightline, not just at the camera.
     for (let f = 0.25; f <= 1; f += 0.25) {
@@ -1628,7 +1660,7 @@ renderer.setAnimationLoop(() => {
     const kY = cut ? 1 : 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
     camera.position.y += (want.y - camera.position.y) * kY;
     camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
-    const ahead = falling ? 600 : done ? 2200 : 380 + 80 * sz;
+    const ahead = (falling ? 600 : done ? 2200 : 380 + 80 * sz) + 2600 * camRise;
     camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), cut ? 1 : 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
     // Power: the view widens with speed, and a big, fast river shakes it.
