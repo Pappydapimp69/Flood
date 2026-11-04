@@ -91,6 +91,19 @@ function shapeOf(seed) {
   };
 }
 
+// The Tutorial's training course: one fixed, straight run, built to teach.
+// Down the middle: a lake at 0.30, a flat for Surge at 0.42, a rock ridge
+// across the run at 0.55 (its only gap is hard against the left wall, so
+// Gouge is the way over), open slope for a storm at 0.70, then the beach.
+export const TUTORIAL = { seed: 9_999_001, lake: 0.3, surge: 0.42, ridge: 0.55, storm: 0.7 };
+function tutorialShape() {
+  return {
+    ax: 0, ay: 1, long: 0.62, wide: 0.19, gap: 0.085, taper: 0.05, warp: 0, wall: 0.1,
+    lakes: [{ t: TUTORIAL.lake, v: 0, rad: 0.03 }, { t: 0.8, v: 0.45, rad: 0.02 }],
+    gates: [{ t: TUTORIAL.ridge, v: -0.85 }],
+  };
+}
+
 // Raw height field: a long corridor falling from a summit at one end to the
 // sea at the other, walled along both sides so every river runs the same way
 // and meets the others, with hills, dips and gullies down its floor.
@@ -223,9 +236,9 @@ function fillDepressions(h, n) {
 }
 
 export function generateIsland(seed = 1, opts = {}) {
-  const { size: n, worldSize, maxHeight, seaDepth } = { ...DEFAULTS, ...opts };
+  const { size: n, worldSize, maxHeight, seaDepth, course } = { ...DEFAULTS, ...opts };
   const height = new Float32Array(n * n);
-  const shape = shapeOf(seed);
+  const shape = opts.course === 'tutorial' ? tutorialShape() : shapeOf(seed);
   for (let y = 0; y < n; y++) {
     const v = (y / (n - 1)) * 2 - 1;
     for (let x = 0; x < n; x++) {
@@ -234,7 +247,7 @@ export function generateIsland(seed = 1, opts = {}) {
     }
   }
   const filled = fillDepressions(height, n);
-  return { seed, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
+  return { seed, course, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
     summits: summitCells(height, n, shape), axis: { x: shape.ax, y: shape.ay }, long: shape.long };
 }
 

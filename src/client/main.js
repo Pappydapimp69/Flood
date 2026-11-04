@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { generateIsland, stats, fingerprint, findLakes } from '../shared/terrain.js';
+import { generateIsland, stats, fingerprint, findLakes, TUTORIAL as COURSE } from '../shared/terrain.js';
 import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
@@ -455,6 +455,7 @@ function beginRace(seed, raceIds, me, rolled) {
 }
 
 function newRun() {
+  if (tutorial) return newTutorial();
   mode = 'solo';
   // A fresh island every race, unless ?seed pins one.
   const want = Number(params.get('seed')) || 1 + Math.floor(Math.random() * 1_000_000);
@@ -636,6 +637,79 @@ function feed(text) {
   hud.feed.prepend(li);
   while (hud.feed.children.length > 4) hud.feed.lastChild.remove();
   setTimeout(() => li.remove(), 5000);
+}
+
+// ---- The Tutorial's training course ----
+// Its own fixed map (terrain.js TUTORIAL), three bots, and stations down the
+// middle: reach each one's trigger and the race stops, the camera flies to it
+// and a card explains what to do there; gold beacons lead the way.
+const TUT_SIZE = { size: 400, worldSize: 40000 };
+let tcourse = { next: 0, beacons: null };
+const coursePoint = (t, v = 0) => {
+  const T = world.terrain, half = T.worldSize / 2, u = (t * 2 * T.long - T.long) * half;
+  return { x: T.axis.x * u - T.axis.y * v, z: T.axis.y * u + T.axis.x * v };
+};
+const STATIONS = [
+  { key: 'lake', at: COURSE.lake, trig: COURSE.lake - 0.07, title: 'Station 1 · The lake',
+    html: () => 'Straight ahead is a <b>lake</b>. Flow into it: your water pours in and raises it until it spills over the far bank. Cut the outlet and <b>everything that drains through it feeds you</b>. Lakes are the biggest source of water.' },
+  { key: 'unlock:surge', at: COURSE.surge, trig: COURSE.surge - 0.04, unlock: 'surge', title: 'Station 2 · Surge',
+    html: () => `On the flat, water slows down. <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}) adds a 2 s burst of speed on top of what you have. It costs a little water. Out on the real course it unlocks once you hold ${(TUNE.surgeUnlock / 1e6).toFixed(1)}M L; here it's yours now. <b>Use it now.</b>` },
+  { key: 'unlock:gouge', at: COURSE.ridge, trig: COURSE.ridge - 0.05, unlock: 'gouge', title: 'Station 3 · Gouge',
+    html: () => `A <b>rock ridge</b> blocks the run. Its only gap is far off by the left wall. <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}) lets you climb over rises for 3 s. Press it <b>as you reach the ridge</b>. Using either skill puts <b>both</b> on cooldown, so time it. (Real course: it unlocks at ${(TUNE.gougeUnlock / 1e6).toFixed(1)}M L.)` },
+  { key: 'storm', at: COURSE.storm, trig: COURSE.storm - 0.06, storm: true, title: 'Station 4 · A storm',
+    html: () => 'Storms build from water that evaporates off the rivers. Under one, rain pours into <b>your head and your channel</b>. It shrinks as it rains out and drifts as it goes. <b>Steer under it.</b>' },
+  { key: 'finish-run', at: 0.97, trig: 0.88, title: 'Last stretch',
+    html: () => 'The <b>gold beach</b> is the finish: the only one. Get there first. Other rivers can cut your channel and steal your water, and you can steal theirs, so keep your channel deeper.' },
+];
+function newTutorial() {
+  mode = 'solo';
+  const all = [PLAYER, 'bot01', 'bot02', 'bot03'].sort();
+  names = Object.fromEntries(all.filter((id) => id !== PLAYER).map((id, i) => [id, BOT_NAMES[i % BOT_NAMES.length]]));
+  const t = terrain?.seed === COURSE.seed ? terrain : generateIsland(COURSE.seed, { course: 'tutorial', ...TUT_SIZE });
+  beginRace(COURSE.seed, all, PLAYER, createWorld(t, { lava: false })); // no lava on the training course
+  bots = world.rivers.filter((r) => r !== river).map((r) => createBot(world, r));
+  tcourse = { next: 0, beacons: new THREE.Group() };
+  for (const s of STATIONS) {
+    const p = coursePoint(s.at), g = surfaceAt(world, p.x, p.z) * VERT;
+    const b = new THREE.Mesh(new THREE.CylinderGeometry(70, 70, 2400, 16, 1, true),
+      new THREE.MeshBasicMaterial({ color: '#ffcf3a', transparent: true, opacity: 0.35, depthWrite: false, side: THREE.DoubleSide }));
+    b.position.set(p.x, g + 1200, p.z);
+    tcourse.beacons.add(b);
+  }
+  scene.add(tcourse.beacons);
+}
+function clearCourse() {
+  if (!tcourse.beacons) return;
+  scene.remove(tcourse.beacons);
+  tcourse.beacons.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); });
+  tcourse.beacons = null;
+}
+// Each frame: reach a station's trigger and its lesson plays.
+function watchCourse() {
+  if (!tcourse.beacons) return;
+  if (!tutorial || world.terrain.course !== 'tutorial') { clearCourse(); return; }
+  if (!river || river.dropping) return;
+  if (river.finished || river.out) { tutorial = false; return; } // "Race again" after it is a normal race
+  const t = slopeT(world, river.x, river.z);
+  // A beacon stands until you pass its station; the next one pulses.
+  const nextUp = STATIONS.findIndex((s) => s.at > t - 0.01);
+  tcourse.beacons.children.forEach((b, i) => {
+    b.visible = STATIONS[i].at > t - 0.01;
+    b.material.opacity = i === nextUp ? 0.4 + 0.2 * Math.sin(performance.now() / 300) : 0.18;
+  });
+  const s = STATIONS[tcourse.next];
+  if (!s || t < s.trig) return;
+  tcourse.next++;
+  if (coach) coach.stage = tcourse.next;
+  if (s.unlock) { river[`${s.unlock}On`] = true; river.gougeAt = river.surgeAt = world.tick; }
+  const p = coursePoint(s.at);
+  if (s.storm) {
+    // A storm over the station, drifting slowly across it (tutorial-made: not from the sky store).
+    const water = TUNE.stormMaxWater, life = 20 * 70;
+    world.storms.push({ id: world.tick * 4 + 3, x: p.x - 1500, z: p.z, vx: 30, vz: 10, until: world.tick + life, radius: TUNE.stormRadius, water, water0: water, drizzle: water / life });
+  }
+  taught.delete(s.key);
+  teach(s.key, s.title, s.html(), p.x, p.z, s.storm ? 3.2 : 1); // a storm is seen from above its cloud
 }
 
 // Gamepad actions that work outside a race too: menu focus and confirm,
@@ -889,13 +963,13 @@ function advance(inputs) {
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
     } else if (e.type === 'unlock') {
-      if (river && e.river === river.idx) teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `You're big enough for <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
+      if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `You're big enough for <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
       if (river && e.river === river.idx) { showPop(e.skill === 'gouge' ? 'GOUGE unlocked — A / SPACE to boost over a rise' : 'SURGE unlocked — RB / Q for a speed burst'); audio.splash(1); }
     } else if (e.type === 'cloud') {
       // A cloud drains a little every tick: add it up, say it twice a second.
       if (river && e.river === river.idx) {
         if (coach) coach.clouded = true;
-        teach('cloud', 'A rain cloud', 'Inside a cloud its water <b>pours into you</b>, shared equally with anyone else inside. It shrinks and rises as it empties. Water you carry makes you heavier: you fall faster and turn slower.', river.x, river.z);
+        if (river.dropping) teach('cloud', 'A rain cloud', 'Inside a cloud its water <b>pours into you</b>, shared equally with anyone else inside. It shrinks and rises as it empties. Water you carry makes you heavier: you fall faster and turn slower.', river.x, river.z);
         cloudGot += e.amount;
         const now = performance.now();
         if (now - cloudSaidAt > 500) { cloudSaidAt = now; showPop(`+${fmtL(cloudGot)} from a rain cloud`); audio.splash(0.5); }
@@ -1055,10 +1129,10 @@ function caption(key, html) {
 // and a card explains it; A / Space / Enter / a click carries on.
 const lessonEl = document.getElementById('lesson');
 let lesson = null; const lessonQueue = [], taught = new Set();
-function teach(key, title, html, x, z) {
+function teach(key, title, html, x, z, far = 1) {
   if (!tutorial || mode !== 'solo' || taught.has(key)) return;
   taught.add(key);
-  lessonQueue.push({ title, html, x, z });
+  lessonQueue.push({ title, html, x, z, far });
   if (!lesson) nextLesson();
 }
 function nextLesson() {
@@ -1097,9 +1171,13 @@ const TUTORIAL = [
   { drop: true, text: () => `<b>${key('Left stick ↑', '', 'A long drag')}</b> glides faster, <b>${key('↓', '', 'a short one')}</b> slower`, pass: (c) => c.glided || lowPower || !padSeen },
   { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: dive to land sooner, or float to catch clouds`, pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
-  { text: () => `Steer your river with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>`, pass: (c) => c.steered > 8 },
-  { text: () => `<b>${key('Y', 'M', 'MAP')}</b> shows the whole course`, pass: (c) => c.mapped },
-  { text: () => 'Race to the <b>gold beach</b>. The game stops to explain anything new.', pass: (c) => c.secs > 8 },
+  { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
+  { text: () => 'Follow the <b>gold beacons</b> down the course', pass: (c) => c.stage >= 2 },
+  { text: () => `<b>SURGE</b> now: <b>${key('RB', 'Q', 'tap SURGE')}</b>`, pass: (c) => c.surged || c.stage >= 3 },
+  { text: () => 'Follow the beacon to the <b>rock ridge</b>', pass: (c) => c.stage >= 3 },
+  { text: () => `At the ridge: <b>GOUGE</b> with <b>${key('A', 'Space', 'tap GOUGE')}</b>`, pass: (c) => c.gouged || c.stage >= 4 },
+  { text: () => 'Steer <b>under the storm</b>', pass: (c) => river.rained > c.since || c.stage >= 5 },
+  { text: () => 'Race to the <b>gold beach</b>!', pass: () => false },
 ];
 let padSeen = false, tutorial = false, coachSteps = COACH;
 const coachEl = document.getElementById('coach');
@@ -1109,7 +1187,7 @@ function startCoach() {
   try { done ||= !tutorial && localStorage.getItem('flood.coached') === '1'; } catch { /* no storage */ }
   coachSteps = tutorial ? TUTORIAL : COACH;
   taught.clear(); lessonQueue.length = 0; lesson = null; lessonEl.hidden = true;
-  coach = done ? null : { step: 0, since: 0, steered: 0, mapped: false, gouged: false, surged: false, glided: false, fell: false, clouded: false };
+  coach = done ? null : { stage: 0, step: 0, since: 0, steered: 0, mapped: false, gouged: false, surged: false, glided: false, fell: false, clouded: false };
   coachEl.hidden = true;
 }
 function watchCoach(steer) {
@@ -1426,13 +1504,14 @@ renderer.setAnimationLoop(() => {
   showDownhill(now);
   showFlow(now);
   showStick();
+  watchCourse();
   const intro = now < introUntil && !mapView && !!river?.dropping;
   document.body.classList.toggle('intro', intro);
   updateMapLines(now);
   if (lesson && lesson.x !== undefined && !mapView) {
     // A lesson: fly to the spot, high and to the south of it, and look down on it.
     const g = surfaceAt(world, lesson.x, lesson.z) * VERT;
-    const want = new THREE.Vector3(lesson.x + 700, g + 1500, lesson.z + 1700), k = 1 - Math.exp(-frameDt * 3);
+    const f = lesson.far ?? 1, want = new THREE.Vector3(lesson.x + 700 * f, g + 1500 * f, lesson.z + 1700 * f), k = 1 - Math.exp(-frameDt * 3);
     camera.position.lerp(want, k);
     camLook.lerp(new THREE.Vector3(lesson.x, g, lesson.z), k);
     camera.lookAt(camLook);
@@ -1587,7 +1666,7 @@ const pickName = () => {
   return n;
 };
 document.getElementById('play-solo').onclick = () => { tutorial = false; hud.menu.hidden = true; newRun(); };
-document.getElementById('play-tutorial').onclick = () => { tutorial = true; hud.menu.hidden = true; newRun(); };
+document.getElementById('play-tutorial').onclick = () => { tutorial = true; hud.menu.hidden = true; newTutorial(); };
 document.getElementById('play-online').onclick = () => { hud.menu.hidden = true; goOnline(pickName()); };
 if (params.has('online')) { hud.menu.hidden = true; goOnline(params.get('name') ?? ''); }
 else if (params.has('seed') || params.has('solo') || params.has('bots')) { hud.menu.hidden = true; newRun(); }
