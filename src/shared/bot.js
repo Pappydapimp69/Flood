@@ -200,6 +200,8 @@ function botGlide(world, bot) {
   let fast = false;
   for (const c of skyClouds(world)) {
     if (c.low || !(c.water > 0) || c.alt > r.alt + TUNE.cloudDepth) continue;
+    const ax = world.terrain.axis.x, az = world.terrain.axis.y;
+    if ((c.x - r.x) * ax + (c.z - r.z) * az < 0) continue; // behind it: no turning back
     const ticks = Math.max(0, r.alt - c.alt) / (TUNE.dropAlt / TUNE.dropTicks);
     const d = Math.sqrt((c.x - r.x) ** 2 + (c.z - r.z) ** 2), reach = ticks * TUNE.glideSpeed * DT;
     // A crowded cloud costs: every other drop near it counts as 900 m further (they'd bump it there).
@@ -213,14 +215,19 @@ function botGlide(world, bot) {
     const s = Math.abs(cross) < dist * 0.1 ? 0 : cross < 0 ? -1 : 1;
     return fast ? { s, f: 0, g: 1 } : s;
   }
+  // No cloud to chase: sidestep a drop about to hit it, else fly down the
+  // slope to the start line (there's no zone pulling it in any more).
   let near = null, best = Infinity;
   for (const o of world.rivers) {
-    if (o === r || !isRacing(o)) continue;
+    if (o === r || !o.dropping || !isRacing(o)) continue;
     const d = (o.x - r.x) ** 2 + (o.z - r.z) ** 2;
     if (d < best) { best = d; near = o; }
   }
-  if (!near || best > 1500 * 1500) return 0;
-  // Which side of our heading is it on? Turn the other way.
-  const side = (near.x - r.x) * r.dz - (near.z - r.z) * r.dx; // > 0: on the left
-  return side > 0 ? 1 : -1;
+  if (near && best < 450 * 450) {
+    const side = (near.x - r.x) * r.dz - (near.z - r.z) * r.dx; // > 0: on the left
+    return side > 0 ? 1 : -1;
+  }
+  const ax = world.terrain.axis.x, az = world.terrain.axis.y;
+  const cross = r.dx * az - r.dz * ax, dot = r.dx * ax + r.dz * az;
+  return dot > 0.97 ? 0 : cross < 0 ? -1 : 1;
 }

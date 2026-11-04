@@ -205,7 +205,7 @@ await check('lakes start part full and a river skates across without stopping', 
   await page.close();
 });
 
-await check('sky drop: fall with a countdown and a landing ring, steer and hurry, land on the contour', async () => {
+await check('sky drop: fall with a countdown and a landing marker, steer, land on the start line where it crosses', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   await page.goto(`${root}?seed=1&nohint&lite`);
   await until(page, (s) => s.ready, 'ready');
@@ -216,27 +216,38 @@ await check('sky drop: fall with a countdown and a landing ring, steer and hurry
   await page.keyboard.down('ArrowUp');
   await until(page, (s) => s.tick > 60, 'gliding');
   await page.keyboard.up('ArrowLeft');
-  // Steering turned the drop (where it lands is held to the summit ring).
+  // Steering turned the drop (it lands wherever it crosses the start line).
   const h1 = await page.evaluate(() => ({ dx: __flood.river.dx, dz: __flood.river.dz }));
   if (h1.dx * d0.dx + h1.dz * d0.dz > 0.9) throw new Error('steering during the fall did not turn the drop');
   const m = await page.evaluate(() => __flood.marker);
   if (!m) throw new Error('no landing ring');
   if (shotDir) await page.screenshot({ path: `${shotDir}/play-drop.png` });
-  // Skip most of the 30 s fall for everyone, so the test doesn't sit through it.
-  await page.evaluate(() => { for (const r of __flood.world.rivers) if (r.dropping > 20) r.dropping = 20; });
+  // Skip most of the fall for everyone: put each drop a few seconds short of the
+  // start line, straight back from the stretch ahead of it, so the test doesn't sit through it.
+  await page.evaluate(() => {
+    const w = __flood.world, t = w.terrain, n = t.size, ax = t.axis.x, az = t.axis.y;
+    for (const r of w.rivers) {
+      if (!r.dropping) continue;
+      const lat = (x, z) => -x * az + z * ax, v0 = lat(r.x, r.z);
+      let best = w.line.cells[0], bd = Infinity;
+      for (const k of w.line.cells) { const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize, d = Math.abs(lat(kx, kz) - v0); if (d < bd) { bd = d; best = k; } }
+      r.x = ((best % n) / (n - 1) - 0.5) * t.worldSize - ax * 400; r.z = (Math.floor(best / n) / (n - 1) - 0.5) * t.worldSize - az * 400;
+      r.dx = ax; r.dz = az; r.alt = Math.min(r.alt, 300);
+    }
+  });
   await until(page, (s) => !s.dropping && s.points > 0, 'landed');
   await page.keyboard.up('ArrowUp');
   const d1 = await page.evaluate(() => {
     const r = __flood.river, w = __flood.world, n = w.terrain.size, p = r.path[0];
     const k = Math.round((p.z / w.terrain.worldSize + 0.5) * (n - 1)) * n + Math.round((p.x / w.terrain.worldSize + 0.5) * (n - 1));
-    return { dropping: r.dropping, path: r.path.length, inZone: w.dropZone.has(k), x: p.x, z: p.z };
+    return { dropping: r.dropping, path: r.path.length, inZone: w.toBeach[k] <= w.line.L * 1.01, x: p.x, z: p.z };
   });
   if (d1.dropping || !d1.path) throw new Error(`did not land: ${JSON.stringify(d1)}`);
-  if (!d1.inZone) throw new Error(`landed off the start contour: ${JSON.stringify(d1)}`);
+  if (!d1.inZone) throw new Error(`landed short of the start line: ${JSON.stringify(d1)}`);
   await page.close();
 });
 
-await check('touch drop: a drag aims the fall toward it and holds, a long drag dives faster', async () => {
+await check('touch drop: a drag aims the fall toward it and holds', async () => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   await page.goto(`${root}?seed=3&nohint&nointro&lite`);
@@ -244,16 +255,17 @@ await check('touch drop: a drag aims the fall toward it and holds, a long drag d
   const fire = (type, x, y) => page.evaluate(([type, x, y]) => document.querySelector('canvas').dispatchEvent(
     new PointerEvent(type, { pointerId: 9, pointerType: 'touch', clientX: x, clientY: y, bubbles: true })), [type, x, y]);
   // Screen right on the ground when the drag starts: the drop should end up facing it.
-  const right = await page.evaluate(() => { const t = __flood.camera.position.clone(); __flood.camera.getWorldDirection(t); const l = Math.hypot(t.x, t.z); return { x: -t.z / l, z: t.x / l }; });
+  // (A comet turns at most 70 degrees off the slope, so aim up and to the right.)
+  const right = await page.evaluate(() => { const t = __flood.camera.position.clone(); __flood.camera.getWorldDirection(t); const l = Math.hypot(t.x, t.z), fx = t.x / l, fz = t.z / l, rx = -fz, rz = fx; const ax = rx + fx, az = rz + fz, al = Math.hypot(ax, az); return { x: ax / al, z: az / al }; });
   await fire('pointerdown', 195, 600);
-  await fire('pointermove', 245, 600);
+  await fire('pointermove', 245, 550);
   const t0 = (await state(page)).tick;
   await until(page, (s) => s.tick > t0 + 30, '30 ticks of aiming');
   const h = await page.evaluate(() => ({ x: __flood.river.dx, z: __flood.river.dz, stick: document.getElementById('stick').classList.contains('on') }));
   if (!h.stick) throw new Error('no stick drawn under the finger');
   const dot = h.x * right.x + h.z * right.z;
   if (dot < 0.97) throw new Error(`drop did not turn to the drag: facing ${dot.toFixed(2)} of the aim`);
-  await fire('pointerup', 245, 600);
+  await fire('pointerup', 245, 550);
   await ctx.close();
 });
 
