@@ -286,8 +286,12 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   for (let i = 0; i < 4 && (await focusId()) !== 'play-solo'; i++) await tap(12);
   const focused = await focusId();
   if (focused !== 'play-solo') throw new Error(`menu focus on ${focused}`);
-  await tap(0);
-  await until(page, (s) => s.ready && s.tick > 5, 'solo race from the gamepad');
+  // (A slow software frame can miss a whole press, since the pad is read once a
+  // frame: press A again if the race hasn't started, up to three times.)
+  for (let i = 0; i < 3; i++) {
+    await tap(0);
+    try { await until(page, (s) => s.ready && s.tick > 5, 'solo race from the gamepad', 300); break; } catch (e) { if (i === 2) throw e; }
+  }
   const help = await page.evaluate(() => document.getElementById('help').textContent);
   if (!help.startsWith('Controller')) throw new Error(`help text: ${help}`);
   for (const [how, set] of [['stick', (v) => page.evaluate((v) => { __pad.axes[0] = v; }, v)], ['dpad', (v) => button(v < 0 ? 14 : 15, v !== 0)]]) {
@@ -295,9 +299,22 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
     await set(-1);
     // Hold until the sim has run some ticks with it; frames are slow headless.
     let steers = [];
-    for (let i = 0; i < 300 && !steers.includes(-1); i++) { // 30 s: CI's software renderer can stall for seconds
+    for (let i = 0; i < 300 && !steers.some((v) => v !== 0); i++) { // 30 s: CI's software renderer can stall for seconds
       await page.waitForTimeout(100);
       steers = await page.evaluate(() => __flood.steers.slice());
+    }
+    // Falling, the view is top-down and fixed, so left means SCREEN left: the
+    // drop turns until it heads that way (either way round). On the ground it's a left turn.
+    const falling = await page.evaluate(() => __flood.river.dropping > 0);
+    if (falling) {
+      let lean = -1;
+      for (let i = 0; i < 300 && lean < 0.9; i++) {
+        await page.waitForTimeout(100);
+        lean = await page.evaluate(() => { const r = __flood.river, a = __flood.world.terrain.axis; return r.dropping ? r.dx * a.y - r.dz * a.x : 1; }); // heading . screen-left (az, -ax)
+      }
+      await set(0);
+      if (lean < 0.9) throw new Error(`${how} left: the drop heads ${lean.toFixed(2)} toward screen left`);
+      continue;
     }
     await set(0);
     if (!steers.includes(-1)) throw new Error(`${how} left gave ${steers.join('')}`);

@@ -167,7 +167,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (falling: up / down glides faster / slower) · right stick up / down: fall faster / slower · A: gouge (select / race again in menus) · Y: map · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (falling: push where you want to go, all the way to glide fast) · right stick up / down: fall faster / slower · A: gouge (select / race again in menus) · Y: map · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -524,6 +524,7 @@ const camDir = new THREE.Vector2(0, -1);
 let camYaw = 0, lookIdle = 0;
 // The opening shot runs until this time (ms); any key, click or steer skips it.
 let introUntil = 0;
+let lastCamMode = ''; // the camera's current view; a change is a cut
 for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, () => { introUntil = 0; });
 // 1: cuts deeper than you (touching it drains you), -1: shallower (you drain
 // it), 0: too close to call — the same deadband the sim uses.
@@ -568,8 +569,8 @@ function placeTags() {
 const cloudTagPool = [];
 function placeCloudTags() {
   const me = river;
-  const near = mapView || !me || me.dropping ? [] : skyClouds(world)
-    .filter((c) => c.low && c.taken < 0)
+  const near = mapView || !me ? [] : skyClouds(world)
+    .filter((c) => (me.dropping ? !c.low && c.water > 0 && c.alt < me.alt + TUNE.cloudDepth : c.low && c.taken < 0))
     .map((c) => ({ c, d: Math.hypot(c.x - me.x, c.z - me.z) }))
     .filter((o) => o.d < 5000)
     .sort((a, b) => a.d - b.d)
@@ -592,8 +593,12 @@ function placeCloudTags() {
       edge = Math.abs(x) >= 0.91 ? (x > 0 ? ' ▶' : ' ◀') : y > 0 ? ' ▲' : ' ▼';
     }
     el.hidden = false;
-    el.className = 'cloud';
-    el.textContent = `☁ +${Math.round(o.c.water / 1000)}k L · ${(o.d / 1000).toFixed(1)} km${edge}`;
+    // Falling, say how far below you it is: from above, height can't be seen.
+    const dh = me.dropping ? me.alt - o.c.alt : 0, level = me.dropping && Math.abs(dh) <= TUNE.cloudDepth;
+    el.className = level ? 'cloud level' : 'cloud';
+    el.textContent = me.dropping
+      ? `☁ +${Math.round(o.c.water / 1000)}k L · ${level ? 'your height: fly in!' : `${Math.round(dh / 100) * 100} m below`}${edge}`
+      : `☁ +${Math.round(o.c.water / 1000)}k L · ${(o.d / 1000).toFixed(1)} km${edge}`;
     el.style.transform = `translate(${((x + 1) / 2) * innerWidth}px, ${((1 - y) / 2) * innerHeight}px) translate(-50%, -100%)`;
   });
 }
@@ -781,12 +786,14 @@ function handleActions() {
 function sampleSteer() {
   let steer = dbg.forceSteer ?? input.sample();
   let f = river?.dropping ? (dbg.forceFwd ?? input.forward()) : 0;
-  const g = river?.dropping ? input.glide() : 0;
+  let g = river?.dropping ? input.glide() : 0;
   // Falling, a drag aims the drop: it turns toward the dragged direction on
   // screen; a long drag dives faster, a short one glides slower.
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
   if (aim) { steer = aim.s; f = aim.f; }
-  if (coach) { if (f) coach.fell = true; if (g) coach.glided = true; }
+  const pa = river?.dropping && dbg.forceSteer === undefined ? padAim() : null;
+  if (pa) { if (pa.s !== null) steer = pa.s; g = pa.g; }
+  if (coach) { if (f) coach.fell = true; if (g > 0) coach.glided = true; }
   dbg.steers.push(steer);
   watchCoach(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
@@ -828,6 +835,22 @@ function dragAim() {
   // Steering left (-1) turns the heading toward negative cross; within ~6 degrees, hold.
   const s = dot > 0.995 ? 0 : cross < 0 ? -1 : 1;
   return { s, f: len > STICK_FAR ? 1 : 0 };
+}
+
+// Falling, the camera looks straight down with the beach at the top of the
+// screen and never turns (Brain T182: no yaw to make anyone sick), so the left
+// stick / D-pad aims the drop by SCREEN direction: push where you want to go and
+// the drop turns that way; push all the way to glide fast (opticon#E42: map
+// input through the view the player actually sees).
+function padAim() {
+  const v = input.stick();
+  if (!v) return null;
+  const len = Math.hypot(v.x, v.y);
+  if (len < 0.3) return { s: null, g: -1 }; // let go: keep the heading and hover (slow glide) to wait for a cloud
+  const ax = terrain.axis.x, az = terrain.axis.y; // screen up, on the ground (down the slope)
+  const wx = -az * v.x + ax * -v.y, wz = ax * v.x + az * -v.y, wl = Math.hypot(wx, wz) || 1; // screen right is (-az, ax)
+  const cross = river.dx * (wz / wl) - river.dz * (wx / wl), dot = river.dx * (wx / wl) + river.dz * (wz / wl);
+  return { s: dot > 0.995 ? 0 : cross < 0 ? -1 : 1, g: len > 0.85 ? 1 : 0 };
 }
 
 function soloTick() {
@@ -962,6 +985,16 @@ function advance(inputs) {
       if (e.to === river.idx) { tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount); audio.bubble(); }
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
+    } else if (e.type === 'bump') {
+      // Two drops collided: spray where they met, and say what it cost you.
+      const ra = world.rivers[e.a], rb = world.rivers[e.b], en = entries[e.a];
+      if (en) burstSpray(en.spray, e.x, surfaceAt(world, e.x, e.z) * VERT + (ra.alt ?? 0), e.z, 1.4, 50);
+      const mine = river === ra ? [rb, e.lossA, e.lossB] : river === rb ? [ra, e.lossB, e.lossA] : null;
+      if (mine) {
+        showPop(`Bumped ${nameOf(mine[0])}! −${fmtL(mine[1])} (they lost ${fmtL(mine[2])})`);
+        audio.splash(1.3); gougeShakeAt = performance.now() - 200;
+        teach('bump', 'Bumping', 'Drops that collide knock each other off course and both lose water to spray. The one hit harder loses more: <b>ram</b> lighter drops, and dodge heavier ones.', e.x, e.z);
+      }
     } else if (e.type === 'unlock') {
       if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `You're big enough for <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
       if (river && e.river === river.idx) { showPop(e.skill === 'gouge' ? 'GOUGE unlocked — A / SPACE to boost over a rise' : 'SURGE unlocked — RB / Q for a speed burst'); audio.splash(1); }
@@ -1167,8 +1200,8 @@ const COACH = [
   { text: () => `Slow on the flat? <b>SURGE</b> (${key('RB', 'Q', 'tap')}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
 ];
 const TUTORIAL = [
-  { drop: true, text: () => `Turn your falling drop with <b>${key('left stick ← →', '← →', 'a drag left or right')}</b>`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `<b>${key('Left stick ↑', '', 'A long drag')}</b> glides faster, <b>${key('↓', '', 'a short one')}</b> slower`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => `${key('Push the <b>left stick</b> where you want to glide', 'Turn your falling drop with <b>← →</b>', 'Drag toward where you want to glide')}`, pass: (c) => c.steered > 8 },
+  { drop: true, text: () => `${key('Push it <b>all the way</b> to glide fast', '', 'A <b>long drag</b> glides fast')}`, pass: (c) => c.glided || lowPower || !padSeen },
   { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: dive to land sooner, or float to catch clouds`, pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
@@ -1508,12 +1541,20 @@ renderer.setAnimationLoop(() => {
   const intro = now < introUntil && !mapView && !!river?.dropping;
   document.body.classList.toggle('intro', intro);
   updateMapLines(now);
+  // Changing view (map, a lesson, the drop, landing, spectating someone else,
+  // the finish) is a hard CUT, never a camera flight across the island: the
+  // new shot starts already in place (owner: "none of that weird zooming
+  // around"; Brain FILM kernel: a view swap is a cut). Within a view the
+  // camera still eases as it follows.
+  const camMode = lesson && lesson.x !== undefined && !mapView ? `lesson:${lesson.title}` : mapView ? 'map' : intro ? 'intro'
+    : `${focus.dropping ? 'drop' : focus.finished ? 'done' : 'chase'}:${focus.id}`;
+  const cut = camMode !== lastCamMode;
+  lastCamMode = camMode;
   if (lesson && lesson.x !== undefined && !mapView) {
-    // A lesson: fly to the spot, high and to the south of it, and look down on it.
-    const g = surfaceAt(world, lesson.x, lesson.z) * VERT;
-    const f = lesson.far ?? 1, want = new THREE.Vector3(lesson.x + 700 * f, g + 1500 * f, lesson.z + 1700 * f), k = 1 - Math.exp(-frameDt * 3);
-    camera.position.lerp(want, k);
-    camLook.lerp(new THREE.Vector3(lesson.x, g, lesson.z), k);
+    // A lesson: a still shot over the spot, high and to the south of it, looking down on it.
+    const g = surfaceAt(world, lesson.x, lesson.z) * VERT, f = lesson.far ?? 1;
+    camera.position.set(lesson.x + 700 * f, g + 1500 * f, lesson.z + 1700 * f);
+    camLook.set(lesson.x, g, lesson.z);
     camera.lookAt(camLook);
   } else if (mapView) {
     controls.update();
@@ -1529,6 +1570,24 @@ renderer.setAnimationLoop(() => {
     const lx = tx + ax * (2500 + 1500 * t), lz = tz + az * (2500 + 1500 * t);
     camera.lookAt(lx, th + 1500 * (1 - t), lz);
     camTarget.set(tx, th, tz);
+  } else if (focus.dropping) {
+    // Falling: high over the drop, looking almost straight down, the beach at
+    // the top of the screen. It moves with the drop but never turns (no yaw:
+    // Brain T182). A slight lean ahead keeps "up" defined and shows a little
+    // depth; clouds below read their height from the tags (seven#E52: a view
+    // from above hides height, so say it).
+    const ax = terrain.axis.x, az = terrain.axis.y, H = 4800, lean = 0.08; // low enough that the ground visibly rushes past
+    const k = cut ? 1 : 1 - Math.exp(-frameDt * 4);
+    camera.position.lerp(new THREE.Vector3(fx - ax * H * lean, fy + H, fz - az * H * lean), k);
+    camTarget.lerp(new THREE.Vector3(fx + ax * 300, fy - 400, fz + az * 300), k);
+    camera.lookAt(camLook.copy(camTarget));
+    camDir.set(ax, az); // landing hands the chase camera this facing
+    camYaw = 0;
+    // A bump jolts the view.
+    const jolt = gougeShakeAt ? Math.max(0, 1 - (now - gougeShakeAt) / 500) : 0;
+    if (jolt > 0 && settings.shake) { camera.position.x += (Math.random() - 0.5) * 140 * jolt; camera.position.z += (Math.random() - 0.5) * 140 * jolt; }
+    const fov = baseFov * 0.8; // a narrower lens from higher up: less perspective, closer to a true top-down map
+    if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * k; camera.updateProjectionMatrix(); }
   } else {
     // Chase camera. It must never fight the player: it follows the river's
     // course over the last few hundred metres (not the head's tick-to-tick heading,
@@ -1539,6 +1598,7 @@ renderer.setAnimationLoop(() => {
     if (look) { camYaw = Math.max(-Math.PI, Math.min(Math.PI, camYaw + look * frameDt * 2.2)); lookIdle = 0; }
     else if ((lookIdle += frameDt) > 1.5) camYaw *= Math.exp(-frameDt * 1.5);
     const course = courseOf(focus, fx, fz);
+    if (cut) { camDir.set(course.x, course.y).normalize(); camYaw = 0; } // a new shot starts behind the river
     const ang = Math.atan2(camDir.x * course.y - camDir.y * course.x, camDir.x * course.x + camDir.y * course.y);
     // Falling, the camera swings with every turn so aiming reads at once.
     const falling = !!focus.dropping;
@@ -1562,19 +1622,19 @@ renderer.setAnimationLoop(() => {
       const g = surfaceAt(world, fx - view.x * back * f, fz - view.y * back * f) * VERT;
       want.y = Math.max(want.y, g + 120 + 220 * f);
     }
-    const kXZ = 1 - Math.exp(-frameDt * 5);
+    const kXZ = cut ? 1 : 1 - Math.exp(-frameDt * 5);
     camera.position.x += (want.x - camera.position.x) * kXZ;
     camera.position.z += (want.z - camera.position.z) * kXZ;
-    const kY = 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
+    const kY = cut ? 1 : 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
     camera.position.y += (want.y - camera.position.y) * kY;
     camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
     const ahead = falling ? 600 : done ? 2200 : 380 + 80 * sz;
-    camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), 1 - Math.exp(-frameDt * 6));
+    camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), cut ? 1 : 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
     // Power: the view widens with speed, and a big, fast river shakes it.
     const fast = falling || done ? 0 : Math.min(1, (focus.speed ?? 0) / 260);
     const fov = baseFov * (1 + 0.22 * fast);
-    if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * (1 - Math.exp(-frameDt * 3)); camera.updateProjectionMatrix(); }
+    if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * (cut ? 1 : 1 - Math.exp(-frameDt * 3)); camera.updateProjectionMatrix(); }
     const jolt = gougeShakeAt ? Math.max(0, 1 - (now - gougeShakeAt) / 500) : 0;
     const shake = falling || done ? 0 : Math.max(Math.min(18, 14 * Math.max(0, sz - 1) * fast + 3 * fast * fast), 45 * jolt * jolt);
     if (shake > 0.5 && settings.shake) {
@@ -1651,12 +1711,18 @@ const splash = document.getElementById('splash');
 // The studio card shows from page load (over the load itself); a direct start skips it.
 const studio = document.getElementById('studio');
 if (params.has('online') || params.has('seed') || params.has('solo') || params.has('bots')) studio.hidden = true;
+let splashLeftAt = -1e9;
 function leaveSplash() {
   if (splash.hidden) return;
   splash.hidden = true;
+  splashLeftAt = performance.now();
   audio.music();
   hud.menu.hidden = false;
-  document.getElementById('play-solo').focus();
+  // New players land on the Tutorial; anyone who has played lands on Play solo.
+  let played = false;
+  try { played = localStorage.getItem('flood.coached') === '1'; } catch { /* no storage */ }
+  const first = document.getElementById(played ? 'play-solo' : 'play-tutorial');
+  first.focus(); markSel(first);
 }
 const nameBox = document.getElementById('name');
 try { nameBox.value = localStorage.getItem('flood.name') ?? ''; } catch { /* no storage */ }
@@ -1665,8 +1731,24 @@ const pickName = () => {
   try { localStorage.setItem('flood.name', n); } catch { /* no storage */ }
   return n;
 };
-document.getElementById('play-solo').onclick = () => { tutorial = false; hud.menu.hidden = true; newRun(); };
-document.getElementById('play-tutorial').onclick = () => { tutorial = true; hud.menu.hidden = true; newTutorial(); };
+// The selected menu button is marked by a class, not :focus, so it shows even
+// when the window itself isn't focused (a pad user who never clicked).
+const markSel = (el) => { for (const b of hud.menu.querySelectorAll('button')) b.classList.toggle('sel', b === el); };
+hud.menu.addEventListener('focusin', (e) => { if (e.target.tagName === 'BUTTON') markSel(e.target); });
+hud.menu.addEventListener('mouseover', (e) => { if (e.target.tagName === 'BUTTON') e.target.focus(); });
+// Arrow keys move through the menu too (the pad's D-pad already does).
+addEventListener('keydown', (e) => {
+  if (hud.menu.hidden || (e.code !== 'ArrowUp' && e.code !== 'ArrowDown')) return;
+  const btns = [...hud.menu.querySelectorAll('button:not([hidden])')];
+  const i = btns.indexOf(document.activeElement);
+  btns[i < 0 ? 0 : (i + (e.code === 'ArrowDown' ? 1 : btns.length - 1)) % btns.length].focus();
+  e.preventDefault();
+});
+const fresh = () => performance.now() - splashLeftAt < 500; // the press that left the splash
+document.getElementById('play-solo').onclick = () => {
+  if (fresh()) return; tutorial = false; hud.menu.hidden = true; newRun(); };
+document.getElementById('play-tutorial').onclick = () => {
+  if (fresh()) return; tutorial = true; hud.menu.hidden = true; newTutorial(); };
 document.getElementById('play-online').onclick = () => { hud.menu.hidden = true; goOnline(pickName()); };
 if (params.has('online')) { hud.menu.hidden = true; goOnline(params.get('name') ?? ''); }
 else if (params.has('seed') || params.has('solo') || params.has('bots')) { hud.menu.hidden = true; newRun(); }
@@ -1685,4 +1767,5 @@ Object.defineProperties(dbg, {
   river: { get: () => river },
   focus: { get: () => focus },
   camYaw: { get: () => camYaw },
+  cam: { get: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z, tx: camTarget.x, ty: camTarget.y, tz: camTarget.z, fov: camera.fov }) },
 });

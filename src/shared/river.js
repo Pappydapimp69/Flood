@@ -137,8 +137,18 @@ export const TUNE = {
   stormMaxWater: 5_000_000, // ...carrying at most this much, rained out until it's empty
   cloudWater: [150_000, 450_000],
   slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
-  glideSpeed: 260, // m/s across the ground while falling (left stick: x0.4 slow, x1.8 fast)
+  glideSpeed: 260, // m/s across the ground while falling (stick all the way: x1.8, stick let go: x0.4)
   settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
+  // Bumps between falling drops: touching (within bumpRadius across and
+  // bumpDepth up or down) and closing, they knock each other off course and
+  // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
+  bumpRadius: 220, // metres
+  bumpDepth: 200, // metres of height
+  bumpKnock: 1.4, // knock speed per m/s of closing speed, shared by weight
+  bumpDecay: 0.88, // knock left after each tick
+  bumpLoss: 0.02, // share of volume lost to a knock as fast as the base glide (head-on at full glide: about 4%)
+  bumpLossMax: 0.08, // most of its volume a drop can lose to one bump
+  bumpCool: 20, // ticks before the same two drops can bump again
   zoneSlack: 2400, // metres a falling drop may stray from the landing rings: wide enough to glide to another mountain's
   glideTurn: 0.16, // radians per tick while falling: a full circle in about 2 s
   startElevation: 0.91, // starts ring each summit cone this far up its peak
@@ -536,7 +546,10 @@ function glide(world, r, steer, fwd, g = 0) {
   }
   const v = TUNE.glideSpeed * (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g);
   const heavy = 1 + TUNE.heavyFall * Math.max(0, r.size - 1); // cloud water makes a drop heavier: it falls faster
-  const p = keepInZone(world, r.x + r.dx * v * DT, r.z + r.dz * v * DT);
+  r.glideV = v;
+  const kx = r.kx ?? 0, kz = r.kz ?? 0; // a bump's knock, fading
+  r.kx = kx * TUNE.bumpDecay; r.kz = kz * TUNE.bumpDecay;
+  const p = keepInZone(world, r.x + (r.dx * v + kx) * DT, r.z + (r.dz * v + kz) * DT);
   r.x = p.x;
   r.z = p.z;
   // Dive to land sooner (a head start), or float to stay up for the clouds.
@@ -773,6 +786,7 @@ export function step(world, inputs) {
     if (!isRacing(r)) continue;
     moveRiver(world, r, readInput(inputs?.get(r.id)));
   }
+  dropBumps(world);
   dropClouds(world);
   waterCycle(world);
   resolveContacts(world);
@@ -1217,6 +1231,42 @@ export function heatFront(world) {
 // Drop clouds this tick: each drains into every river inside it, equally, at
 // most water0/cloudDrain a tick, shrinking as it empties and rising as it
 // lightens. Once every river has landed, what's left goes into the sky.
+// Falling drops that touch and are closing knock each other apart: the
+// closing speed, split by weight (a heavier drop is pushed less), becomes a
+// fading sideways knock, and each loses water to spray (into the sky store) in
+// proportion to how hard it was knocked. Pairs in id order, so the result never
+// depends on the order rivers were added.
+function dropBumps(world) {
+  const falling = world.rivers.filter((r) => isRacing(r) && r.dropping).sort(byId);
+  const bumps = (world.bumps ??= new Map());
+  for (let i = 0; i < falling.length; i++) for (let j = i + 1; j < falling.length; j++) {
+    const a = falling[i], b = falling[j];
+    const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
+    if (d > TUNE.bumpRadius || Math.abs(a.alt - b.alt) > TUNE.bumpDepth) continue;
+    const key = `${a.id}|${b.id}`;
+    if (world.tick < (bumps.get(key) ?? -1)) continue;
+    const nx = d > 1e-6 ? dx / d : 1, nz = d > 1e-6 ? dz / d : 0;
+    const va = a.glideV ?? TUNE.glideSpeed, vb = b.glideV ?? TUNE.glideSpeed;
+    const close = (a.dx * va + (a.kx ?? 0) - b.dx * vb - (b.kx ?? 0)) * nx + (a.dz * va + (a.kz ?? 0) - b.dz * vb - (b.kz ?? 0)) * nz;
+    if (close <= 0) continue; // drifting apart already
+    bumps.set(key, world.tick + TUNE.bumpCool);
+    const ma = Math.max(0.2, a.size), mb = Math.max(0.2, b.size);
+    const ka = close * TUNE.bumpKnock * (mb / (ma + mb)), kb = close * TUNE.bumpKnock * (ma / (ma + mb));
+    a.kx = (a.kx ?? 0) - nx * ka; a.kz = (a.kz ?? 0) - nz * ka;
+    b.kx = (b.kx ?? 0) + nx * kb; b.kz = (b.kz ?? 0) + nz * kb;
+    // Water lost to spray: the harder knocked loses more, and the one rammed
+    // more than the one ramming (x1.5 for a sitting target, x0.5 for the
+    // rammer, x1 each head-on). It goes up into the sky store.
+    const ca = Math.max(0, (a.dx * va) * nx + (a.dz * va) * nz), cb = Math.max(0, -((b.dx * vb) * nx + (b.dz * vb) * nz));
+    const ramA = ca + cb > 0 ? ca / (ca + cb) : 0.5;
+    const lose = (r, k, ram) => Math.min(r.volume * TUNE.bumpLossMax, r.volume * TUNE.bumpLoss * (k / TUNE.glideSpeed) * (1.5 - ram));
+    const la = lose(a, ka, ramA), lb = lose(b, kb, 1 - ramA);
+    grow(a, -la); grow(b, -lb);
+    world.sky = (world.sky ?? 0) + la + lb;
+    world.events.push({ type: 'bump', a: a.idx, b: b.idx, lossA: la, lossB: lb, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, tick: world.tick });
+  }
+}
+
 function dropClouds(world) {
   const clouds = world.clouds;
   if (!clouds) return;

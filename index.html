@@ -129,6 +129,7 @@
     #banner .record { display: block; font-size: 13px; opacity: 0.85; margin-top: 4px; }
     #banner .record em { display: block; color: #ffcf3a; font-style: normal; font-weight: 800; }
     #tags div.cloud { background: #e9f3ffe6; color: #10303d; font-weight: 700; }
+    #tags div.cloud.level { background: #ffcf3a; color: #062430; }
     #tags div.lake.dry { background: #7a6a45d9; }
     #tags div.lake.mine { background: #2a8f6fd9; }
     #tags div.drop { background: none; font-size: 11px; text-shadow: 0 1px 3px #000c; border-bottom: 1px solid #fff9; border-radius: 0; }
@@ -151,8 +152,12 @@
     #menu p { margin: 0 0 4px; color: #cfe8f2; }
     #menu input, #menu button { font: 600 17px system-ui, sans-serif; padding: 12px; border-radius: 10px; border: 0; }
     #menu input { background: #eaf5fb; color: #10303d; text-align: center; }
-    #menu button { background: #45d2ff; color: #062430; cursor: pointer; }
-    #menu button.alt { background: transparent; color: #eefaff; outline: 2px solid #45d2ff88; }
+    /* Every menu button looks the same until it's the selected one: then it's gold, bigger and marked ▶. */
+    #menu button { background: #1b5a6e; color: #eefaff; cursor: pointer; outline: 2px solid #45d2ff66; transition: transform 0.12s, background 0.12s; }
+    #menu button:hover { background: #24748c; }
+    #menu button.sel { background: #ffcf3a; color: #062430; outline: 3px solid #fff; transform: scale(1.05); }
+    #menu button.sel::before { content: "▶  "; }
+    #menu small.nav { color: #9fc4d2; font-size: 13px; }
     #studio { position: fixed; inset: 0; z-index: 30; display: grid; place-content: center; text-align: center; background: #05080c;
       color: #f2f6fa; font: 16px system-ui, sans-serif; pointer-events: none; animation: studio 2.8s ease-in-out forwards; }
     #studio[hidden] { display: none; }
@@ -231,7 +236,8 @@
     <input id="name" maxlength="12" placeholder="Your name" autocomplete="nickname" hidden>
     <button id="play-online" hidden>Play online</button>
     <button id="play-solo">Play solo vs bots</button>
-    <button id="play-tutorial" class="alt">Tutorial</button>
+    <button id="play-tutorial">Tutorial · learn to play</button>
+    <small class="nav">↑ ↓ to choose · A / Enter to start</small>
   </div>
   <div id="fallback" hidden></div>
   <script type="module" src="./src/client/main.js"></script>
