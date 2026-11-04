@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes, TUTORIAL as COURSE } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, startLine, pastLine, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, VERT } from './terrainMesh.js';
@@ -117,7 +117,7 @@ const zoneDots = new THREE.Points(new THREE.BufferGeometry(), new THREE.PointsMa
 }));
 zoneDots.renderOrder = 2;
 function buildZoneDots() {
-  const n = terrain.size, cells = [...dropZone(world)], pos = new Float32Array(cells.length * 3);
+  const n = terrain.size, cells = startLine(world).cells, pos = new Float32Array(cells.length * 3); // the start line
   cells.forEach((k, i) => {
     const x = ((k % n) / (n - 1) - 0.5) * W, z = (Math.floor(k / n) / (n - 1) - 0.5) * W;
     pos.set([x, surfaceAt(world, x, z) * VERT + 25, z], i * 3);
@@ -465,7 +465,7 @@ function beginRace(seed, raceIds, me, rolled) {
   scene.add(rocks);
   lava = buildLava(world);
   scene.add(trees, lava);
-  if (river?.dropping) highlightZone(terrainMesh, dropZone(world), true);
+  if (river?.dropping) highlightZone(terrainMesh, startLine(world).set, true);
   hud.banner.hidden = true;
   hud.feed.textContent = '';
   audio.track('race');
@@ -961,7 +961,7 @@ function advance(inputs) {
       const en = entries[e.river], lr = world.rivers[e.river];
       if (en) burstSpray(en.spray, lr.x, surfaceAt(world, lr.x, lr.z) * VERT, lr.z, 1.2, 70);
       if (river && e.river === river.idx) {
-        highlightZone(terrainMesh, dropZone(world), false); audio.splash(1.2);
+        highlightZone(terrainMesh, startLine(world).set, false); audio.splash(1.2);
         teach('beach', 'The finish', 'You landed, and now you are a <b>river</b>. Race downhill to <b>this gold beach</b>: it is the only finish. Other beaches just carry you here on the current.', world.beachAt.x, world.beachAt.z);
         teach('ribbon', 'Your route', 'The <b>white ribbon</b> ahead of you shows where your water will run if you hold this heading. Steer to change it.', lr.x, lr.z);
       }
@@ -1224,7 +1224,7 @@ const COACH = [
 const TUTORIAL = [
   { drop: true, text: () => `${key('Push the <b>left stick</b> where you want to glide', 'Turn your falling drop with <b>← →</b>', 'Drag toward where you want to glide')}`, pass: (c) => c.steered > 8 },
   { drop: true, text: () => `${key('Push it <b>all the way</b> to glide fast', '', 'A <b>long drag</b> glides fast')}`, pass: (c) => c.glided || lowPower || !padSeen },
-  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: dive to land sooner, or float to catch clouds`, pass: (c) => c.fell },
+  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: dive or float to reach a cloud's height`, pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
   { text: () => 'Follow the <b>gold beacons</b> down the course', pass: (c) => c.stage >= 2 },
@@ -1423,13 +1423,11 @@ function showMarker(now, hx, hy, hz) {
   markerAt = now;
   const left = river.dropping / TICK_HZ;
   const n = terrain.size;
-  // Fly the rest of the fall on this heading, held inside the landing ring as the sim does.
+  // Fly on straight on this heading until it crosses the start line: that's where it touches down.
   let q = { x: river.x, z: river.z };
-  const stepM = (TUNE.glideSpeed * left) / 30;
-  for (let i = 0; i < 30; i++) q = keepInZone(world, q.x + river.dx * stepM, q.z + river.dz * stepM, TUNE.zoneSlack + TUNE.glideSpeed * left * (1 - (i + 1) / 30));
-  const px = q.x, pz = q.z;
-  const k = landingCell(world, px, pz);
-  const x = ((k % n) / (n - 1) - 0.5) * W, z = (Math.floor(k / n) / (n - 1) - 0.5) * W;
+  const stepM = (river.glideV ?? TUNE.glideSpeed) * DT * 4;
+  for (let i = 0; i < 400 && !pastLine(world, q.x, q.z); i++) q = { x: q.x + river.dx * stepM, z: q.z + river.dz * stepM };
+  const px = q.x, pz = q.z, x = px, z = pz;
   const gy = surfaceAt(world, x, z) * VERT;
   marker.position.set(x, gy + 30, z);
   marker.userData.sc = 250 + 900 * Math.min(1, left / 10); // shrinks as touchdown nears
@@ -1445,7 +1443,7 @@ function showMarker(now, hx, hy, hz) {
   pos.needsUpdate = true;
   course.geometry.computeBoundingSphere();
   course.computeLineDistances();
-  dbg.marker = { x, z, k };
+  dbg.marker = { x, z };
 }
 
 let last = performance.now(), sendAcc = 0;
@@ -1605,7 +1603,7 @@ renderer.setAnimationLoop(() => {
     // looking down the slope (it never turns with the drop: no yaw, Brain T182),
     // so the clouds ahead sit at their true height beside you and the ground
     // shadows (yours and theirs) show where you are over it.
-    const ax = terrain.axis.x, az = terrain.axis.y, back = 1500, up = 520;
+    const ax = terrain.axis.x, az = terrain.axis.y, back = 1900, up = 700;
     const k = cut ? 1 : 1 - Math.exp(-frameDt * 4);
     camera.position.lerp(new THREE.Vector3(fx - ax * back, fy + up, fz - az * back), k);
     camTarget.lerp(new THREE.Vector3(fx + ax * 1100, fy - 300, fz + az * 1100), k);
@@ -1698,7 +1696,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · drag far to dive: land sooner · fly through clouds for water' : '← → steer · ↑ dive to land sooner · ↓ float to catch clouds · fly through a cloud for water')
+  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · you land where you cross the start line · fly through clouds for water' : '← → steer · you land where you cross the start line · ↑ ↓ dive or float to a cloud\'s height')
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`

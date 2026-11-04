@@ -121,6 +121,11 @@ export const TUNE = {
   // The drop comes in like a comet: it starts this share of a steady glide's
   // run behind its start spot, so flying straight lands it there on time.
   cometRun: 1,
+  // The start line: every course cell this far from the beach by water (the fair
+  // cells' median), so wherever a drop crosses it, the race ahead is the same length.
+  lineTol: 0.004, // share of that distance either side drawn as the line
+  ceilSlope: 1.3, // highest a drop can be: this many metres up per metre still to go to the line
+  floorGap: 60, // lowest: this far over the ground, easing to 0 in the last 1.5 km
   cloudSpread: 4500, // metres either side of the comet path the first clouds sit; they close in toward the start line
   diveRate: 1.6, // ...diving falls up to this much faster (about 12 s)...
   floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
@@ -131,7 +136,7 @@ export const TUNE = {
   cloudRadius: 500, // metres across the sky...
   cloudDepth: 400, // ...and this far above or below its height
   cloudDrain: 50, // a drop cloud drains in this many ticks with a river inside, shared equally by all inside
-  cloudLift: 1500, // metres a drop cloud rises as it empties (lighter, it floats up into slower fallers' way)
+  cloudLift: 0, // metres a drop cloud rises as it empties (none: clouds stay where you saw them) (lighter, it floats up into slower fallers' way)
   heavyFall: 0.5, // falling faster per unit of size gained from clouds...
   // Water cycle: the source pump replaces what a channel loses to evaporation and
   // seepage (so a river's volume holds), and those losses feed the sky and the ground.
@@ -141,8 +146,7 @@ export const TUNE = {
   stormMaxWater: 5_000_000, // ...carrying at most this much, rained out until it's empty
   cloudWater: [150_000, 450_000],
   slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
-  glideSpeed: 260, // m/s across the ground while falling (stick all the way: x1.8, stick let go: x0.4)
-  settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
+  glideSpeed: 150, // m/s across the ground while falling (stick all the way: x1.8, stick let go: x0.4)
   // Bumps between falling drops: touching (within bumpRadius across and
   // bumpDepth up or down) and closing, they knock each other off course and
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
@@ -155,7 +159,7 @@ export const TUNE = {
   bumpLossMax: 0.08, // most of its volume a drop can lose to one bump
   bumpCool: 40, // ticks before the same two drops can bump again
   zoneSlack: 2400, // metres a falling drop may stray from the landing rings: wide enough to glide to another mountain's
-  glideTurn: 0.16, // radians per tick while falling: a full circle in about 2 s
+  glideTurn: 0.08, // radians per tick while falling: a full circle in about 4 s
   startElevation: 0.91, // starts ring each summit cone this far up its peak
   startTolerance: 0.006, // starts within ±0.6% of the peak's height of each other
   fairReach: 0.025, // and within ±2.5% of the same route length to the sea // +- share of the peak
@@ -543,8 +547,17 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     river.dx = world.terrain.axis.x; river.dz = world.terrain.axis.y;
     // A comet: it comes in from behind the mountains, a steady glide's run
     // back from its start spot, so flying straight brings it down there.
-    const run = cometRun();
-    river.x -= river.dx * run; river.z -= river.dz * run;
+    // It starts a glide's run straight back from the stretch of the start line
+    // ahead of its spot, so flying straight brings every drop down in the same time.
+    const run = cometRun(), t = world.terrain, n = t.size, ax = river.dx, az = river.dz;
+    const lat = (x, z) => -x * az + z * ax, v0 = lat(at.x, at.z);
+    let best = -1, bd = Infinity;
+    for (const k of startLine(world).cells) {
+      const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize, d = Math.abs(lat(kx, kz) - v0);
+      if (d < bd || (d === bd && k < best)) { bd = d; best = k; }
+    }
+    const bx = best >= 0 ? ((best % n) / (n - 1) - 0.5) * t.worldSize : at.x, bz = best >= 0 ? (Math.floor(best / n) / (n - 1) - 0.5) * t.worldSize : at.z;
+    river.x = bx - ax * run; river.z = bz - az * run;
   }
   return river;
 }
@@ -558,32 +571,54 @@ function glide(world, r, steer, fwd, g = 0) {
     r.dx = dx; r.dz = dz;
     normalize(r);
   }
+  // A comet keeps coming in: at most 70 degrees off straight down the slope, so it always reaches the line.
+  {
+    const ax = world.terrain.axis.x, az = world.terrain.axis.y, MAXC = 0.342; // cos 70
+    if (r.dx * ax + r.dz * az < MAXC) {
+      const side = r.dx * az - r.dz * ax < 0 ? -1 : 1, sn = Math.sqrt(1 - MAXC * MAXC);
+      r.dx = ax * MAXC + az * sn * side; r.dz = az * MAXC - ax * sn * side;
+    }
+  }
   const v = TUNE.glideSpeed * (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g);
   const heavy = 1 + TUNE.heavyFall * Math.max(0, r.size - 1); // cloud water makes a drop heavier: it falls faster
   r.glideV = v;
   const kx = r.kx ?? 0, kz = r.kz ?? 0; // a bump's knock, fading
   r.kx = kx * TUNE.bumpDecay; r.kz = kz * TUNE.bumpDecay;
-  // Held within reach of the start line: the zone is as wide as the glide still to come (a funnel to it).
-  const p = keepInZone(world, r.x + (r.dx * v + kx) * DT, r.z + (r.dz * v + kz) * DT, TUNE.zoneSlack + r.dropping * TUNE.glideSpeed * DT);
-  r.x = p.x;
-  r.z = p.z;
-  // Dive to land sooner (a head start), or float to stay up for the clouds.
+  // It goes exactly where it's flown: no zone, no easing onto a spot. Only the
+  // walls of the course stop it (the scenery beside it is never flown into or landed on).
+  let nx = r.x + (r.dx * v + kx) * DT, nz = r.z + (r.dz * v + kz) * DT;
+  const t = world.terrain, line = startLine(world);
+  const offCourse = (x, z) => t.mask?.[cellIndex(t, x, z)] === 0 && slopeT(world, x, z) > -0.03; // beside the course (behind it is where comets come in)
+  if (offCourse(nx, nz)) {
+    // Against the course wall: slide along it toward the nearest stretch of the line.
+    const n = t.size;
+    let best = -1, bd = Infinity;
+    for (const k of line.cells) { const d2 = (((k % n) / (n - 1) - 0.5) * t.worldSize - r.x) ** 2 + ((Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize - r.z) ** 2; if (d2 < bd || (d2 === bd && k < best)) { bd = d2; best = k; } }
+    if (best >= 0) {
+      const tx = ((best % n) / (n - 1) - 0.5) * t.worldSize - r.x, tz = (Math.floor(best / n) / (n - 1) - 0.5) * t.worldSize - r.z, tl = Math.hypot(tx, tz) || 1;
+      const m = Math.min(tl, v * DT);
+      nx = r.x + (tx / tl) * m; nz = r.z + (tz / tl) * m;
+    } else { nx = r.x; nz = r.z; }
+  }
+  r.x = nx; r.z = nz;
+  // Height is for the clouds: dive or float between a floor (just over the
+  // ground) and a ceiling that closes in, so the drop meets the ground right at the line.
+  const d = toLine(world, r.x, r.z), near = Math.min(1, d / 1500);
+  const gnd = surfaceAt(world, r.x, r.z, r.idx) - skyBase(world); // the ground under it, from the start line's height
+  const floor = gnd + TUNE.floorGap * near, ceil = Math.max(floor, d * TUNE.ceilSlope + gnd * (1 - near));
   const rate = (TUNE.dropAlt / TUNE.dropTicks) * (fwd > 0 ? 1 + TUNE.diveRate * fwd : 1 + TUNE.floatRate * fwd) * heavy;
-  r.alt = Math.max(0, r.alt - rate);
-  r.dropping = r.alt > 0 ? Math.max(1, Math.ceil(r.alt / rate)) : 1; // ticks left at the rate it's falling now
+  r.alt = Math.min(ceil, Math.max(floor, r.alt - rate));
+  const straight = Math.max(0, (line.t - slopeT(world, r.x, r.z)) * 2 * t.long * (t.worldSize / 2)); // flight distance to the line
+  r.dropping = Math.max(1, Math.ceil(straight / (TUNE.glideSpeed * DT))); // ticks to the line at the base glide (the HUD's countdown)
   // Inside a drop cloud: it drains into every river inside, equally (see dropClouds).
   for (const c of skyClouds(world)) {
     if (c.low || c.water <= 0 || (c.x - r.x) ** 2 + (c.z - r.z) ** 2 > (c.radius ?? TUNE.cloudRadius) ** 2 || Math.abs(c.alt - r.alt) > TUNE.cloudDepth) continue;
     (c.inside ??= []).push(r);
   }
-  // The last seconds ease the drop onto the fair spot it will touch down on.
-  if (r.dropping <= TUNE.settleTicks) {
-    const t = world.terrain, n = t.size, k = landingSpot(world, r);
-    const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
-    r.x += (kx - r.x) / r.dropping;
-    r.z += (kz - r.z) / r.dropping;
-  }
-  if (r.alt <= 0) land(world, r);
+  // Crossing the line, it touches down right where it is (or, never having
+  // found it, after three falls' time: a safety net, not a rule).
+  r.fallT = (r.fallT ?? 0) + 1;
+  if (pastLine(world, r.x, r.z) || r.fallT > 3 * TUNE.dropTicks) land(world, r);
 }
 
 // The rain clouds over the summits, seeded so every machine has the same sky:
@@ -605,7 +640,7 @@ export function skyClouds(world) {
       id,
       x: sx - ax * back - az * side,
       z: sz - az * back + ax * side,
-      alt: Math.max(300, TUNE.dropAlt * (1 - p) + (rng() - 0.5) * 300),
+      alt: Math.max(150, back * (0.3 + 0.9 * rng())), // anywhere a drop can reach there: dive or float to it
       water: TUNE.cloudWater[0] + rng() * (TUNE.cloudWater[1] - TUNE.cloudWater[0]),
       taken: -1,
     };
@@ -654,6 +689,30 @@ export function keepInZone(world, x, z, slack = TUNE.zoneSlack) {
   return { x: cx + (dx * slack) / d, z: cz + (dz * slack) / d };
 }
 
+// The start line: course cells whose water route to the beach is the fair
+// cells' median (Brain flood#E14: a fixed tolerance, not one that widens to fit).
+export function startLine(world) {
+  if (world.line) return world.line;
+  const t = world.terrain, fair = spawnBand(world).cells, reach = fair.map((k) => world.toBeach[k]).sort((a, b) => a - b);
+  const L = reach[reach.length >> 1], tol = L * TUNE.lineTol, cells = [];
+  for (let k = 0; k < t.size * t.size; k++) if (t.mask?.[k] !== 0 && t.filled[k] > SEA_LEVEL && Math.abs(world.toBeach[k] - L) <= tol) cells.push(k);
+  const n = t.size, ts = cells.map((k) => slopeT(world, ((k % n) / (n - 1) - 0.5) * t.worldSize, (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize)).sort((a, b) => a - b);
+  world.line = { L, cells, set: new Set(cells), t: ts[ts.length >> 1] ?? 0.15 };
+  return world.line;
+}
+// Is (x, z) on or past the start line, on the course?
+export function pastLine(world, x, z) {
+  const t = world.terrain, k = cellIndex(t, x, z);
+  const line = startLine(world);
+  return t.mask?.[k] !== 0 && t.filled[k] > SEA_LEVEL && world.toBeach[k] <= line.L * (1 + TUNE.lineTol); // anywhere on the drawn line counts
+}
+// Metres still to go to the start line: by water on the course, along the slope elsewhere.
+export function toLine(world, x, z) {
+  const t = world.terrain, k = cellIndex(t, x, z), line = startLine(world);
+  if (t.mask?.[k] !== 0 && t.filled[k] > SEA_LEVEL && world.toBeach[k] < 1e8) return Math.max(0, world.toBeach[k] - line.L);
+  return Math.max(0, (line.t - slopeT(world, x, z)) * 2 * t.long * (t.worldSize / 2));
+}
+
 export function dropZone(world) {
   if (!world.dropZone) world.dropZone = new Set(spawnBand(world).cells);
   return world.dropZone;
@@ -693,27 +752,9 @@ export function landingCell(world, x, z, zone = dropZone(world)) {
 // spawnGap), claimed as the last seconds of the fall begin and kept, so two
 // drops never land on one spot and start the race already fighting. In the
 // order rivers move (sorted ids), so every machine agrees.
-function landingSpot(world, r) {
-  if (r.claim >= 0) return r.claim;
-  const t = world.terrain, n = t.size, gap2 = TUNE.spawnGap * TUNE.spawnGap;
-  const pos = (k) => [((k % n) / (n - 1) - 0.5) * t.worldSize, (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize];
-  const taken = world.rivers.filter((o) => o !== r && (o.claim >= 0 || !o.dropping)).map((o) => (o.claim >= 0 && o.dropping ? pos(o.claim) : [o.x, o.z]));
-  const free = (k) => { const [x, z] = pos(k); return taken.every(([ox, oz]) => (ox - x) ** 2 + (oz - z) ** 2 >= gap2); };
-  let best = -1, bd = Infinity;
-  for (const k of dropZone(world)) {
-    if (!free(k)) continue;
-    const [x, z] = pos(k), d = (x - r.x) ** 2 + (z - r.z) ** 2;
-    if (d < bd || (d === bd && k < best)) { bd = d; best = k; }
-  }
-  r.claim = best >= 0 ? best : landingCell(world, r.x, r.z);
-  return r.claim;
-}
 
 function land(world, r) {
-  const t = world.terrain, n = t.size;
-  const k = landingSpot(world, r);
-  r.x = ((k % n) / (n - 1) - 0.5) * t.worldSize;
-  r.z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+  // Where it is: the line was crossed here (no snapping to a spot).
   r.dropping = 0;
   r.alt = 0;
   const g = gradient(world, r.x, r.z, r.idx);
