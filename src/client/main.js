@@ -985,6 +985,16 @@ function advance(inputs) {
       if (e.to === river.idx) { tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount); audio.bubble(); }
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
+    } else if (e.type === 'bump') {
+      // Two drops collided: spray where they met, and say what it cost you.
+      const ra = world.rivers[e.a], rb = world.rivers[e.b], en = entries[e.a];
+      if (en) burstSpray(en.spray, e.x, surfaceAt(world, e.x, e.z) * VERT + (ra.alt ?? 0), e.z, 1.4, 50);
+      const mine = river === ra ? [rb, e.lossA, e.lossB] : river === rb ? [ra, e.lossB, e.lossA] : null;
+      if (mine) {
+        showPop(`Bumped ${nameOf(mine[0])}! −${fmtL(mine[1])} (they lost ${fmtL(mine[2])})`);
+        audio.splash(1.3); gougeShakeAt = performance.now() - 200;
+        teach('bump', 'Bumping', 'Drops that collide knock each other off course and both lose water to spray. The one hit harder loses more: <b>ram</b> lighter drops, and dodge heavier ones.', e.x, e.z);
+      }
     } else if (e.type === 'unlock') {
       if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `You're big enough for <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
       if (river && e.river === river.idx) { showPop(e.skill === 'gouge' ? 'GOUGE unlocked — A / SPACE to boost over a rise' : 'SURGE unlocked — RB / Q for a speed burst'); audio.splash(1); }
@@ -1573,6 +1583,9 @@ renderer.setAnimationLoop(() => {
     camera.lookAt(camLook.copy(camTarget));
     camDir.set(ax, az); // landing hands the chase camera this facing
     camYaw = 0;
+    // A bump jolts the view.
+    const jolt = gougeShakeAt ? Math.max(0, 1 - (now - gougeShakeAt) / 500) : 0;
+    if (jolt > 0 && settings.shake) { camera.position.x += (Math.random() - 0.5) * 140 * jolt; camera.position.z += (Math.random() - 0.5) * 140 * jolt; }
     const fov = baseFov * 0.8; // a narrower lens from higher up: less perspective, closer to a true top-down map
     if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * k; camera.updateProjectionMatrix(); }
   } else {

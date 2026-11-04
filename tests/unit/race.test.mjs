@@ -224,3 +224,21 @@ test('drop: every drop stays over the landing ring and touches down where it is'
   assert.ok(w.rivers.every((r) => !r.dropping));
   assert.ok(worst <= TUNE.glideSpeed, `touchdown jumped ${worst.toFixed(0)} m`);
 });
+
+test('drop: drops that bump are knocked apart and both lose water to the sky, the rammed one more', async () => {
+  const { rollIsland } = await import('../../src/shared/river.js');
+  const w = rollIsland(5, 2).world;
+  const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
+  Object.assign(a, { dx: 1, dz: 0 });
+  Object.assign(b, { x: a.x + 500, z: a.z, alt: a.alt, dx: 0, dz: 1 }); // a rams b, which crosses slowly
+  const va = a.volume, vb = b.volume, sky = w.sky ?? 0;
+  let bumped = null;
+  for (let k = 0; k < 40 && !bumped; k++) {
+    step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: -1 }]]));
+    bumped = w.events.splice(0).find((e) => e.type === 'bump');
+  }
+  assert.ok(bumped, 'no bump');
+  assert.ok(va - a.volume > 0 && vb - b.volume > va - a.volume, `rammer lost ${va - a.volume}, rammed ${vb - b.volume}`);
+  assert.ok(Math.abs((w.sky - sky) - (va - a.volume) - (vb - b.volume)) < 1e-6 * va, 'the spray did not go to the sky');
+  assert.ok(Math.hypot(b.kx, b.kz) > 0, 'not knocked');
+});
