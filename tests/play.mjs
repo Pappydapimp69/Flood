@@ -138,8 +138,15 @@ await check('race: rank shows, and a drained player spectates the winner', async
     window.__absorber = bot.id;
   });
   await until(page, () => true, 'tick');
-  for (let i = 0; i < 100; i++) {
-    const r = await page.evaluate(() => ({ out: __flood.river.out, focus: __flood.focus.id, banner: document.getElementById('banner').hidden ? '' : document.getElementById('banner').textContent }));
+  // (Hold the setup until it takes: storms now rain into channels and can top
+  // the player back up, and CI's software renderer runs few ticks a second.)
+  const t0 = Date.now();
+  while (Date.now() - t0 < 60000) {
+    const r = await page.evaluate(() => {
+      const me = __flood.river, bot = __flood.world.rivers.find((o) => o.id === window.__absorber);
+      if (!me.out) { __flood.world.storms.length = 0; me.volume = 1; me.size = 0.01; bot.x = me.x + 5; bot.z = me.z; }
+      return { out: me.out, focus: __flood.focus.id, banner: document.getElementById('banner').hidden ? '' : document.getElementById('banner').textContent };
+    });
     if (r.out && r.banner) {
       const by = await page.evaluate(() => window.__absorber), byName = await page.evaluate((id) => __flood.nameOf(id), by);
       if (r.out.by !== by || r.focus !== by || !r.banner.includes(`Drained dry by ${byName}`)) throw new Error(JSON.stringify(r));
@@ -151,7 +158,7 @@ await check('race: rank shows, and a drained player spectates the winner', async
       await page.close();
       return;
     }
-    await page.waitForTimeout(50);
+    await page.waitForTimeout(100);
   }
   throw new Error('player was never absorbed');
 });
