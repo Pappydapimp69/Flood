@@ -524,6 +524,7 @@ const camDir = new THREE.Vector2(0, -1);
 let camYaw = 0, lookIdle = 0;
 // The opening shot runs until this time (ms); any key, click or steer skips it.
 let introUntil = 0;
+let lastCamMode = ''; // the camera's current view; a change is a cut
 for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, () => { introUntil = 0; });
 // 1: cuts deeper than you (touching it drains you), -1: shallower (you drain
 // it), 0: too close to call — the same deadband the sim uses.
@@ -1530,12 +1531,20 @@ renderer.setAnimationLoop(() => {
   const intro = now < introUntil && !mapView && !!river?.dropping;
   document.body.classList.toggle('intro', intro);
   updateMapLines(now);
+  // Changing view (map, a lesson, the drop, landing, spectating someone else,
+  // the finish) is a hard CUT, never a camera flight across the island: the
+  // new shot starts already in place (owner: "none of that weird zooming
+  // around"; Brain FILM kernel: a view swap is a cut). Within a view the
+  // camera still eases as it follows.
+  const camMode = lesson && lesson.x !== undefined && !mapView ? `lesson:${lesson.title}` : mapView ? 'map' : intro ? 'intro'
+    : `${focus.dropping ? 'drop' : focus.finished ? 'done' : 'chase'}:${focus.id}`;
+  const cut = camMode !== lastCamMode;
+  lastCamMode = camMode;
   if (lesson && lesson.x !== undefined && !mapView) {
-    // A lesson: fly to the spot, high and to the south of it, and look down on it.
-    const g = surfaceAt(world, lesson.x, lesson.z) * VERT;
-    const f = lesson.far ?? 1, want = new THREE.Vector3(lesson.x + 700 * f, g + 1500 * f, lesson.z + 1700 * f), k = 1 - Math.exp(-frameDt * 3);
-    camera.position.lerp(want, k);
-    camLook.lerp(new THREE.Vector3(lesson.x, g, lesson.z), k);
+    // A lesson: a still shot over the spot, high and to the south of it, looking down on it.
+    const g = surfaceAt(world, lesson.x, lesson.z) * VERT, f = lesson.far ?? 1;
+    camera.position.set(lesson.x + 700 * f, g + 1500 * f, lesson.z + 1700 * f);
+    camLook.set(lesson.x, g, lesson.z);
     camera.lookAt(camLook);
   } else if (mapView) {
     controls.update();
@@ -1558,7 +1567,7 @@ renderer.setAnimationLoop(() => {
     // depth; clouds below read their height from the tags (seven#E52: a view
     // from above hides height, so say it).
     const ax = terrain.axis.x, az = terrain.axis.y, H = 7000, lean = 0.08;
-    const k = 1 - Math.exp(-frameDt * 4);
+    const k = cut ? 1 : 1 - Math.exp(-frameDt * 4);
     camera.position.lerp(new THREE.Vector3(fx - ax * H * lean, fy + H, fz - az * H * lean), k);
     camTarget.lerp(new THREE.Vector3(fx + ax * 300, fy - 400, fz + az * 300), k);
     camera.lookAt(camLook.copy(camTarget));
@@ -1576,6 +1585,7 @@ renderer.setAnimationLoop(() => {
     if (look) { camYaw = Math.max(-Math.PI, Math.min(Math.PI, camYaw + look * frameDt * 2.2)); lookIdle = 0; }
     else if ((lookIdle += frameDt) > 1.5) camYaw *= Math.exp(-frameDt * 1.5);
     const course = courseOf(focus, fx, fz);
+    if (cut) { camDir.set(course.x, course.y).normalize(); camYaw = 0; } // a new shot starts behind the river
     const ang = Math.atan2(camDir.x * course.y - camDir.y * course.x, camDir.x * course.x + camDir.y * course.y);
     // Falling, the camera swings with every turn so aiming reads at once.
     const falling = !!focus.dropping;
@@ -1599,19 +1609,19 @@ renderer.setAnimationLoop(() => {
       const g = surfaceAt(world, fx - view.x * back * f, fz - view.y * back * f) * VERT;
       want.y = Math.max(want.y, g + 120 + 220 * f);
     }
-    const kXZ = 1 - Math.exp(-frameDt * 5);
+    const kXZ = cut ? 1 : 1 - Math.exp(-frameDt * 5);
     camera.position.x += (want.x - camera.position.x) * kXZ;
     camera.position.z += (want.z - camera.position.z) * kXZ;
-    const kY = 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
+    const kY = cut ? 1 : 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
     camera.position.y += (want.y - camera.position.y) * kY;
     camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
     const ahead = falling ? 600 : done ? 2200 : 380 + 80 * sz;
-    camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), 1 - Math.exp(-frameDt * 6));
+    camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), cut ? 1 : 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
     // Power: the view widens with speed, and a big, fast river shakes it.
     const fast = falling || done ? 0 : Math.min(1, (focus.speed ?? 0) / 260);
     const fov = baseFov * (1 + 0.22 * fast);
-    if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * (1 - Math.exp(-frameDt * 3)); camera.updateProjectionMatrix(); }
+    if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * (cut ? 1 : 1 - Math.exp(-frameDt * 3)); camera.updateProjectionMatrix(); }
     const jolt = gougeShakeAt ? Math.max(0, 1 - (now - gougeShakeAt) / 500) : 0;
     const shake = falling || done ? 0 : Math.max(Math.min(18, 14 * Math.max(0, sz - 1) * fast + 3 * fast * fast), 45 * jolt * jolt);
     if (shake > 0.5 && settings.shake) {
