@@ -3,7 +3,7 @@
 Date: 2026-11-04 · Status: accepted (owner)
 
 ## The camera
-While a drop falls, the camera sits 7 km above it, about 7 degrees off vertical, with a narrower
+While a drop falls, the camera sits about 5 km above it, about 7 degrees off vertical, with a narrower
 lens (0.8x the base field of view). The beach is always at the top of the screen. The camera moves
 with the drop but never turns.
 

@@ -1566,7 +1566,7 @@ renderer.setAnimationLoop(() => {
     // Brain T182). A slight lean ahead keeps "up" defined and shows a little
     // depth; clouds below read their height from the tags (seven#E52: a view
     // from above hides height, so say it).
-    const ax = terrain.axis.x, az = terrain.axis.y, H = 7000, lean = 0.08;
+    const ax = terrain.axis.x, az = terrain.axis.y, H = 4800, lean = 0.08; // low enough that the ground visibly rushes past
     const k = cut ? 1 : 1 - Math.exp(-frameDt * 4);
     camera.position.lerp(new THREE.Vector3(fx - ax * H * lean, fy + H, fz - az * H * lean), k);
     camTarget.lerp(new THREE.Vector3(fx + ax * 300, fy - 400, fz + az * 300), k);

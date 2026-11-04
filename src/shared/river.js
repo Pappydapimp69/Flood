@@ -116,7 +116,7 @@ export const TUNE = {
   // The drop: every river falls for 30 s from high above the island, steering
   // (turn, and faster or slower) to choose where it lands. It lands on the
   // nearest cell of the start contour: every start is at the same elevation.
-  dropTicks: 800, // a fall at the steady rate lasts this long (40 s)...
+  dropTicks: 560, // a fall at the steady rate lasts this long (28 s)...
   dropAlt: 6000, // metres above the ground at the start
   diveRate: 1.6, // ...diving falls up to this much faster (about 12 s)...
   floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
@@ -137,7 +137,7 @@ export const TUNE = {
   stormMaxWater: 5_000_000, // ...carrying at most this much, rained out until it's empty
   cloudWater: [150_000, 450_000],
   slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
-  glideSpeed: 260, // m/s across the ground while falling (left stick: x0.4 slow, x1.8 fast)
+  glideSpeed: 380, // m/s across the ground while falling (stick all the way: x1.8)
   settleTicks: 60, // the last 3 s of a fall glide onto the touchdown spot
   zoneSlack: 2400, // metres a falling drop may stray from the landing rings: wide enough to glide to another mountain's
   glideTurn: 0.16, // radians per tick while falling: a full circle in about 2 s
