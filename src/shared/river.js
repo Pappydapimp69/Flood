@@ -155,11 +155,11 @@ export const TUNE = {
   // Bumps between falling drops: touching (within bumpRadius across and
   // bumpDepth up or down) and closing, they knock each other off course and
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
-  bumpRadius: 220, // metres
-  bumpDepth: 200, // metres of height
+  bumpRadius: 350, // metres (was 220: rams rarely landed)
+  bumpDepth: 300, // metres of height
   bumpKnock: 1.4, // knock speed per m/s of closing speed, shared by weight
   bumpDecay: 0.93, // knock left after each tick (a bump carries them well apart)
-  bumpMin: 80, // m/s of closing speed below which drops just touch: no bump
+  bumpMin: 40, // m/s of closing speed below which drops just touch: no bump (the 110 m/s glide closes slower)
   bumpLoss: 0.02, // share of volume lost to a knock as fast as the base glide (head-on at full glide: about 4%)
   bumpLossMax: 0.08, // most of its volume a drop can lose to one bump
   bumpCool: 40, // ticks before the same two drops can bump again
@@ -640,14 +640,17 @@ export function skyClouds(world) {
   const sx = fair.reduce((a, k) => a + ((k % n) / (n - 1) - 0.5) * t.worldSize, 0) / fair.length;
   const sz = fair.reduce((a, k) => a + (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize, 0) / fair.length;
   world.clouds = Array.from({ length: TUNE.skyClouds }, (_, id) => {
-    const p = 0.12 + 0.8 * Math.pow((id + 0.3 + 0.4 * rng()) / TUNE.skyClouds, 0.6); // denser toward the line
-    const side = (rng() * 2 - 1) * (TUNE.cloudSpread * Math.pow(1 - p, 0.8) + 250);
+    // The first two come early (within about the first 10 s) and near the lanes the drops fly in on,
+    // so the descent opens with a choice instead of empty sky (Brain: time to first event, not median gap).
+    const early = id < 2;
+    const p = early ? 0.05 + 0.05 * id + 0.02 * rng() : 0.12 + 0.8 * Math.pow((id - 2 + 0.3 + 0.4 * rng()) / (TUNE.skyClouds - 2), 0.6); // then denser toward the line
+    const side = early ? (id ? 1 : -1) * (600 + rng() * 1200) : (rng() * 2 - 1) * (TUNE.cloudSpread * Math.pow(1 - p, 0.8) + 250);
     const back = run * (1 - p);
     return {
       id,
       x: sx - ax * back - az * side,
       z: sz - az * back + ax * side,
-      alt: Math.max(150, back * (0.3 + 0.9 * rng())), // anywhere a drop can reach there: dive or float to it
+      alt: early ? TUNE.dropAlt * (1 - p) * (0.85 + 0.1 * rng()) : Math.max(150, back * (0.3 + 0.9 * rng())), // early ones on the steady path; the rest anywhere a drop can reach
       water: (TUNE.cloudWater[0] + rng() * (TUNE.cloudWater[1] - TUNE.cloudWater[0])) * TUNE.dropCloudShare,
       taken: -1,
     };
