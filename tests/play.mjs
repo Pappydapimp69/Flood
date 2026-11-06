@@ -315,17 +315,21 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
       await page.waitForTimeout(100);
       steers = await page.evaluate(() => __flood.steers.slice());
     }
-    // Falling, the view is top-down and fixed, so left means SCREEN left: the
-    // drop turns until it heads that way (either way round). On the ground it's a left turn.
+    // Falling or landed, left is a left turn (falling, the left stick's up / down is the throttle).
     const falling = await page.evaluate(() => __flood.river.dropping > 0);
-    if (falling) {
-      let lean = -1;
-      for (let i = 0; i < 300 && lean < 0.9; i++) {
-        await page.waitForTimeout(100);
-        lean = await page.evaluate(() => { const r = __flood.river, a = __flood.world.terrain.axis; return r.dropping ? r.dx * a.y - r.dz * a.x : 1; }); // heading . screen-left (az, -ax)
-      }
+    if (falling && how === 'stick') {
       await set(0);
-      if (lean < 0.9) throw new Error(`${how} left: the drop heads ${lean.toFixed(2)} toward screen left`);
+      if (!steers.includes(-1)) throw new Error(`${how} left while falling gave ${steers.join('')}`);
+      // Throttle: stick up is full (1.8x the base glide), back is none (0.4x).
+      const glideAt = async (y) => {
+        await page.evaluate((y) => { __pad.axes[1] = y; }, y);
+        let v = 0;
+        for (let i = 0; i < 100; i++) { await page.waitForTimeout(100); v = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1); if (v < 0 || (y < 0 ? v > 150 : v < 80)) break; }
+        await page.evaluate(() => { __pad.axes[1] = 0; });
+        return v;
+      };
+      const up = await glideAt(-1), back = await glideAt(1);
+      if (up >= 0 && back >= 0 && !(up > 150 && back < 80)) throw new Error(`throttle: up ${up.toFixed(0)} m/s, back ${back.toFixed(0)} m/s`);
       continue;
     }
     await set(0);

@@ -68,3 +68,9 @@ only within 30 degrees either side and only 1200 m ahead (`TUNE_BOT.view`). Its 
 if trees stand in the way and half as far if the ground rises above its eye (a ridge). It judges
 progress by how far down the island a spot is, not by distance-to-beach along the best route. Bots
 finish about 5% slower.
+
+## Update 2026-11-06: the left stick is a throttle
+The owner asked for plane-style controls in the descent. The left stick turns left and right, and its
+up and down is the throttle: up is full (1.8x glide), centre is half (1x), back is none (0.4x). The
+right stick is the flaps: up descends faster, down slows the descent. Aiming by screen direction
+(`padAim`) is gone for the gamepad; touch still aims by drag. Frames are unchanged (s, g, f).
