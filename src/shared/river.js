@@ -40,7 +40,9 @@ export const TUNE = {
   // Mass. Volume is in litres; size = (volume / start) ^ 1/4. More mass: more
   // momentum (slower to speed up, slow down and turn), faster flow, deeper cuts.
   startVolume: 500_000,
-  trickle: 25, // litres gained per metre of trail: longer trails hold more water
+  trickle: 25, // litres gained per metre of trail at the start...
+  trickleGrowth: 4000, // ...and more per metre the longer the river already is: x(1 + length / this). A river drains
+  // more land the longer it gets (Hack's law: area grows about as length squared), so its gain per metre grows with length.
   speedPerSize: 0.1, // speed multiplier gained per unit of size above 1: twice the size, +10% (real rivers barely speed up as they grow: T175, owner 2026-11-06)
   // Lakes are reservoirs. They hold still until water flows in: every river
   // pouring in raises the level (its own volume holds while its head is in).
@@ -1892,7 +1894,7 @@ function moveTo(world, r, nx, nz) {
   // What a longer channel gathers comes down it from the source, in pulses.
   if (world.lakeOf[cellIndex(world.terrain, nx, nz)] < 0) {
     const behind = TUNE.catchUp && world.leadReach !== undefined && world.toBeach[cellIndex(world.terrain, nx, nz)] - world.leadReach > TUNE.catchUpGap;
-    feed(r, 0, moved * TUNE.trickle * (behind ? 1 + TUNE.catchUp : 1));
+    feed(r, 0, moved * TUNE.trickle * (1 + r.travelled / TUNE.trickleGrowth) * (behind ? 1 + TUNE.catchUp : 1));
   }
 }
 
