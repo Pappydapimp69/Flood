@@ -78,6 +78,9 @@
     #alti { position: fixed; left: calc(18px + env(safe-area-inset-left, 0px)); top: 22%; height: 52%; width: 10px; border-radius: 5px;
       background: linear-gradient(#cfe9ff55, #0e344288); box-shadow: 0 0 0 1px #ffffff55; pointer-events: none; }
     #alti[hidden] { display: none; }
+    #edge { position: fixed; inset: 0; pointer-events: none; opacity: 0; z-index: 9; }
+    #edge.on { animation: edge 0.5s ease-out; }
+    @keyframes edge { 0% { opacity: 0.9; } 100% { opacity: 0; } }
     #alti .gnd { position: absolute; left: -6px; width: 22px; height: 3px; background: #6b8e23; transform: translateY(-50%); }
     #alti i { position: absolute; left: -9px; width: 28px; height: 12px; border-radius: 6px; background: #f4f8ffe6; transform: translateY(-50%); }
     #alti i.lv { background: #ffcf3a; }
@@ -200,6 +203,7 @@
   <div id="caption"></div>
   <div id="coach" hidden></div>
   <div id="alti" hidden></div>
+  <div id="edge"></div>
   <div id="lesson" hidden><h3></h3><p></p><small></small></div>
   <div id="finish"></div>
   <div id="build"></div>
