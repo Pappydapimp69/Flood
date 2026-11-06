@@ -173,7 +173,9 @@ export const TUNE = {
   bumpLoss: 0.02, // share of volume lost to a knock as fast as the base glide (head-on at full glide: about 4%)
   bumpLossMax: 0.08, // most of its volume a drop can lose to one bump
   bumpCool: 40, // ticks before the same two drops can bump again
-  bumpTransfer: 0, // share of the loser's spill the winner of a bump takes (T198's B pole; 0 = both lose, the owner's rule)
+  bumpTransfer: 0.7, // share of the loser's spill the winner of a bump soaks up (the rest goes to the sky)
+  bumpSteal: true, // the side with more momentum into the hit wins it (Brain flood#E122: the winner must gain; dlist#E71: damage by momentum)
+  bumpWinLoss: 0.15, // the winner still spills this share of what the loser does
   zoneSlack: 2400, // metres a falling drop may stray from the landing rings: wide enough to glide to another mountain's
   glideTurn: 0.08, // radians per tick while falling: a full circle in about 4 s
   startElevation: 0.91, // starts ring each summit cone this far up its peak
@@ -1388,19 +1390,28 @@ function dropBumps(world) {
     const ka = close * TUNE.bumpKnock * (mb / (ma + mb)), kb = close * TUNE.bumpKnock * (ma / (ma + mb));
     a.kx = (a.kx ?? 0) - nx * ka; a.kz = (a.kz ?? 0) - nz * ka;
     b.kx = (b.kx ?? 0) + nx * kb; b.kz = (b.kz ?? 0) + nz * kb;
-    // Water lost to spray: the harder knocked loses more, and the one rammed
-    // more than the one ramming (x1.5 for a sitting target, x0.5 for the
-    // rammer, x1 each head-on). It goes up into the sky store.
+    // Water lost to spray. With bumpSteal (the battle rule): the side that hit with more
+    // momentum (water x speed into the other) wins; the loser spills water in proportion
+    // to how hard it was hit, the winner soaks up most of it and spills a little itself.
+    // Without it: both lose, the harder knocked and the rammed one more (the old rule).
     const ca = Math.max(0, (a.dx * va) * nx + (a.dz * va) * nz), cb = Math.max(0, -((b.dx * vb) * nx + (b.dz * vb) * nz));
-    const ramA = ca + cb > 0 ? ca / (ca + cb) : 0.5;
-    const lose = (r, k, ram) => Math.min(r.volume * TUNE.bumpLossMax, r.volume * TUNE.bumpLoss * (k / TUNE.glideSpeed) * (1.5 - ram));
-    const la = lose(a, ka, ramA), lb = lose(b, kb, 1 - ramA);
-    grow(a, -la); grow(b, -lb);
-    // (T198 B pole, off by default: the one that lost less takes a share of the other's spill.)
-    const take = TUNE.bumpTransfer * Math.max(la, lb);
-    if (take > 0) grow(la < lb ? a : b, take);
-    world.sky = (world.sky ?? 0) + la + lb - take;
-    world.events.push({ type: 'bump', a: a.idx, b: b.idx, lossA: la, lossB: lb, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, tick: world.tick });
+    let la, lb, ga = 0, gb = 0;
+    if (TUNE.bumpSteal) {
+      const pa = a.volume * (ca + 1), pb = b.volume * (cb + 1), aWins = pa > pb || (pa === pb && a.id < b.id);
+      const [win, lose, kl] = aWins ? [a, b, kb] : [b, a, ka];
+      const spill = Math.min(lose.volume * TUNE.bumpLossMax, lose.volume * TUNE.bumpLoss * 2 * (kl / TUNE.glideSpeed));
+      const winSpill = spill * TUNE.bumpWinLoss, take = spill * TUNE.bumpTransfer;
+      if (aWins) { lb = spill; la = winSpill; ga = take; } else { la = spill; lb = winSpill; gb = take; }
+    } else {
+      const ramA = ca + cb > 0 ? ca / (ca + cb) : 0.5;
+      const lose = (r, k, ram) => Math.min(r.volume * TUNE.bumpLossMax, r.volume * TUNE.bumpLoss * (k / TUNE.glideSpeed) * (1.5 - ram));
+      la = lose(a, ka, ramA); lb = lose(b, kb, 1 - ramA);
+      const take = TUNE.bumpTransfer * Math.max(la, lb);
+      if (la < lb) ga = take; else gb = take;
+    }
+    grow(a, ga - la); grow(b, gb - lb);
+    world.sky = (world.sky ?? 0) + la + lb - ga - gb;
+    world.events.push({ type: 'bump', a: a.idx, b: b.idx, lossA: la, lossB: lb, gainA: ga, gainB: gb, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, tick: world.tick });
   }
 }
 

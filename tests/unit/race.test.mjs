@@ -215,7 +215,7 @@ test('drop: with bots, every drop reaches the line within the course and nobody 
   assert.ok(worst <= (TUNE.glideSpeed * 1.8 / 20) * 1.25 + 1, `a drop moved ${worst.toFixed(0)} m in a tick: dragged`);
 });
 
-test('drop: drops that bump are knocked apart and both lose water to the sky, the rammed one more', async () => {
+test('drop: a bump goes to whoever hits with more momentum: the loser spills water, the winner soaks most of it up', async () => {
   const { rollIsland } = await import('../../src/shared/river.js');
   const w = rollIsland(5, 2).world;
   const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
@@ -223,12 +223,13 @@ test('drop: drops that bump are knocked apart and both lose water to the sky, th
   Object.assign(b, { x: a.x + 500, z: a.z, alt: a.alt, dx: 0, dz: 1 }); // a rams b, which crosses slowly
   const va = a.volume, vb = b.volume, sky = w.sky ?? 0;
   let bumped = null;
-  for (let k = 0; k < 40 && !bumped; k++) {
+  for (let k = 0; k < 60 && !bumped; k++) {
     step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: -1 }]]));
     bumped = w.events.splice(0).find((e) => e.type === 'bump');
   }
   assert.ok(bumped, 'no bump');
-  assert.ok(va - a.volume > 0 && vb - b.volume > va - a.volume, `rammer lost ${va - a.volume}, rammed ${vb - b.volume}`);
-  assert.ok(Math.abs((w.sky - sky) - (va - a.volume) - (vb - b.volume)) < 1e-6 * va, 'the spray did not go to the sky');
+  assert.ok(a.volume > va && b.volume < vb, `rammer ${a.volume - va}, rammed ${b.volume - vb}`);
+  const spilled = (va + vb) - (a.volume + b.volume);
+  assert.ok(Math.abs((w.sky - sky) - spilled) < 1e-6 * va, 'what was spilled did not go to the sky');
   assert.ok(Math.hypot(b.kx, b.kz) > 0, 'not knocked');
 });

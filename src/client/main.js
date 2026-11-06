@@ -261,6 +261,14 @@ function updateWeather(time) {
     heatWall.material.opacity = 0.18 + 0.06 * Math.sin(time * 3);
   }
 }
+// A flash round the screen edge: gold when you win a hit, red when you lose one.
+const edgeEl = document.getElementById('edge');
+function flashEdge(color) {
+  if (!edgeEl) return;
+  edgeEl.style.boxShadow = `inset 0 0 80px 24px ${color}`;
+  edgeEl.classList.remove('on'); void edgeEl.offsetWidth; edgeEl.classList.add('on');
+}
+
 // The altimeter: while falling, a bar down the left edge with your height and
 // the clouds ahead at theirs, so you can see at a glance whether to dive or float.
 const altEl = document.getElementById('alti');
@@ -1057,11 +1065,13 @@ function advance(inputs) {
       // Two drops collided: spray where they met, and say what it cost you.
       const ra = world.rivers[e.a], rb = world.rivers[e.b], en = entries[e.a];
       if (en) burstSpray(en.spray, e.x, skyY() + (ra.alt ?? 0), e.z, 1.4, 50);
-      const mine = river === ra ? [rb, e.lossA, e.lossB] : river === rb ? [ra, e.lossB, e.lossA] : null;
+      const mine = river === ra ? [rb, e.lossA, e.lossB, e.gainA ?? 0] : river === rb ? [ra, e.lossB, e.lossA, e.gainB ?? 0] : null;
       if (mine) {
-        showPop(`Bumped ${nameOf(mine[0])}! −${fmtL(mine[1])} (they lost ${fmtL(mine[2])})`);
+        const won = mine[3] > 0;
+        showPop(won ? `You hit ${nameOf(mine[0])}! +${fmtL(mine[3] - mine[1])}` : `${nameOf(mine[0])} hit you! −${fmtL(mine[1])}`);
+        flashEdge(won ? '#ffcf3a' : '#ff5a4a');
         audio.splash(1.3); gougeShakeAt = performance.now() - 200;
-        teach('bump', 'Bumping', 'Drops that collide knock each other off course and both lose water to spray. The one hit harder loses more: <b>ram</b> lighter drops, and dodge heavier ones.', e.x, e.z);
+        teach('bump', 'Bumping', 'Drops that collide knock each other off course. Whoever hits with more momentum (more water, more speed into the other) <b>wins</b>: the loser spills water and the winner soaks most of it up. Ram lighter drops; dodge heavier ones.', e.x, e.z);
       }
     } else if (e.type === 'unlock') {
       if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `You're big enough for <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
