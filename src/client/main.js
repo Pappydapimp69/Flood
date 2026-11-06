@@ -521,7 +521,7 @@ function beginRace(seed, raceIds, me, rolled) {
   finishShown = false;
   finishEl.classList.remove('on');
   // Opening shot: from low on the island, the rivers raining onto the summit.
-  introUntil = river?.dropping && !params.has('nointro') ? performance.now() + 4500 : 0;
+  introUntil = river?.dropping && !params.has('nointro') ? performance.now() + (TUNE.dropCalm / TICK_HZ) * 1000 : 0;
   const y = surfaceAt(world, focus.x, focus.z) * VERT;
   camDir.set(focus.dx, focus.dz).normalize();
   camYaw = 0;
@@ -1653,7 +1653,7 @@ renderer.setAnimationLoop(() => {
     const top = spawnBand(world).top, n = terrain.size;
     const tx = ((top % n) / (n - 1) - 0.5) * W, tz = (Math.floor(top / n) / (n - 1) - 0.5) * W, th = terrain.height[top] * VERT;
     const ax = terrain.axis.x, az = terrain.axis.y; // down the slope
-    const t = 1 - (introUntil - now) / 4500, run = TUNE.cometRun * TUNE.glideSpeed * TUNE.dropTicks / TICK_HZ * (world.dropScale ?? 1);
+    const t = 1 - (introUntil - now) / ((TUNE.dropCalm / TICK_HZ) * 1000), run = TUNE.cometRun * TUNE.glideSpeed * TUNE.dropTicks / TICK_HZ * (world.dropScale ?? 1);
     const back = run + 5000 - 3500 * t, above = skyY() + TUNE.dropAlt + 2600 - 1600 * t;
     camera.position.set(tx - ax * back, above, tz - az * back);
     camera.lookAt(tx + ax * 2000, th, tz + az * 2000);

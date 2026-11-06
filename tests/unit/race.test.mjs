@@ -211,8 +211,9 @@ test('drop: with bots, every drop reaches the line within the course and nobody 
   }
   assert.ok(w.rivers.every((r) => !r.dropping), 'someone never landed');
   assert.ok(w.rivers.every((r) => pastLine(w, r.path[0].x, r.path[0].z)), 'a drop landed off the line');
-  // (A full dive glides at up to 2.2x, a slipstream adds draftBoost; sliding down a narrowing lane wall moves diagonally on top: allow 40% more.)
-  assert.ok(worst <= (TUNE.glideSpeed * 2.2 * (1 + TUNE.draftBoost) / 20) * 1.4 + 1, `a drop moved ${worst.toFixed(0)} m in a tick: dragged`);
+  // (A full dive glides at up to 2.2x, a slipstream adds draftBoost, a drop just hit darts bumpBurst faster;
+  // sliding down a narrowing lane wall moves diagonally on top: allow 40% more.)
+  assert.ok(worst <= (TUNE.glideSpeed * 2.2 * (1 + TUNE.draftBoost) * (1 + TUNE.bumpBurst) / 20) * 1.4 + 1, `a drop moved ${worst.toFixed(0)} m in a tick: dragged`);
 });
 
 test('drop: a bump goes to whoever hits with more momentum: the loser spills water, the winner soaks most of it up', async () => {
@@ -221,6 +222,7 @@ test('drop: a bump goes to whoever hits with more momentum: the loser spills wat
   const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
   Object.assign(a, { dx: 1, dz: 0 });
   Object.assign(b, { x: a.x + 500, z: a.z, alt: a.alt, dx: 0, dz: 1 }); // a rams b, which crosses slowly
+  a.fallT = b.fallT = TUNE.dropCalm; // past the opening shot
   const va = a.volume, vb = b.volume, sky = w.sky ?? 0;
   let bumped = null;
   for (let k = 0; k < 60 && !bumped; k++) {
@@ -245,4 +247,31 @@ test('drop: a drop flying close behind another at its height glides faster (slip
   for (let k = 0; k < 3; k++) step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: 1 }], ['c', { s: 0, f: 0, g: 1 }]]));
   assert.ok(a.draft && !c.draft, 'slipstream flags wrong');
   assert.ok(a.x - ax0 > (c.x - cx0) * 1.05, `drafting ${(a.x - ax0).toFixed(0)} m vs alone ${(c.x - cx0).toFixed(0)} m`);
+});
+
+test('drop: no bumps during the opening shot (TUNE.dropCalm), then bumps as usual', () => {
+  const w = rollIsland(5, 2).world;
+  const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
+  Object.assign(a, { dx: 1, dz: 0 });
+  Object.assign(b, { x: a.x + 200, z: a.z, alt: a.alt, dx: -1, dz: 0 }); // head-on, already touching
+  const go = new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: 1 }]]);
+  step(w, go);
+  assert.ok(!w.events.some((e) => e.type === 'bump'), 'bumped during the opening shot');
+  for (const r of [a, b]) r.fallT = TUNE.dropCalm;
+  Object.assign(b, { x: a.x + 200, z: a.z, alt: a.alt, dx: -1, dz: 0 });
+  w.events.length = 0; step(w, go);
+  assert.ok(w.events.some((e) => e.type === 'bump'), 'no bump after the opening shot');
+});
+
+test('drop: after a bump the drop hit darts away and the hitter is checked', () => {
+  const w = rollIsland(5, 2).world;
+  const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
+  Object.assign(a, { dx: 1, dz: 0, fallT: TUNE.dropCalm });
+  Object.assign(b, { x: a.x + 300, z: a.z, alt: a.alt, dx: 0, dz: 1, fallT: TUNE.dropCalm }); // a rams b side-on
+  let bump = null;
+  for (let k = 0; k < 20 && !bump; k++) { step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: 1 }]])); bump = w.events.splice(0).find((e) => e.type === 'bump'); }
+  assert.ok(bump, 'no bump');
+  assert.equal(bump.hitter, a.idx, 'the rammer is the hitter');
+  assert.ok(a.recoilT > 0 && b.burstT > 0, 'no recoil or burst');
+  assert.equal(b.hitBy.id, 'a');
 });

@@ -52,3 +52,19 @@ chase can close. Longest gap for an active player went from 20 s to 11 s, events
 8 to 16, and the slowest 10% of landings from 71 s to 57 s. Over 24 islands, ramming and dodging
 still come out even (mean about 1.1 in both builds). Diving gives no extra speed once a drop is on
 the floor, since it has no height left to trade. The altimeter shows "slipstream" while you're in one.
+
+## Update 2026-11-06: a calm opening, and bumps that can't pin a drop down
+The owner asked that nobody be hit during the opening shot, when the player can't steer: no bumps for
+the first `TUNE.dropCalm` ticks (4.5 s, which is also the shot's length). The owner had one bot ram
+them for a whole descent, so a bump now checks the hitter (half glide for 1 s) and the drop it hit
+darts away (1.6x for 0.5 s). The hitter is the drop with more of its own speed into the other. A bot
+chases one drop for at most 6 to 18 s (by aggression) or 2 hits, then leaves it alone for 30 s. A bot
+that's bumped turns on whoever hit it. Over 12 islands, a player who chases clouds but never rams took
+a median of 3 hits per descent (was 16), and at most 3 from any one bot (was 11).
+
+## Bots see what a player sees (not part of the camera decision, recorded here with it)
+The owner asked that bots stop finding their way by the whole map. On the ground, a bot weighs headings
+only within 30 degrees either side and only 1200 m ahead (`TUNE_BOT.view`). Its sight is a quarter less
+if trees stand in the way and half as far if the ground rises above its eye (a ridge). It judges
+progress by how far down the island a spot is, not by distance-to-beach along the best route. Bots
+finish about 5% slower.
