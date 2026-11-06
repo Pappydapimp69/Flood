@@ -747,7 +747,9 @@ function newTutorial() {
   const all = [PLAYER, 'bot01', 'bot02', 'bot03'].sort();
   names = Object.fromEntries(all.filter((id) => id !== PLAYER).map((id, i) => [id, BOT_NAMES[i % BOT_NAMES.length]]));
   const t = terrain?.seed === COURSE.seed ? terrain : generateIsland(COURSE.seed, { course: 'tutorial', ...TUT_SIZE });
-  beginRace(COURSE.seed, all, PLAYER, createWorld(t, { lava: false })); // no lava on the training course
+  const tw = createWorld(t, { lava: false }); // no lava on the training course
+  tw.dropScale = 0.5; // and a 40 s descent: the drop lessons take about 20 s (Brain flood#E126: no dead air)
+  beginRace(COURSE.seed, all, PLAYER, tw);
   bots = world.rivers.filter((r) => r !== river).map((r) => createBot(world, r));
   tcourse = { next: 0, beacons: new THREE.Group() };
   for (const s of STATIONS) {
@@ -1651,7 +1653,7 @@ renderer.setAnimationLoop(() => {
     const top = spawnBand(world).top, n = terrain.size;
     const tx = ((top % n) / (n - 1) - 0.5) * W, tz = (Math.floor(top / n) / (n - 1) - 0.5) * W, th = terrain.height[top] * VERT;
     const ax = terrain.axis.x, az = terrain.axis.y; // down the slope
-    const t = 1 - (introUntil - now) / 4500, run = TUNE.cometRun * TUNE.glideSpeed * TUNE.dropTicks / TICK_HZ;
+    const t = 1 - (introUntil - now) / 4500, run = TUNE.cometRun * TUNE.glideSpeed * TUNE.dropTicks / TICK_HZ * (world.dropScale ?? 1);
     const back = run + 5000 - 3500 * t, above = skyY() + TUNE.dropAlt + 2600 - 1600 * t;
     camera.position.set(tx - ax * back, above, tz - az * back);
     camera.lookAt(tx + ax * 2000, th, tz + az * 2000);
