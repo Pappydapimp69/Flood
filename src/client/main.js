@@ -282,7 +282,7 @@ function showAltimeter() {
   const ax = me.dx, az = me.dz;
   const marks = skyClouds(world).filter((c) => !c.low && c.water > 0 && (c.x - me.x) * ax + (c.z - me.z) * az > -200 && Math.hypot(c.x - me.x, c.z - me.z) < 3500)
     .map((c) => { const level = Math.abs(c.alt - me.alt) <= TUNE.cloudDepth; return `<i class="cl${level ? ' lv' : ''}" style="top:${y(c.alt)}" title="cloud"></i>`; }).join('');
-  const html = `<b style="top:${y(gnd)}" class="gnd"></b>${marks}<em style="top:${y(me.alt)}">${Math.round(me.alt - gnd)} m</em>`;
+  const html = `<b style="top:${y(gnd)}" class="gnd"></b>${marks}<em style="top:${y(me.alt)}">${Math.round(me.alt - gnd)} m${me.draft ? '<br>slipstream' : ''}</em>`;
   if (altEl.innerHTML !== html) altEl.innerHTML = html;
 }
 

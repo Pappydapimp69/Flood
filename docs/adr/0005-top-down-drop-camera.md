@@ -39,3 +39,16 @@ and the height tags. Altitudes count from the start line's height (`skyBase`), n
 underneath. Drop clouds sit along the comet path, spread wide early and packed close to the
 middle of the start line near the end, so drops converge and bump. Once landed, the right stick
 looks up to 30 degrees aside (drifting back) and up raises the view; the map is off.
+
+## Update 2026-11-06: a slipstream, and bots that keep pace
+Measured over 12 islands, a player holding full stick and flying straight had one event in a 44 s
+descent, with a 40 s quiet gap (Brain flood#E126: judge dead air by the longest gap). Three causes:
+bots with nothing to chase glided at the base speed (1x against the player's 1.8x); a chasing bot
+at the same speed as its target never closed; and a bot under its target stayed out of bump height.
+Now bots fly at full stick, dive onto targets below them and float up to targets above, and a drop
+flying within 600 m behind another (120 m either side, within bump height) glides 20% faster
+(`TUNE.draftLength`, `draftWidth`, `draftBoost`), past the stick's cap. That's a slipstream, so a
+chase can close. Longest gap for an active player went from 20 s to 11 s, events per descent from
+8 to 16, and the slowest 10% of landings from 71 s to 57 s. Over 24 islands, ramming and dodging
+still come out even (mean about 1.1 in both builds). Diving gives no extra speed once a drop is on
+the floor, since it has no height left to trade. The altimeter shows "slipstream" while you're in one.

@@ -167,6 +167,9 @@ export const TUNE = {
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
   bumpRadius: 350, // metres (was 220: rams rarely landed)
   bumpDepth: 300, // metres of height
+  // Slipstream: flying within draftLength behind another drop (draftWidth either
+  // side, within bumpDepth of its height) glides draftBoost faster, past the stick's cap.
+  draftLength: 600, draftWidth: 120, draftBoost: 0.2,
   bumpKnock: 1.4, // knock speed per m/s of closing speed, shared by weight
   bumpDecay: 0.93, // knock left after each tick (a bump carries them well apart)
   bumpMin: 40, // m/s of closing speed below which drops just touch: no bump (the 110 m/s glide closes slower)
@@ -602,14 +605,17 @@ function glide(world, r, steer, fwd, g = 0) {
     }
   }
   // Diving trades height for speed (and floating, speed for height), on top of the stick's glide: capped at 2.2x.
-  const v = TUNE.glideSpeed * Math.min(2.2, (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g) * (fwd > 0 ? 1 + TUNE.diveSpeed * fwd : 1 + TUNE.floatSpeed * fwd));
+  // On the floor there is no height left to trade: a dive there is no faster.
+  const dive = fwd > 0 && r.onFloor ? 0 : fwd;
+  const v = TUNE.glideSpeed * Math.min(2.2, (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g) * (dive > 0 ? 1 + TUNE.diveSpeed * dive : 1 + TUNE.floatSpeed * dive));
+  const vDraft = r.draft ? v * (1 + TUNE.draftBoost) : v;
   const heavy = 1 + TUNE.heavyFall * Math.max(0, r.size - 1); // cloud water makes a drop heavier: it falls faster
   r.glideV = v;
   const kx = r.kx ?? 0, kz = r.kz ?? 0; // a bump's knock, fading
   r.kx = kx * TUNE.bumpDecay; r.kz = kz * TUNE.bumpDecay;
   // It goes exactly where it's flown: no zone, no easing onto a spot. Only the
   // walls of the course stop it (the scenery beside it is never flown into or landed on).
-  let nx = r.x + (r.dx * v + kx) * DT, nz = r.z + (r.dz * v + kz) * DT;
+  let nx = r.x + (r.dx * vDraft + kx) * DT, nz = r.z + (r.dz * vDraft + kz) * DT;
   const t = world.terrain, line = startLine(world);
   const offCourse = (x, z) => t.mask?.[cellIndex(t, x, z)] === 0 && slopeT(world, x, z) > -0.03; // beside the course (behind it is where comets come in)
   if (offCourse(nx, nz)) {
@@ -641,6 +647,7 @@ function glide(world, r, steer, fwd, g = 0) {
   const floor = gnd + TUNE.floorGap * near, ceil = Math.max(floor, d * TUNE.ceilSlope + gnd * (1 - near));
   const rate = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * (fwd > 0 ? 1 + TUNE.diveRate * fwd : 1 + TUNE.floatRate * fwd) * heavy;
   r.alt = Math.min(ceil, Math.max(floor, r.alt - rate));
+  r.onFloor = r.alt <= floor + 1;
   const straight = Math.max(0, (line.t - slopeT(world, r.x, r.z)) * 2 * t.long * (t.worldSize / 2)); // flight distance to the line
   r.dropping = Math.max(1, Math.ceil(straight / (TUNE.glideSpeed * DT))); // ticks to the line at the base glide (the HUD's countdown)
   // Inside a drop cloud: it drains into every river inside, equally (see dropClouds).
@@ -1375,6 +1382,15 @@ export function heatFront(world) {
 // depends on the order rivers were added.
 function dropBumps(world) {
   const falling = world.rivers.filter((r) => isRacing(r) && r.dropping).sort(byId);
+  // Slipstream: a drop flying close behind another, at its height, glides faster
+  // next tick (less air to push), so a chaser can close on a drop as fast as itself.
+  for (const r of falling) {
+    r.draft = falling.some((o) => {
+      if (o === r) return false;
+      const ox = o.x - r.x, oz = o.z - r.z, along = ox * r.dx + oz * r.dz, across = Math.abs(ox * r.dz - oz * r.dx);
+      return along > 0 && along < TUNE.draftLength && across < TUNE.draftWidth && Math.abs(o.alt - r.alt) < TUNE.bumpDepth;
+    });
+  }
   const bumps = (world.bumps ??= new Map());
   for (let i = 0; i < falling.length; i++) for (let j = i + 1; j < falling.length; j++) {
     const a = falling[i], b = falling[j];
