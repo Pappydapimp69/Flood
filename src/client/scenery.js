@@ -25,6 +25,30 @@ function pineGeometry() {
   return geo;
 }
 
+// Trees between the chase camera and the river head dither away (screen-door,
+// so no sorting), so a low camera keeps its depth without losing the river.
+// main.js sets treeFade.cam / treeFade.focus each frame (radius 0 turns it off).
+export const treeFade = { cam: { value: new THREE.Vector3() }, focus: { value: new THREE.Vector3() }, radius: { value: 0 } };
+function seeThrough(mat) {
+  mat.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, { fadeCam: treeFade.cam, fadeFocus: treeFade.focus, fadeRadius: treeFade.radius });
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vFadeWorld;')
+      .replace('#include <project_vertex>', '#include <project_vertex>\nvFadeWorld = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vFadeWorld;\nuniform vec3 fadeCam, fadeFocus;\nuniform float fadeRadius;')
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+  if (fadeRadius > 0.0) {
+    vec3 seg = fadeFocus - fadeCam; float len2 = max(dot(seg, seg), 1.0);
+    float t = clamp(dot(vFadeWorld - fadeCam, seg) / len2, 0.0, 1.0);
+    float d = length(vFadeWorld - (fadeCam + seg * t));
+    float keep = smoothstep(fadeRadius * 0.6, fadeRadius, d) + step(0.92, t); // the near side of the head only
+    float dither = fract(sin(dot(floor(gl_FragCoord.xy), vec2(12.9898, 78.233))) * 43758.5453);
+    if (keep < dither) discard;
+  }`);
+  };
+}
+
 // Trees: one tall stand per forest cell of the game (world.trees), pines on
 // the upper slope, round broadleaf trees mixed in lower down. Tall enough to
 // hide what's ahead from a low chase camera.
@@ -43,6 +67,7 @@ export function buildTrees(world, max) {
   const group = new THREE.Group(), parts = [], CHUNKS = 8, size = Math.ceil(n / CHUNKS);
   const pineGeo = pineGeometry(), leafGeo = new THREE.IcosahedronGeometry(1, 1).translate(0, 1.1, 0);
   const pineMat = new THREE.MeshLambertMaterial({ color: '#ffffff' }), leafMat = new THREE.MeshLambertMaterial({ color: '#ffffff' });
+  for (const mat of [pineMat, leafMat]) seeThrough(mat);
   const place = (list, geo, mat, scale, tint) => {
     const chunks = new Map();
     for (const k of list) {

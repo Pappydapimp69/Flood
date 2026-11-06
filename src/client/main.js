@@ -10,7 +10,7 @@ import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
 import { connect } from './net.js';
 import { createAudio } from './audio.js';
-import { buildTrees, buildRocks, clearTrees, clearAround, buildLava, coolLava, pulseLava } from './scenery.js';
+import { buildTrees, buildRocks, clearTrees, clearAround, buildLava, coolLava, pulseLava, treeFade } from './scenery.js';
 
 // Test/debug surface. Tests poll this instead of waiting on wall-clock time.
 const dbg = (window.__flood = { ready: false, error: null, frames: 0, steers: [], prints: new Map() });
@@ -57,7 +57,18 @@ document.getElementById('app').appendChild(renderer.domElement);
 const SKY = new THREE.Color('#b3cfe0');
 const scene = new THREE.Scene();
 scene.background = SKY;
-scene.fog = new THREE.Fog(SKY, 30000, 120000);
+// Aerial perspective: haze thickens exponentially with distance, as real air does
+// (Koschmieder: contrast exp(-3.912 d / V), 2% left at the visibility V; Brain
+// seven#E107: linear fog keeps the middle distance far too clear and flattens depth).
+// Three's FogExp2 is exp(-(k d)^2); patch it to the physical exp(-k d).
+const VISIBILITY = 30000; // metres
+const fogChunk = THREE.ShaderChunk.fog_fragment.replace(
+  'float fogFactor = 1.0 - exp( - fogDensity * fogDensity * vFogDepth * vFogDepth );',
+  'float fogFactor = 1.0 - exp( - fogDensity * vFogDepth );');
+const fogPatched = fogChunk !== THREE.ShaderChunk.fog_fragment;
+THREE.ShaderChunk.fog_fragment = fogChunk;
+// (If a Three update changed the chunk, the squared form still reaches 2% at the visibility.)
+scene.fog = new THREE.FogExp2(SKY, fogPatched ? 3.912 / VISIBILITY : Math.sqrt(3.912) / VISIBILITY);
 scene.add(new THREE.HemisphereLight('#dbeaf5', '#5b5040', 1.1));
 const sun = new THREE.DirectionalLight('#fff3dc', 2.2);
 scene.add(sun);
@@ -1696,12 +1707,13 @@ renderer.setAnimationLoop(() => {
     const done = !!focus.finished;
     // Pulls back only a little as the river grows, so a big river fills more
     // of the screen and the ground rushes past faster.
-    const back = (falling ? 1300 : done ? 700 : 560 + 50 * sz) + 900 * camRise, up = (falling ? 1100 : done ? 2600 : 300 + 40 * sz) + 2400 * camRise;
+    // On the ground it sits low (about 10 degrees down) so the land recedes to the horizon.
+    const back = (falling ? 1300 : done ? 700 : 520 + 50 * sz) + 900 * camRise, up = (falling ? 1100 : done ? 2600 : 190 + 30 * sz) + 2400 * camRise;
     const want = new THREE.Vector3(fx - view.x * back, Math.max(fy, 0) + up, fz - view.y * back);
     // Stay above the ground along the whole sightline, not just at the camera.
     for (let f = 0.25; f <= 1; f += 0.25) {
       const g = surfaceAt(world, fx - view.x * back * f, fz - view.y * back * f) * VERT;
-      want.y = Math.max(want.y, g + 120 + 220 * f);
+      want.y = Math.max(want.y, g + 70 + 110 * f);
     }
     const kXZ = cut ? 1 : 1 - Math.exp(-frameDt * 5);
     camera.position.x += (want.x - camera.position.x) * kXZ;
@@ -1709,9 +1721,13 @@ renderer.setAnimationLoop(() => {
     const kY = cut ? 1 : 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
     camera.position.y += (want.y - camera.position.y) * kY;
     camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
-    const ahead = (falling ? 600 : done ? 2200 : 380 + 80 * sz) + 2600 * camRise;
+    const ahead = (falling ? 600 : done ? 2200 : 600 + 80 * sz) + 2600 * camRise;
     camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), cut ? 1 : 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
+    // Trees standing between the camera and the head fade out (not while falling or finished).
+    treeFade.cam.value.copy(camera.position);
+    treeFade.focus.value.set(fx, fy + 30, fz);
+    treeFade.radius.value = falling || done ? 0 : 220 + 60 * sz;
     // Power: the view widens with speed, and a big, fast river shakes it.
     const fast = falling || done ? 0 : Math.min(1, (focus.speed ?? 0) / 260);
     const fov = baseFov * (1 + 0.22 * fast);
