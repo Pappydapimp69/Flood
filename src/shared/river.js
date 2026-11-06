@@ -75,6 +75,9 @@ export const TUNE = {
   stuckWear: 0.5, // ...and wears the ground the way it's pushing down this many metres a tick, times size...
   stuckWearCells: 3, // ...this many cells out along its heading
   stuckWearMax: 40, // metres the ground can be worn down
+  // A skill presses through (owner: skills are power and choice): blocked while boosted or surging, the head
+  // holds its heading and wears the rise ahead down this many metres a tick, times size (Surge half), up to pressWearMax.
+  pressWear: 4, pressWearMax: 90,
   beachRadius: 3000, // metres of coast either side of where the slope meets the sea: the one finish
   seaCurrent: 150, // m/s: the current that carries a river off the wrong coast along to the beach
   // Gouge, a skill: the head rears up and slams down, and for gougeBoost the
@@ -136,7 +139,8 @@ export const TUNE = {
   floorGap: 60, // lowest: this far over the ground, easing to 0 in the last 1.5 km
   dropCloudShare: 0.25, // descent clouds hold this share of cloudWater (they gave far too much)
   cloudSpread: 4500, // metres either side of the comet path the first clouds sit; they close in toward the start line
-  diveRate: 1.6, // ...diving falls up to this much faster (about 12 s)...
+  diveRate: 1.6,
+  diveSpeed: 0.5, floatSpeed: 0.3, // diving glides this much faster, floating this much slower // ...diving falls up to this much faster (about 12 s)...
   floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
   // Rain clouds hang in the sky over the summits: fall through one and its
   // water is yours, a bigger start; each can only be taken once.
@@ -592,7 +596,8 @@ function glide(world, r, steer, fwd, g = 0) {
       r.dx = ax * MAXC + az * sn * side; r.dz = az * MAXC - ax * sn * side;
     }
   }
-  const v = TUNE.glideSpeed * (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g);
+  // Diving trades height for speed (and floating, speed for height), on top of the stick's glide: capped at 2.2x.
+  const v = TUNE.glideSpeed * Math.min(2.2, (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g) * (fwd > 0 ? 1 + TUNE.diveSpeed * fwd : 1 + TUNE.floatSpeed * fwd));
   const heavy = 1 + TUNE.heavyFall * Math.max(0, r.size - 1); // cloud water makes a drop heavier: it falls faster
   r.glideV = v;
   const kx = r.kx ?? 0, kz = r.kz ?? 0; // a bump's knock, fading
@@ -1007,7 +1012,11 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   // below the lake, it goes where it's aimed (the slope doesn't turn it back).
   if (r.cutLake >= 0 && (onLake || here < lakeLevel(world, r.cutLake) - 1)) r.cutLake = -1;
   let mx = r.dx, mz = r.dz;
-  if (r.route !== null) {
+  // Under a skill the water goes exactly where it's aimed: no fall-line bend,
+  // no route round a rise (it presses through and erodes it instead, below).
+  const skilled = (r.boost > 0 || r.surgeT >= 0) && !onLake;
+  if (skilled) { r.route = null; r.stuck = false; }
+  if (skilled) { /* straight on the heading */ } else if (r.route !== null) {
     const d = routeDir();
     if (d) { mx = d.x; mz = d.z; } else r.route = null;
   } else if (!onLake && r.cutLake < 0 && gl >= TUNE.flatSlope) {
@@ -1150,6 +1159,19 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
     const d = routeDir();
     if (d) { mx = d.x; mz = d.z; nx = r.x + mx * v * DT; nz = r.z + mz * v * DT; }
   }
+  // A skill presses through: no bouncing off a rise while boosted or surging.
+  // The head holds its heading and wears the ground ahead down, and goes on
+  // as soon as it's through (the skill's speed floor keeps it pushing).
+  if ((r.boost > 0 || r.surgeT >= 0) && !onLake && r.route === null && surfaceAt(world, nx, nz, me) > ceiling) {
+    wearAhead(world, r, TUNE.pressWear * (r.boost > 0 ? 1 : 0.5), TUNE.pressWearMax);
+    if (surfaceAt(world, nx, nz, me) > ceiling) {
+      if (!r.pressing) world.events.push({ type: 'press', river: r.idx, tick: world.tick });
+      r.pressing = true;
+      r.depth = depthOf(r);
+      return; // held right here this tick, still pushing the way it's aimed
+    }
+  }
+  r.pressing = false;
   if (r.route === null && surfaceAt(world, nx, nz, me) > ceiling && gl > 1e-6) {
     // Slide along the contour, on the side the water is going.
     const ux = g.x / gl, uz = g.z / gl, d = mx * ux + mz * uz;
@@ -2183,7 +2205,7 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
 // down toward its pool's level (never below the sea). Its own spot isn't worn:
 // that would only sink it deeper. Worn ground is lower for everyone (it's the
 // land, not a channel), so in time the head breaks through where it's aimed.
-function wearAhead(world, r) {
+function wearAhead(world, r, amount = TUNE.stuckWear, most = TUNE.stuckWearMax) {
   if (predicting) return; // a preview never touches the ground
   const t = world.terrain, n = t.size, floor = r.low - TUNE.climb;
   const half = Math.max(t.cell * 0.6, widthOf(r) / 2), seen = new Set([cellIndex(t, r.x, r.z)]);
@@ -2196,8 +2218,8 @@ function wearAhead(world, r) {
       if (world.lakeOf[k] >= 0 || t.filled[k] <= SEA_LEVEL) continue;
       const ground = t.filled[k] + world.rock[k];
       if (ground <= floor) continue;
-      const wear = Math.min(ground - floor, TUNE.stuckWear * r.size * strength);
-      const lowest = Math.max(-TUNE.stuckWearMax, SEA_LEVEL + 0.5 - t.filled[k]);
+      const wear = Math.min(ground - floor, amount * r.size * strength);
+      const lowest = Math.max(-most, SEA_LEVEL + 0.5 - t.filled[k]);
       const was = world.rock[k], now = Math.max(lowest, was - wear);
       if (now >= was) continue;
       world.rock[k] = now;

@@ -1031,6 +1031,11 @@ function advance(inputs) {
       if (e.to === river.idx) { tug.gain.set(e.from, (tug.gain.get(e.from) ?? 0) + e.amount); audio.bubble(); }
       if (e.from === river.idx) tug.loss.set(e.to, (tug.loss.get(e.to) ?? 0) + e.amount);
       tug.lastTick = world.tick;
+    } else if (e.type === 'press') {
+      // A skill pressing through a rise: spray thrown up ahead, and the ground gives.
+      const pr = world.rivers[e.river], en = entries[e.river];
+      if (en) burstSpray(en.spray, pr.x + pr.dx * 60, surfaceAt(world, pr.x, pr.z) * VERT, pr.z + pr.dz * 60, 1.6 * pr.size, 50);
+      if (river && e.river === river.idx) { showPop('Pressing through — eroding the rise'); audio.gouge(pr.size); gougeShakeAt = performance.now() - 150; }
     } else if (e.type === 'bump') {
       // Two drops collided: spray where they met, and say what it cost you.
       const ra = world.rivers[e.a], rb = world.rivers[e.b], en = entries[e.a];
@@ -1248,7 +1253,7 @@ const COACH = [
 const TUTORIAL = [
   { drop: true, text: () => `${key('Push the <b>left stick</b> where you want to glide', 'Turn your falling drop with <b>← →</b>', 'Drag toward where you want to glide')}`, pass: (c) => c.steered > 8 },
   { drop: true, text: () => `${key('Push it <b>all the way</b> to glide fast', '', 'A <b>long drag</b> glides fast')}`, pass: (c) => c.glided || lowPower || !padSeen },
-  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: dive or float to reach a cloud's height`, pass: (c) => c.fell },
+  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: dive to go faster and lower, float to go slower and higher (clouds sit at different heights)`, pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
   { text: () => 'Follow the <b>gold beacons</b> down the course', pass: (c) => c.stage >= 2 },
@@ -1729,7 +1734,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · you land where you cross the start line · fly through clouds for water' : '← → steer · you land where you cross the start line · ↑ ↓ dive or float to a cloud\'s height')
+  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · you land where you cross the start line · fly through clouds for water' : '← → steer · you land where you cross the start line · ↑ dive: faster and lower · ↓ float: slower and higher')
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`
