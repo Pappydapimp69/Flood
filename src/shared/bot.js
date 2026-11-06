@@ -8,7 +8,31 @@ import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gou
 import { downhill } from './terrain.js';
 
 const OFFSETS = [-1.6, -0.7, -0.35, 0, 0.35, 0.7, 1.6]; // sideways share added to heading; + = left
-export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10 };
+// 2026-11-06 race pass (12 bots, seeds 4 5 8 11, median finish): 206 s as it was; skills whenever ready
+// + heading along the mapped route (aim 1) + deciding every 2 ticks + half the fear of deeper rivals: 182 s.
+// Steering alone (route traces, pursuit, think, hands-off) moved it under 4%, inside the noise.
+export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10, route: false, look: 3000, think: 2, surgeEager: false, handsOff: true, pursue: 0, aim: 1, aimLook: 1000, danger: 2, skills: true };
+
+// The shortest water route to the beach from (x, z), as the map shows it: step
+// to the neighbour nearest the beach (world.toBeach) until `metres` are covered.
+export function beachRoute(world, x, z, metres) {
+  const t = world.terrain, n = t.size;
+  let k = cellIndex(t, x, z), d = 0;
+  while (d < metres) {
+    const cx = k % n, cy = (k - cx) / n;
+    let best = k, bv = world.toBeach[k];
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = cx + dx, yy = cy + dy;
+      if ((!dx && !dy) || xx < 0 || yy < 0 || xx >= n || yy >= n) continue;
+      const kk = yy * n + xx;
+      if (world.toBeach[kk] < bv || (world.toBeach[kk] === bv && kk < best)) { bv = world.toBeach[kk]; best = kk; }
+    }
+    if (best === k) break;
+    d += t.cell * ((best % n !== cx && Math.floor(best / n) !== cy) ? Math.SQRT2 : 1);
+    k = best;
+  }
+  return { x: ((k % n) / (n - 1) - 0.5) * t.worldSize, z: (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize };
+}
 
 // Trace the water from r holding heading (hx, hz) (the player's flow guide uses it too): each step runs down the
 // local fall line bent toward the heading, until it would climb out of reach.
@@ -117,13 +141,13 @@ export function botSteer(world, bot) {
     return { s: bot.steer ?? 0, f: 0, k: 1 };
   }
   // Surge on the flat, where the water has slowed and nothing rises ahead.
-  if (!exposed && world.tick % 10 === (idPhase(r.id) + 5) % 10 && r.speed < TUNE.baseSpeed * 1.2 && r.inLake < 0 && surgeReady(world, r) && !gougeTarget(world, r)) {
+  if (!exposed && world.tick % 10 === (idPhase(r.id) + 5) % 10 && (TUNE_BOT.skills || r.speed < TUNE.baseSpeed * (TUNE_BOT.surgeEager ? 2 : 1.2)) && r.inLake < 0 && surgeReady(world, r) && !gougeTarget(world, r)) {
     return { s: bot.steer ?? 0, f: 0, u: 1 };
   }
   // Going nowhere (moving, but back and forth, or not at all) for 2 s: let
   // go of the stick for a few seconds so the water finds its own way out, the
   // way a player would. The game itself never steers.
-  if (world.tick % 40 === 0) {
+  if (TUNE_BOT.handsOff && world.tick % 40 === 0) {
     if (bot.at) {
       const moved = r.travelled - bot.at.t, net = Math.sqrt((r.x - bot.at.x) ** 2 + (r.z - bot.at.z) ** 2);
       if (r.pooled < 0 && net < Math.max(40, moved * 0.35)) bot.hands = world.tick + 60;
@@ -132,10 +156,18 @@ export function botSteer(world, bot) {
   }
   if (world.tick < (bot.hands ?? -1)) { bot.steer = 0; return 0; }
   if (world.tick < bot.next) return bot.steer;
-  bot.next = world.tick + bot.think;
+  bot.next = world.tick + (TUNE_BOT.think || bot.think);
 
   const t = world.terrain;
+  if (TUNE_BOT.pursue) {
+    // Map reading: aim at a point that far ahead along the shortest water route to the beach.
+    const p = beachRoute(world, r.x, r.z, TUNE_BOT.pursue);
+    const d = Math.hypot(p.x - r.x, p.z - r.z) || 1, cross = r.dx * (p.z - r.z) - r.dz * (p.x - r.x);
+    bot.steer = Math.abs(cross) < d * 0.05 ? 0 : cross < 0 ? -1 : 1;
+    return bot.steer;
+  }
   const here = world.toBeach[cellIndex(t, r.x, r.z)];
+  const goal = TUNE_BOT.aim ? beachRoute(world, r.x, r.z, TUNE_BOT.aimLook) : null; // where the map says the route goes
   const rivals = world.rivers.filter((o) => o !== r && isRacing(o));
   const scores = new Map();
   for (const a of OFFSETS) {
@@ -145,12 +177,14 @@ export function botSteer(world, bot) {
     hx /= hl; hz /= hl;
     // Where would the water actually go holding this heading? It runs down
     // the fall line bent toward the heading (see moveRiver), so trace it.
-    const path = flowFrom(world, r, hx, hz);
+    const path = TUNE_BOT.route ? routeAhead(world, r, hx, hz, TUNE_BOT.look).path : flowFrom(world, r, hx, hz);
+    if (!path.length) path.push({ x: r.x, z: r.z, d: 0, blocked: true });
     const end = path[path.length - 1];
     const travelled = Math.max(TUNE_BOT.step, end.d);
     let score = -Math.abs(a) * 0.12; // mild preference for going straight
     score += ((here - world.toBeach[cellIndex(t, end.x, end.z)]) / travelled) * 2; // progress toward the finish beach
     if (end.blocked) score -= 0.6;
+    if (goal) { const gx = goal.x - r.x, gz = goal.z - r.z, gl = Math.hypot(gx, gz) || 1; score += TUNE_BOT.aim * (hx * gx + hz * gz) / gl; } // heading along the mapped route
     const dx = (end.x - r.x) / (end.d || 1), dz = (end.z - r.z) / (end.d || 1);
     for (const p of path) {
       const w = 1 - p.d / 2000; // nearer matters more
@@ -168,7 +202,7 @@ export function botSteer(world, bot) {
         const owner = world.rivers[o];
         // Contact is a depth contest: avoid live water dug deeper than we cut,
         // and cross shallow channels on purpose to siphon them.
-        if (isRacing(owner)) score += (world.carve[k] > r.depth * 0.95 ? -4 * w : world.carve[k] < r.depth * 0.8 ? bot.aggression * 0.8 * w : 0) / path.length * 3;
+        if (isRacing(owner)) score += (world.carve[k] > r.depth * 0.95 ? -TUNE_BOT.danger * w : world.carve[k] < r.depth * 0.8 ? bot.aggression * 0.8 * w : 0) / path.length * 3;
       }
     }
     for (const o of rivals) {
@@ -177,7 +211,7 @@ export function botSteer(world, bot) {
       if (d > TUNE_BOT.sight) continue;
       const toward = (ox * dx + oz * dz) / (d || 1); // -1..1
       const near = 1 - d / TUNE_BOT.sight;
-      const danger = o.depth > r.depth * 0.95 ? -4 : o.depth < r.depth * 0.8 ? bot.aggression * 1.2 : 0;
+      const danger = o.depth > r.depth * 0.95 ? -TUNE_BOT.danger : o.depth < r.depth * 0.8 ? bot.aggression * 1.2 : 0;
       score += danger * toward * near * (1 + widthOf(o) / 400);
     }
     score += (bot.rng() - 0.5) * (1 - bot.skill) * 1.2;
