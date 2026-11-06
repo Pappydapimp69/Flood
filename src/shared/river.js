@@ -11,6 +11,7 @@ export const DT = 1 / TICK_HZ;
 export const TUNE = {
   turnStep: 0.06, // radians per tick at full steer, at starting size
   minSpeed: 18, // m/s, water always creeps
+  landCarry: 0.8, // share of the drop's glide speed the river keeps on landing (was none: landing was a hard brake)
   baseSpeed: 55, // m/s on level ground at starting size
   slopeSpeed: 1800, // m/s lost per unit of uphill slope (climbing)
   // Downhill, speed levels off instead of rising with steepness (T181, owner
@@ -828,7 +829,8 @@ function land(world, r) {
   if (len > 1e-9) { r.dx = -g.x / len; r.dz = -g.z / len; }
   r.born = world.tick;
   r.low = Infinity;
-  r.speed = TUNE.minSpeed;
+  // It hits the ground still moving: the glide carries into the river (then fades to what the ground allows).
+  r.speed = Math.max(TUNE.minSpeed, (r.glideV ?? 0) * TUNE.landCarry);
   pushPathPoint(world, r);
   world.events.push({ type: 'land', river: r.idx, tick: world.tick });
 }

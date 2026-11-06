@@ -1708,12 +1708,13 @@ renderer.setAnimationLoop(() => {
     // Pulls back only a little as the river grows, so a big river fills more
     // of the screen and the ground rushes past faster.
     // On the ground it sits low (about 10 degrees down) so the land recedes to the horizon.
-    const back = (falling ? 1300 : done ? 700 : 520 + 50 * sz) + 900 * camRise, up = (falling ? 1100 : done ? 2600 : 190 + 30 * sz) + 2400 * camRise;
+    // (Closer than it was, 1.2 km: the ground near the river now slides past fast enough to read as speed.)
+    const back = (falling ? 1300 : done ? 700 : 330 + 40 * sz) + 900 * camRise, up = (falling ? 1100 : done ? 2600 : 110 + 25 * sz) + 2400 * camRise;
     const want = new THREE.Vector3(fx - view.x * back, Math.max(fy, 0) + up, fz - view.y * back);
     // Stay above the ground along the whole sightline, not just at the camera.
     for (let f = 0.25; f <= 1; f += 0.25) {
       const g = surfaceAt(world, fx - view.x * back * f, fz - view.y * back * f) * VERT;
-      want.y = Math.max(want.y, g + 70 + 110 * f);
+      want.y = Math.max(want.y, g + 45 + 70 * f);
     }
     const kXZ = cut ? 1 : 1 - Math.exp(-frameDt * 5);
     camera.position.x += (want.x - camera.position.x) * kXZ;
@@ -1721,7 +1722,7 @@ renderer.setAnimationLoop(() => {
     const kY = cut ? 1 : 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
     camera.position.y += (want.y - camera.position.y) * kY;
     camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
-    const ahead = (falling ? 600 : done ? 2200 : 600 + 80 * sz) + 2600 * camRise;
+    const ahead = (falling ? 600 : done ? 2200 : 420 + 60 * sz) + 2600 * camRise;
     camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), cut ? 1 : 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
     // Trees standing between the camera and the head fade out (not while falling or finished).
