@@ -871,10 +871,9 @@ function sampleSteer() {
   let steer = dbg.forceSteer ?? input.sample();
   let f = river?.dropping ? (dbg.forceFwd ?? input.forward()) : 0;
   let g = river?.dropping ? input.glide() : 0;
-  // Falling, a drag aims the drop: it turns toward the dragged direction on
-  // screen; a long drag dives faster, a short one glides slower.
+  // Falling, the drag stick flies the drop (see dragAim).
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
-  if (aim) { steer = aim.s; f = aim.f; }
+  if (aim) { steer = aim.s; f = aim.f; g = aim.g; }
   if (coach) { if (f) coach.fell = true; if (g > 0) coach.glided = true; }
   dbg.steers.push(steer);
   watchCoach(steer);
@@ -895,28 +894,18 @@ function showStick() {
   stickEl.classList.toggle('far', len > STICK_FAR);
 }
 
-// The drag stick, read against the camera: screen up is the way the camera looks.
-// The aim is locked on the ground when the drag points somewhere new (the camera
-// swings round behind the drop as it turns, so re-reading it every tick would
-// keep turning); the drop turns until it faces the locked aim, then holds.
+// The drag stick on a phone works like a plane's one control stick: left / right
+// turns, up pushes the nose down (full throttle and a faster descent), down pulls
+// it up (no throttle, the descent slowed); let go and it cruises at half throttle.
 const STICK_MIN = 18, STICK_FAR = 70; // pixels
-let aimLock = null; // { ang (screen angle of the drag), x, z (world direction) }
 function dragAim() {
   const d = input.drag();
-  if (!d) { aimLock = null; return null; }
-  const len = Math.hypot(d.dx, d.dy);
-  if (len < STICK_MIN) return { s: 0, f: -1 }; // finger down, barely moved: hold course and glide slow
-  const ang = Math.atan2(d.dx, -d.dy);
-  if (!aimLock || Math.abs(Math.atan2(Math.sin(ang - aimLock.ang), Math.cos(ang - aimLock.ang))) > 0.17) {
-    const fx = camTarget.x - camera.position.x, fz = camTarget.z - camera.position.z, fl = Math.hypot(fx, fz) || 1;
-    const ux = fx / fl, uz = fz / fl; // screen up, on the ground; screen right is (-uz, ux)
-    const wx = -uz * d.dx + ux * -d.dy, wz = ux * d.dx + uz * -d.dy, wl = Math.hypot(wx, wz) || 1;
-    aimLock = { ang, x: wx / wl, z: wz / wl };
-  }
-  const cross = river.dx * aimLock.z - river.dz * aimLock.x, dot = river.dx * aimLock.x + river.dz * aimLock.z;
-  // Steering left (-1) turns the heading toward negative cross; within ~6 degrees, hold.
-  const s = dot > 0.995 ? 0 : cross < 0 ? -1 : 1;
-  return { s, f: len > STICK_FAR ? 1 : 0 };
+  if (!d) return null;
+  if (Math.hypot(d.dx, d.dy) < STICK_MIN) return { s: 0, f: 0, g: 0 }; // finger down, barely moved: cruise
+  const nx = Math.max(-1, Math.min(1, d.dx / STICK_FAR)), ny = Math.max(-1, Math.min(1, -d.dy / STICK_FAR)); // ny: up is +
+  const s = Math.abs(nx) > 0.35 ? Math.sign(nx) : 0; // right turns right (+1), as the keys and the pad do
+  const pitch = ny > 0.4 ? 1 : ny < -0.4 ? -1 : 0;
+  return { s, f: pitch, g: pitch };
 }
 
 function soloTick() {
@@ -1273,9 +1262,9 @@ const COACH = [
   { text: () => `Slow on the flat? <b>SURGE</b> (${key('RB', 'Q', 'tap')}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
 ];
 const TUTORIAL = [
-  { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Drag toward where you want to glide')}`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `${key('<b>Left stick ↑</b> is full throttle, centre half, <b>↓</b> none', '', 'A <b>long drag</b> glides fast')}`, pass: (c) => c.glided || lowPower || !padSeen },
-  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: <b>↑</b> descends faster, <b>↓</b> slows the descent, like flaps (clouds sit at different heights)`, pass: (c) => c.fell },
+  { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Drag <b>left or right</b> to turn')}`, pass: (c) => c.steered > 8 },
+  { drop: true, text: () => `${key('<b>Left stick ↑</b> is full throttle, centre half, <b>↓</b> none', '', 'Drag <b>up</b>: nose down, full speed and a faster descent')}`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag ↑ ↓')}</b>: <b>↑</b> descends faster, <b>↓</b> slows the descent, like flaps (clouds sit at different heights)`, pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
   { text: () => 'Follow the <b>gold beacons</b> down the course', pass: (c) => c.stage >= 2 },

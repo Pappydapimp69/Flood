@@ -91,3 +91,7 @@ A bot that lets a target go also peels away from it for 8 s when it's within 500
 tailgating. Over 12 islands, the time a non-ramming player spent within 350 m of a bot that had just hit
 them fell from 104 s to 23 s. The active player's descent kept its action (10 events; the longest gap
 was 19 s).
+On a phone, the one drag stick flies the drop like a plane's single control stick. Left and right turn.
+Up pushes the nose down: full throttle and a faster descent (g 1, f 1). Down pulls it up: no throttle and
+a slowed descent (g -1, f -1). Released, it cruises at half throttle. Aiming by screen direction is gone
+here too, matching the gamepad.

@@ -247,25 +247,34 @@ await check('sky drop: fall with a countdown and a landing marker, steer, land o
   await page.close();
 });
 
-await check('touch drop: a drag aims the fall toward it and holds', async () => {
+await check('touch drop: one drag stick flies it like a plane (left / right turns, up is nose down and fast)', async () => {
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   await page.goto(`${root}?seed=3&nohint&nointro&lite`);
   await until(page, (s) => s.ready && s.tick > 5, 'falling');
   const fire = (type, x, y) => page.evaluate(([type, x, y]) => document.querySelector('canvas').dispatchEvent(
     new PointerEvent(type, { pointerId: 9, pointerType: 'touch', clientX: x, clientY: y, bubbles: true })), [type, x, y]);
-  // Screen right on the ground when the drag starts: the drop should end up facing it.
-  // (A comet turns at most 70 degrees off the slope, so aim up and to the right.)
-  const right = await page.evaluate(() => { const t = __flood.camera.position.clone(); __flood.camera.getWorldDirection(t); const l = Math.hypot(t.x, t.z), fx = t.x / l, fz = t.z / l, rx = -fz, rz = fx; const ax = rx + fx, az = rz + fz, al = Math.hypot(ax, az); return { x: ax / al, z: az / al }; });
+  // Drag right: the drop turns right (steer +1), the stick is drawn under the finger.
+  await page.evaluate(() => { __flood.steers.length = 0; });
   await fire('pointerdown', 195, 600);
-  await fire('pointermove', 245, 550);
-  const t0 = (await state(page)).tick;
-  await until(page, (s) => s.tick > t0 + 30, '30 ticks of aiming');
-  const h = await page.evaluate(() => ({ x: __flood.river.dx, z: __flood.river.dz, stick: document.getElementById('stick').classList.contains('on') }));
-  if (!h.stick) throw new Error('no stick drawn under the finger');
-  const dot = h.x * right.x + h.z * right.z;
-  if (dot < 0.97) throw new Error(`drop did not turn to the drag: facing ${dot.toFixed(2)} of the aim`);
-  await fire('pointerup', 245, 550);
+  await fire('pointermove', 265, 600);
+  let t0 = (await state(page)).tick;
+  await until(page, (s) => s.tick > t0 + 10, '10 ticks of turning');
+  const turned = await page.evaluate(() => ({ steers: __flood.steers.slice(), stick: document.getElementById('stick').classList.contains('on') }));
+  if (!turned.stick) throw new Error('no stick drawn under the finger');
+  if (!turned.steers.includes(1)) throw new Error(`drag right gave steers ${turned.steers.join('')}`);
+  // Drag up: nose down, full throttle: the glide is well over the base 110 m/s.
+  await fire('pointermove', 195, 520);
+  t0 = (await state(page)).tick;
+  await until(page, (s) => s.tick > t0 + 10, '10 ticks nose down');
+  const fast = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
+  // Drag down: nose up, no throttle: well under it.
+  await fire('pointermove', 195, 680);
+  t0 = (await state(page)).tick;
+  await until(page, (s) => s.tick > t0 + 10, '10 ticks nose up');
+  const slow = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
+  await fire('pointerup', 195, 680);
+  if (fast >= 0 && slow >= 0 && !(fast > 150 && slow < 80)) throw new Error(`nose down ${fast.toFixed(0)} m/s, nose up ${slow.toFixed(0)} m/s`);
   await ctx.close();
 });
 
