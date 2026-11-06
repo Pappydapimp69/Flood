@@ -86,3 +86,8 @@ heading by how far the ground it can see drops, plus a weak sense of which way t
 every drop flew in, `TUNE_BOT.course`). Without that sense, 12 of 72 bots ran downhill to the wrong
 coast, travelling 40-80 km. With it, 7 of 144 don't finish, about as many as before. Median finish is
 206 s, against 211 s before. Growers are the slowest (227 s) but don't yet take more lakes than racers.
+A bot that lets a target go also peels away from it for 8 s when it's within 500 m and near its height
+(`TUNE_BOT.peel`, `peelTicks`). Brain's stunlock sandbox showed that hit caps stop the hits but not the
+tailgating. Over 12 islands, the time a non-ramming player spent within 350 m of a bot that had just hit
+them fell from 104 s to 23 s. The active player's descent kept its action (10 events; the longest gap
+was 19 s).
