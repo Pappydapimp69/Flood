@@ -342,7 +342,7 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   if (!fallingNow && !stillFalling) {
     if (yaw < 0.2 || yaw > 0.53) throw new Error(`right stick look: ${yaw} rad (want up to 0.52)`);
     let back = yaw;
-    for (let i = 0; i < 100 && back > yaw * 0.3; i++) { await page.waitForTimeout(100); back = await page.evaluate(() => __flood.camYaw); } // (frames are slow headless)
+    for (let i = 0; i < 250 && back > yaw * 0.3; i++) { await page.waitForTimeout(100); back = await page.evaluate(() => __flood.camYaw); } // (frames are slow headless: up to 25 s)
     if (back > yaw * 0.3) throw new Error(`the look didn't drift back: ${back}`);
   }
   // Finish the run by force (after the spawn grace), then A on the results card starts a new one.

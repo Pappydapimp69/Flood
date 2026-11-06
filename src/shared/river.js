@@ -504,7 +504,8 @@ export function spawnPoint(world, id) {
   return best;
 }
 
-const cometRun = () => TUNE.cometRun * TUNE.glideSpeed * TUNE.dropTicks * DT;
+// (world.dropScale shortens the descent for one world: the tutorial's is half as long.)
+const cometRun = (world) => TUNE.cometRun * TUNE.glideSpeed * TUNE.dropTicks * DT * (world?.dropScale ?? 1);
 // The height a drop's altitude counts from: the start line's (a comet flies
 // over the scenery behind, so not the ground under it).
 export const skyBase = (world) => spawnBand(world).target;
@@ -570,7 +571,7 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     // back from its start spot, so flying straight brings it down there.
     // It starts a glide's run straight back from the stretch of the start line
     // ahead of its spot, so flying straight brings every drop down in the same time.
-    const run = cometRun(), t = world.terrain, n = t.size, ax = river.dx, az = river.dz;
+    const run = cometRun(world), t = world.terrain, n = t.size, ax = river.dx, az = river.dz;
     const lat = (x, z) => -x * az + z * ax, v0 = lat(at.x, at.z);
     let best = -1, bd = Infinity;
     for (const k of startLine(world).cells) {
@@ -638,7 +639,7 @@ function glide(world, r, steer, fwd, g = 0) {
   const d = toLine(world, r.x, r.z), near = Math.min(1, d / 1500);
   const gnd = surfaceAt(world, r.x, r.z, r.idx) - skyBase(world); // the ground under it, from the start line's height
   const floor = gnd + TUNE.floorGap * near, ceil = Math.max(floor, d * TUNE.ceilSlope + gnd * (1 - near));
-  const rate = (TUNE.dropAlt / TUNE.dropTicks) * (fwd > 0 ? 1 + TUNE.diveRate * fwd : 1 + TUNE.floatRate * fwd) * heavy;
+  const rate = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * (fwd > 0 ? 1 + TUNE.diveRate * fwd : 1 + TUNE.floatRate * fwd) * heavy;
   r.alt = Math.min(ceil, Math.max(floor, r.alt - rate));
   const straight = Math.max(0, (line.t - slopeT(world, r.x, r.z)) * 2 * t.long * (t.worldSize / 2)); // flight distance to the line
   r.dropping = Math.max(1, Math.ceil(straight / (TUNE.glideSpeed * DT))); // ticks to the line at the base glide (the HUD's countdown)
@@ -661,7 +662,7 @@ export function skyClouds(world) {
   // Along the comet path in: each cloud sits where a steady fall passes at
   // its height, spread wide early on and closing in toward the middle of the
   // start line near the end, packed closer there, so the drops converge and bump.
-  const fair = spawnBand(world).cells, ax = t.axis.x, az = t.axis.y, run = cometRun();
+  const fair = spawnBand(world).cells, ax = t.axis.x, az = t.axis.y, run = cometRun(world);
   const sx = fair.reduce((a, k) => a + ((k % n) / (n - 1) - 0.5) * t.worldSize, 0) / fair.length;
   const sz = fair.reduce((a, k) => a + (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize, 0) / fair.length;
   world.clouds = Array.from({ length: TUNE.skyClouds }, (_, id) => {
@@ -744,7 +745,7 @@ export function descentLane(world) {
   const t = world.terrain, n = t.size, ax = t.axis.x, az = t.axis.y, line = startLine(world);
   const lats = line.cells.map((k) => { const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize; return -x * az + z * ax; }).sort((a, b) => a - b);
   const lo = lats[Math.floor(lats.length * 0.02)], hi = lats[Math.floor(lats.length * 0.98)];
-  world.lane = { c: (lo + hi) / 2, entry: ((hi - lo) / 2) * TUNE.laneEntry, end: ((hi - lo) / 2) * TUNE.laneEnd, run: cometRun(), uLine: (line.t * 2 * t.long - t.long) * (t.worldSize / 2) };
+  world.lane = { c: (lo + hi) / 2, entry: ((hi - lo) / 2) * TUNE.laneEntry, end: ((hi - lo) / 2) * TUNE.laneEnd, run: cometRun(world), uLine: (line.t * 2 * t.long - t.long) * (t.worldSize / 2) };
   return world.lane;
 }
 // The lane's half-width with `d` metres of flight still to go to the line.
