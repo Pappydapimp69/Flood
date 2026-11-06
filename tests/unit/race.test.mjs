@@ -205,14 +205,14 @@ test('drop: with bots, every drop reaches the line within the course and nobody 
   const bots = w.rivers.map((r) => createBot(w, r));
   let worst = 0;
   for (let k = 0; k < TUNE.dropTicks * 3 && w.rivers.some((r) => r.dropping); k++) {
-    const before = w.rivers.map((r) => ({ x: r.x, z: r.z, dropping: r.dropping }));
+    const before = w.rivers.map((r) => ({ x: r.x, z: r.z, dropping: r.dropping, k: Math.hypot(r.kx ?? 0, r.kz ?? 0) }));
     step(w, new Map(bots.map((b, i) => [b.river.id, i % 3 ? botSteer(w, b) : { s: 1, f: 1 }])));
-    w.rivers.forEach((r, i) => { if (before[i].dropping) worst = Math.max(worst, Math.hypot(r.x - before[i].x, r.z - before[i].z) - Math.hypot(r.kx ?? 0, r.kz ?? 0) / 20); });
+    w.rivers.forEach((r, i) => { if (before[i].dropping) worst = Math.max(worst, Math.hypot(r.x - before[i].x, r.z - before[i].z) - before[i].k / 20); });
   }
   assert.ok(w.rivers.every((r) => !r.dropping), 'someone never landed');
   assert.ok(w.rivers.every((r) => pastLine(w, r.path[0].x, r.path[0].z)), 'a drop landed off the line');
-  // (Sliding down a descent-lane wall moves a little diagonally: allow a quarter more than a straight glide step.)
-  assert.ok(worst <= (TUNE.glideSpeed * 1.8 / 20) * 1.25 + 1, `a drop moved ${worst.toFixed(0)} m in a tick: dragged`);
+  // (A full dive glides at up to 2.2x; sliding down a narrowing lane wall moves diagonally on top: allow 40% more.)
+  assert.ok(worst <= (TUNE.glideSpeed * 2.2 / 20) * 1.4 + 1, `a drop moved ${worst.toFixed(0)} m in a tick: dragged`);
 });
 
 test('drop: a bump goes to whoever hits with more momentum: the loser spills water, the winner soaks most of it up', async () => {

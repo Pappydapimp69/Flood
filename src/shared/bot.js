@@ -227,10 +227,13 @@ export function botSteer(world, bot) {
 // Falling: drift away from the nearest other drop, so bots land spread out.
 function botGlide(world, bot) {
   const r = bot.river, ax = world.terrain.axis.x, az = world.terrain.axis.y;
-  // A lighter drop close by: ram it (the one rammed loses more water).
-  let prey = null, pd = 700 * 700;
+  // A drop it can beat close by: ram it (the harder hitter wins the spill). An
+  // aggressive bot also takes on drops its own size and a little heavier, and
+  // looks further for them: the descent is a fight, not a queue.
+  const bold = bot.aggression ?? 0.5, reachM = 700 + 900 * bold;
+  let prey = null, pd = reachM * reachM;
   for (const o of world.rivers) {
-    if (o === r || !o.dropping || !isRacing(o) || o.volume >= r.volume || Math.abs(o.alt - r.alt) > TUNE.bumpDepth * 2) continue;
+    if (o === r || !o.dropping || !isRacing(o) || o.volume > r.volume * (0.98 + 0.2 * bold) || Math.abs(o.alt - r.alt) > TUNE.bumpDepth * 2) continue;
     const d = (o.x - r.x) ** 2 + (o.z - r.z) ** 2;
     if (d < pd && (o.x - r.x) * ax + (o.z - r.z) * az > -200) { pd = d; prey = o; }
   }
