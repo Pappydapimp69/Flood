@@ -74,3 +74,15 @@ The owner asked for plane-style controls in the descent. The left stick turns le
 up and down is the throttle: up is full (1.8x glide), centre is half (1x), back is none (0.4x). The
 right stick is the flaps: up descends faster, down slows the descent. Aiming by screen direction
 (`padAim`) is gone for the gamepad; touch still aims by drag. Frames are unchanged (s, g, f).
+
+## Update 2026-11-06: bot personalities, and no bot knows where the finish is
+The owner said bots were too fixated on the finish line. Each bot now draws a personality:
+- racer: mostly runs downhill.
+- grower: detours for full lakes it can see.
+- hunter: goes after smaller rivers. Hunters win about 50% more siphons than racers.
+
+No bot knows where the finish is until the finish beach is in its sight. Until then, a bot judges a
+heading by how far the ground it can see drops, plus a weak sense of which way the course runs (the way
+every drop flew in, `TUNE_BOT.course`). Without that sense, 12 of 72 bots ran downhill to the wrong
+coast, travelling 40-80 km. With it, 7 of 144 don't finish, about as many as before. Median finish is
+206 s, against 211 s before. Growers are the slowest (227 s) but don't yet take more lakes than racers.
