@@ -26,7 +26,7 @@ export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10, route:
   // a quarter less through trees and half as far past a ridge. No map, no view of the finish.
   view: 1200, viewTrees: 0.75, viewRidge: 0.5, eye: 8, course: 0.6,
   // In the descent: chase one drop for at most chase ticks (x0.5 to x1.5 by aggression) or chaseHits hits, then leave it be for spare ticks.
-  chase: 240, chaseHits: 2, spare: 600 };
+  chase: 240, chaseHits: 2, spare: 600, peel: 500, peelTicks: 160 };
 
 // The shortest water route to the beach from (x, z), as the map shows it: step
 // to the neighbour nearest the beach (world.toBeach) until `metres` are covered.
@@ -301,6 +301,14 @@ function botGlide(world, bot) {
   // Diving onto it from above closes the gap (a dive is faster): a drop flying straight ahead is still catchable.
   // Under it: float up to its height first (out of bump height, a chase never lands).
   if (prey) return { s: turnTo(r, prey.x, prey.z), f: r.alt > prey.alt + 40 ? 1 : r.alt < prey.alt - TUNE.bumpDepth * 0.6 ? -1 : 0, g: 1 };
+  // A drop it just let go of, still close by: peel away from it (backing off means leaving, not tailgating).
+  for (const o of world.rivers) {
+    const until = spared.get(o.id) ?? -1; // peel for the first peelTicks of the spare
+    if (o === r || !o.dropping || !(now < until && now < until - TUNE_BOT.spare + TUNE_BOT.peelTicks) || Math.abs(o.alt - r.alt) > TUNE.bumpDepth * 2) continue;
+    if ((o.x - r.x) ** 2 + (o.z - r.z) ** 2 > TUNE_BOT.peel ** 2) continue;
+    const away = turnTo(r, 2 * r.x - o.x, 2 * r.z - o.z);
+    return { s: away, f: r.alt >= o.alt ? -1 : 1, g: 1 }; // and open the height gap too
+  }
   // A rain cloud ahead it can still reach: go for it (crowds and all: that's where the fight is).
   let cloud = null, cd = Infinity, fast = false;
   for (const c of skyClouds(world)) {
