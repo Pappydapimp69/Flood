@@ -18,7 +18,7 @@ export const TUNE = {
   satSpeed: 90, satSlope: 0.015,
   climbDrag: 0.03, // share of speed a climb takes per tick at a 5% rise, boosted or not
   maxSpeed: 240,
-  speedEase: 0.12, // share of the way to target speed per tick, at starting size, speeding up...
+  speedEase: 0.2, // share of the way to target speed per tick, at starting size, speeding up (was 0.12: regaining speed felt slow)...
   slowEase: 0.03, // ...and slowing down (divided by size): carried speed halves in about 1.1 s, not 0.27 s
   climb: 1.5, // metres any head can rise over before it is blocked, before its head height
   headPerSize: 2, // metres the water stands at the head per unit of size: what it can push over
@@ -82,6 +82,7 @@ export const TUNE = {
   // it's aimed, without the climb bleeding its speed. The wind-up holds the
   // head still and open to rivals, and the slam spends water.
   gougeAdd: 1.5, // times base speed Gouge adds on top of the speed the head already has
+  gougeFloor: 140, // ...and at least this many m/s for the whole boost, from a standstill too; climbs can't drain it below
   gougeGrow: 0.5, // size it adds for the boost (a taller, deeper head; gone when the boost ends)
   gougeBoost: 60, // ticks the boost lasts (3 s)
   gougeLift: 80, // metres higher than usual the head can pass over while boosted
@@ -97,6 +98,7 @@ export const TUNE = {
   surgeOn: true,
   surgeTicks: 40, // ticks of burst (2 s)
   surgeAdd: 2, // times base speed Surge adds on top of the speed the head already has
+  surgeFloor: 110, // ...and at least this many m/s while it lasts
   surgeShare: 0.08, // share of volume each surge spends (min gougeMinCost)
   surgeCool: 160, // ticks from one surge to the next (8 s)
   // Skills unlock as a river grows (litres; once unlocked, kept), and share one
@@ -125,6 +127,8 @@ export const TUNE = {
   // The drop comes in like a comet: it starts this share of a steady glide's
   // run behind its start spot, so flying straight lands it there on time.
   cometRun: 1,
+  laneEntry: 1.25, // the descent lane's half-width where comets come in, as a share of the start line's half-span...
+  laneEnd: 1 / 6, // ...and at the line (its middle sixth, about 2.5 km: a third left bots where clouds already brought them)
   // The start line: every course cell this far from the beach by water (the fair
   // cells' median), so wherever a drop crosses it, the race ahead is the same length.
   lineTol: 0.004, // share of that distance either side drawn as the line
@@ -182,7 +186,8 @@ export const TUNE = {
   treeBreak: 1.3,
   treeHeight: 14, // (no longer a rise: see forestDrag)
   forestDrag: 0.35, // a small river among trees runs at this share of its speed
-  treeCost: 0.005, // share of its speed a river loses for every tree it knocks down
+  treeCost: 0.03, // share of its speed a head of size 1 loses per tick ploughing through forest its full width; divided by size
+  // A head breaks trees by force: size x speed / base speed >= treeBreak (a small fast head smashes through, a slow one is held up).
   // The heat front: from heatStart ticks (counted from the start of the drop)
   // a heat wave rolls down the mountain at heatSpeed m/s. It never touches a
   // river: the lakes behind it slowly dry out.
@@ -204,6 +209,7 @@ export const TUNE = {
   surgeCap: 1.6, // ...up to this many times its usual top speed
   surgeLift: 3, // metres a head running at base speed can carry up a rise (grows with speed squared)...
   surgeLiftMax: 40, // ...up to this
+  surgeHop: 20, // metres more a surging head can top, whatever its speed: Surge carries you over a slight hill, Gouge over a real one
   // Storms: one at a time, from stormStart and then stormGap after each has
   // gone, a storm blows in from one side of the island ahead of the pack and
   // sweeps across to the other,
@@ -607,6 +613,16 @@ function glide(world, r, steer, fwd, g = 0) {
       nx = r.x + (tx / tl) * m; nz = r.z + (tz / tl) * m;
     } else { nx = r.x; nz = r.z; }
   }
+  // The descent lane's walls: past one, slide back to it along the line of flight (no pull from inside).
+  {
+    const lane = descentLane(world), ax = t.axis.x, az = t.axis.y;
+    const lat = -nx * az + nz * ax, u = nx * ax + nz * az, half = laneHalf(lane, lane.uLine - u), off = lat - lane.c;
+    if (Math.abs(off) > half) {
+      // Against a wall: slide along it at the glide's speed (down the lane), not stall pressing into it.
+      const u0 = r.x * ax + r.z * az, uu = Math.max(u, u0 + v * DT * 0.9), h2 = laneHalf(lane, lane.uLine - uu), l2 = lane.c + Math.sign(off) * h2;
+      nx = ax * uu - az * l2; nz = az * uu + ax * l2;
+    }
+  }
   r.x = nx; r.z = nz;
   // Height is for the clouds: dive or float between a floor (just over the
   // ground) and a ceiling that closes in, so the drop meets the ground right at the line.
@@ -710,6 +726,21 @@ export function startLine(world) {
   world.line = { L, cells, set: new Set(cells), t: ts[ts.length >> 1] ?? 0.15 };
   return world.line;
 }
+// The descent lane: a triangle in the sky, the full width of the start line
+// where the comets come in, narrowing to its middle third at the line, so the
+// drops are brought together near the end (owner, 2026-11-06). Its walls only
+// stop a drop pushing into them: it slides along them, nothing pulls it in.
+export function descentLane(world) {
+  if (world.lane) return world.lane;
+  const t = world.terrain, n = t.size, ax = t.axis.x, az = t.axis.y, line = startLine(world);
+  const lats = line.cells.map((k) => { const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize; return -x * az + z * ax; }).sort((a, b) => a - b);
+  const lo = lats[Math.floor(lats.length * 0.02)], hi = lats[Math.floor(lats.length * 0.98)];
+  world.lane = { c: (lo + hi) / 2, entry: ((hi - lo) / 2) * TUNE.laneEntry, end: ((hi - lo) / 2) * TUNE.laneEnd, run: cometRun(), uLine: (line.t * 2 * t.long - t.long) * (t.worldSize / 2) };
+  return world.lane;
+}
+// The lane's half-width with `d` metres of flight still to go to the line.
+export const laneHalf = (lane, d) => lane.end + (lane.entry - lane.end) * Math.min(1, Math.max(0, d) / lane.run);
+
 // Is (x, z) on or past the start line, on the course?
 export function pastLine(world, x, z) {
   const t = world.terrain, k = cellIndex(t, x, z);
@@ -828,7 +859,7 @@ function startGouge(world, r) {
   grow(r, -cost);
   r.gougeAt = r.surgeAt = world.tick + TUNE.gougeCool; r.coolLen = TUNE.gougeCool; // one cooldown for both skills
   r.boost = TUNE.gougeBoost;
-  r.boostSpeed = r.speed + TUNE.baseSpeed * TUNE.gougeAdd * Math.max(1, r.mass ?? 1);
+  r.boostSpeed = Math.max(TUNE.gougeFloor, r.speed + TUNE.baseSpeed * TUNE.gougeAdd * Math.max(1, r.mass ?? 1));
   r.speed = r.boostSpeed;
   r.size = sizeOf(r.volume) + TUNE.gougeGrow;
   r.depth = depthOf(r);
@@ -898,7 +929,7 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
     const cost = Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare);
     // Like Gouge, it never stops the head: the speed it has is kept and Surge adds to it.
     grow(r, -cost); r.surgeT = 0; r.surgeAt = r.gougeAt = world.tick + TUNE.surgeCool; r.coolLen = TUNE.surgeCool;
-    r.surgeSpeed = r.speed + TUNE.baseSpeed * TUNE.surgeAdd * Math.max(1, r.mass ?? 1);
+    r.surgeSpeed = Math.max(TUNE.surgeFloor, r.speed + TUNE.baseSpeed * TUNE.surgeAdd * Math.max(1, r.mass ?? 1));
     r.speed = r.surgeSpeed;
     world.events.push({ type: 'surge-wind', river: r.idx, cost, tick: world.tick });
     world.events.push({ type: 'surge', river: r.idx, tick: world.tick });
@@ -1006,7 +1037,7 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   // Forest is rough ground (Manning's n for a wooded floodplain runs 3-4x
   // pasture's): a river too small to knock the trees down is slowed right
   // down among them, but never walled in; a big one flattens them.
-  const drag = world.trees?.[cHere] && r.size < TUNE.treeBreak ? TUNE.forestDrag : 1;
+  const drag = world.trees?.[cHere] && !breaksTrees(r) ? TUNE.forestDrag : 1;
   const target = (level ? Math.max(TUNE.baseSpeed * mass, Math.min(TUNE.maxSpeed * mass, r.speed * TUNE.levelGlide))
     : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + (along >= 0 ? TUNE.satSpeed * (1 - Math.exp(-along / TUNE.satSlope)) : TUNE.slopeSpeed * along)) * mass))) * drag;
   // Momentum: more water surges up to speed just as fast, but holds it
@@ -1016,8 +1047,8 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   if (!onLake && along < 0) {
     const keep = 1 - (TUNE.climbDrag * Math.min(1, -along / 0.05)) / Math.max(1, r.size) ** 1.5; // more water pushes further up
     r.speed *= keep;
-    if (r.boostSpeed) r.boostSpeed *= keep;
-    if (r.surgeSpeed) r.surgeSpeed *= keep;
+    if (r.boostSpeed) r.boostSpeed = Math.max(TUNE.gougeFloor, r.boostSpeed * keep); // a skill's floor holds on a climb
+    if (r.surgeSpeed) r.surgeSpeed = Math.max(TUNE.surgeFloor, r.surgeSpeed * keep);
   }
   if (r.boost > 0) r.speed = Math.max(r.speed, r.boostSpeed); // boosted: the speed it had plus the boost (less what climbs cost)
   if (r.surgeT >= 0) r.speed = Math.max(r.speed, r.surgeSpeed); // surging: its speed plus the surge
@@ -1798,9 +1829,12 @@ export function isLive(world, k) {
 // size, the fourth root), so a bigger river pushes over rises a small one can't.
 // How high the water can run up a rise: the head's height plus what its
 // speed carries it (fast water surges over bumps, slow water stops at them).
+// Does this head break trees? By force: size times speed (a small fast head smashes through, a slow one is held up).
+export const breaksTrees = (r) => (r.size ?? 1) * Math.max(r.speed ?? 0, TUNE.minSpeed) / TUNE.baseSpeed >= TUNE.treeBreak;
+
 export function liftOf(r) {
   const v = (r.speed ?? 0) / TUNE.baseSpeed;
-  return headOf(r) + Math.min(TUNE.surgeLiftMax, TUNE.surgeLift * v * v) + (r.boost > 0 ? TUNE.gougeLift * (r.size ?? 1) : 0);
+  return headOf(r) + Math.min(TUNE.surgeLiftMax, TUNE.surgeLift * v * v) + (r.boost > 0 ? TUNE.gougeLift * (r.size ?? 1) : 0) + (r.surgeT >= 0 ? TUNE.surgeHop : 0);
 }
 
 export function headOf(r) {
@@ -1872,7 +1906,7 @@ function setExit(world, r, lake) {
 // sea round the stands (the fill's tree runs straight through them).
 function wayOut(world, r, c) {
   const t = world.terrain, round = world.roundReach;
-  if (!round || r.size >= TUNE.treeBreak || round[c] < 0) return downhill(t, c);
+  if (!round || breaksTrees(r) || round[c] < 0) return downhill(t, c);
   const n = t.size, cx = c % n, cy = (c - cx) / n;
   let best = -1, bd = round[c];
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -2098,6 +2132,7 @@ function applyDigs(world) {
 function dig(world, { r, x: px, z: pz, width, depth, bed }) {
   const t = world.terrain, n = t.size, cell = t.cell;
   const rad = width / 2, feather = cell * 0.6;
+  let felled = 0, cells = 0; // trees knocked down here, of the cells the head covers
   const gx = (px / t.worldSize + 0.5) * (n - 1), gy = (pz / t.worldSize + 0.5) * (n - 1);
   const reach = Math.ceil((rad + feather) / cell);
   const cx = Math.round(gx), cy = Math.round(gy);
@@ -2109,14 +2144,15 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
       const d = Math.sqrt(ddx * ddx + ddy * ddy);
       if (d > rad + feather) continue;
       const k = y * n + x;
+      cells++;
       const ground = t.filled[k];
       if (ground <= SEA_LEVEL) continue;
       if (underWater(world, k)) continue; // rivers run over lakes, not through their beds: only banks erode
       if (world.trees[k]) {
         // A big river knocks the trees flat; a small one's water stops at them.
-        if (r.size < TUNE.treeBreak) continue;
+        if (!breaksTrees(r)) continue;
         fell(world, k);
-        r.speed *= 1 - TUNE.treeCost; // each tree it knocks down costs it a little momentum
+        felled++;
       }
       if (world.lava[k]) {
         // Water meets lava: it cools into rock instead of being dug.
@@ -2138,6 +2174,8 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
       if (world.owner[k] === r.idx && want > TUNE.contactDepth) world.dugAt[k] = world.tick;
     }
   }
+  // Ploughing through forest costs speed by the share of the head's footprint that was trees, less for more water.
+  if (felled && !predicting) r.speed *= 1 - (TUNE.treeCost * Math.min(1, felled / Math.max(1, cells))) / Math.max(1, r.size);
 }
 
 // A stuck river wears away the ground the way it's pushing: a strip as wide

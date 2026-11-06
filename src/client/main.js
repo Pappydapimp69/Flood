@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes, TUTORIAL as COURSE } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, startLine, pastLine, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, startLine, pastLine, descentLane, laneHalf, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, VERT } from './terrainMesh.js';
@@ -261,6 +261,30 @@ function updateWeather(time) {
     heatWall.material.opacity = 0.18 + 0.06 * Math.sin(time * 3);
   }
 }
+// The descent lane's walls: two glowing curtains in the sky narrowing to the
+// start line, shown while you fall, so being stopped at an edge reads as a wall.
+let laneMesh = null, laneWorld = null;
+function updateLane() {
+  if (laneWorld !== world) {
+    if (laneMesh) { scene.remove(laneMesh); laneMesh.geometry.dispose(); laneMesh.material.dispose(); }
+    laneWorld = world;
+    const lane = descentLane(world), ax = terrain.axis.x, az = terrain.axis.y, segs = 24, pos = [], idx = [];
+    const lo = skyY() - 600, hi = skyY() + TUNE.dropAlt + 1500;
+    for (const side of [-1, 1]) for (let i = 0; i <= segs; i++) {
+      const d = (lane.run * 1.15 * i) / segs, u = lane.uLine - d, lat = lane.c + side * laneHalf(lane, d);
+      const x = ax * u - az * lat, z = az * u + ax * lat, base = pos.length / 3;
+      pos.push(x, lo, z, x, hi, z);
+      if (i) idx.push(base - 2, base - 1, base, base - 1, base + 1, base);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setIndex(idx);
+    laneMesh = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: '#7fd8ff', transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }));
+    scene.add(laneMesh);
+  }
+  laneMesh.visible = !!river?.dropping && !mapView;
+}
+
 // Rain clouds in the sky during the drop: puffs of white, gone once taken.
 let skyMeshes = null, skyWorld = null, cloudShadows = [];
 let cloudGot = 0, cloudSaidAt = 0;
@@ -869,7 +893,7 @@ function padAim() {
   if (!v) return null;
   const len = Math.hypot(v.x, v.y);
   if (len < 0.3) return { s: null, g: -1 }; // let go: keep the heading and hover (slow glide) to wait for a cloud
-  const ax = terrain.axis.x, az = terrain.axis.y; // screen up, on the ground (down the slope)
+  const ax = camDir.x, az = camDir.y; // screen up, on the ground: the way the drop camera faces
   const wx = -az * v.x + ax * -v.y, wz = ax * v.x + az * -v.y, wl = Math.hypot(wx, wz) || 1; // screen right is (-az, ax)
   const cross = river.dx * (wz / wl) - river.dz * (wx / wl), dot = river.dx * (wx / wl) + river.dz * (wz / wl);
   return { s: dot > 0.995 ? 0 : cross < 0 ? -1 : 1, g: len > 0.85 ? 1 : 0 };
@@ -1559,6 +1583,7 @@ renderer.setAnimationLoop(() => {
   updateSpills(now / 1000);
   updateWeather(now / 1000);
   updateSkyClouds();
+  updateLane();
   followStorm();
   tickWater([sea, lakesMesh, ...entries.map((e) => e.surge)], now / 1000);
   showMarker(now, fx, fy, fz);
@@ -1603,12 +1628,20 @@ renderer.setAnimationLoop(() => {
     // looking down the slope (it never turns with the drop: no yaw, Brain T182),
     // so the clouds ahead sit at their true height beside you and the ground
     // shadows (yours and theirs) show where you are over it.
-    const ax = terrain.axis.x, az = terrain.axis.y, back = 1900, up = 700;
+    // It turns with the drop again, so steering reads, but never faster than
+    // 45 deg/s (Brain T182: visually induced sickness peaks at 60 deg/s).
+    if (cut) camDir.set(focus.dx, focus.dz).normalize();
+    else {
+      const ang = Math.atan2(camDir.x * focus.dz - camDir.y * focus.dx, camDir.x * focus.dx + camDir.y * focus.dz);
+      const turn = Math.sign(ang) * Math.min(Math.abs(ang) * (1 - Math.exp(-frameDt * 3)), 0.785 * frameDt);
+      camDir.rotateAround(new THREE.Vector2(0, 0), turn).normalize();
+      dbg.dropYawRate = Math.max(dbg.dropYawRate ?? 0, Math.abs(turn) / Math.max(frameDt, 1e-3));
+    }
+    const ax = camDir.x, az = camDir.y, back = 1900, up = 700;
     const k = cut ? 1 : 1 - Math.exp(-frameDt * 4);
     camera.position.lerp(new THREE.Vector3(fx - ax * back, fy + up, fz - az * back), k);
     camTarget.lerp(new THREE.Vector3(fx + ax * 1100, fy - 300, fz + az * 1100), k);
     camera.lookAt(camLook.copy(camTarget));
-    camDir.set(ax, az); // landing hands the chase camera this facing
     camYaw = 0;
     // A bump jolts the view.
     const jolt = gougeShakeAt ? Math.max(0, 1 - (now - gougeShakeAt) / 500) : 0;

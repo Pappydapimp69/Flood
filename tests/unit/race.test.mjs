@@ -212,7 +212,8 @@ test('drop: with bots, every drop reaches the line within the course and nobody 
   }
   assert.ok(w.rivers.every((r) => !r.dropping), 'someone never landed');
   assert.ok(w.rivers.every((r) => pastLine(w, r.path[0].x, r.path[0].z)), 'a drop landed off the line');
-  assert.ok(worst <= TUNE.glideSpeed * 1.8 / 20 + 1, `a drop moved ${worst.toFixed(0)} m in a tick: dragged`);
+  // (Sliding down a descent-lane wall moves a little diagonally: allow a quarter more than a straight glide step.)
+  assert.ok(worst <= (TUNE.glideSpeed * 1.8 / 20) * 1.25 + 1, `a drop moved ${worst.toFixed(0)} m in a tick: dragged`);
 });
 
 test('drop: drops that bump are knocked apart and both lose water to the sky, the rammed one more', async () => {
