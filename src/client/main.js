@@ -261,6 +261,23 @@ function updateWeather(time) {
     heatWall.material.opacity = 0.18 + 0.06 * Math.sin(time * 3);
   }
 }
+// The altimeter: while falling, a bar down the left edge with your height and
+// the clouds ahead at theirs, so you can see at a glance whether to dive or float.
+const altEl = document.getElementById('alti');
+function showAltimeter() {
+  if (!altEl) return;
+  const me = river, on = !!me?.dropping && !mapView;
+  altEl.hidden = !on;
+  if (!on) return;
+  const base = skyBase(world), gnd = surfaceAt(world, me.x, me.z) - base, top = TUNE.dropAlt * 1.05, bot = Math.min(0, gnd);
+  const y = (h) => `${(100 * (1 - (h - bot) / (top - bot))).toFixed(1)}%`;
+  const ax = me.dx, az = me.dz;
+  const marks = skyClouds(world).filter((c) => !c.low && c.water > 0 && (c.x - me.x) * ax + (c.z - me.z) * az > -200 && Math.hypot(c.x - me.x, c.z - me.z) < 3500)
+    .map((c) => { const level = Math.abs(c.alt - me.alt) <= TUNE.cloudDepth; return `<i class="cl${level ? ' lv' : ''}" style="top:${y(c.alt)}" title="cloud"></i>`; }).join('');
+  const html = `<b style="top:${y(gnd)}" class="gnd"></b>${marks}<em style="top:${y(me.alt)}">${Math.round(me.alt - gnd)} m</em>`;
+  if (altEl.innerHTML !== html) altEl.innerHTML = html;
+}
+
 // The descent lane's walls: two glowing curtains in the sky narrowing to the
 // start line, shown while you fall, so being stopped at an edge reads as a wall.
 let laneMesh = null, laneWorld = null;
@@ -1527,11 +1544,12 @@ renderer.setAnimationLoop(() => {
     e.streak.visible = !!r.dropping && !mapView;
     if (r.dropping) {
       // The tail points back along the fall: up, and against the glide.
-      tailDir.set(-r.dx * TUNE.glideSpeed, TUNE.dropAlt / (TUNE.dropTicks / TICK_HZ), -r.dz * TUNE.glideSpeed).normalize();
+      // (Your own tail is short and trails back along the flight: seen from behind, a long one stood up as a pillar.)
+      tailDir.set(-r.dx * (r.glideV ?? TUNE.glideSpeed), TUNE.dropAlt / (TUNE.dropTicks / TICK_HZ), -r.dz * (r.glideV ?? TUNE.glideSpeed)).normalize();
       e.streak.quaternion.setFromUnitVectors(UP, tailDir);
       e.streak.position.set(hx, hy, hz);
-      const wide = intro0 ? 110 : r === river ? 34 : 26;
-      e.streak.scale.set(wide, 1900, wide);
+      const mine = r === river && !intro0, wide = intro0 ? 110 : mine ? 22 : 26;
+      e.streak.scale.set(wide, mine ? 260 : 1200, wide);
     }
     if (r.dropping) e.head.scale.set((intro0 ? 120 : 40) * big, (intro0 ? 120 : 40) * big, (intro0 ? 120 : 40) * big);
     else {
@@ -1642,12 +1660,13 @@ renderer.setAnimationLoop(() => {
       camDir.rotateAround(new THREE.Vector2(0, 0), turn).normalize();
       dbg.dropYawRate = Math.max(dbg.dropYawRate ?? 0, Math.abs(turn) / Math.max(frameDt, 1e-3));
     }
-    const ax = camDir.x, az = camDir.y, back = 1900, up = 700;
+    const ax = camDir.x, az = camDir.y, back = 800, up = 280; // close behind: the ground and the clouds rush past
     const k = cut ? 1 : 1 - Math.exp(-frameDt * 4);
     camera.position.lerp(new THREE.Vector3(fx - ax * back, fy + up, fz - az * back), k);
-    camTarget.lerp(new THREE.Vector3(fx + ax * 1100, fy - 300, fz + az * 1100), k);
+    camTarget.lerp(new THREE.Vector3(fx + ax * 900, fy - 220, fz + az * 900), k);
     camera.lookAt(camLook.copy(camTarget));
     camYaw = 0;
+    showAltimeter();
     // A bump jolts the view.
     const jolt = gougeShakeAt ? Math.max(0, 1 - (now - gougeShakeAt) / 500) : 0;
     if (jolt > 0 && settings.shake) { camera.position.x += (Math.random() - 0.5) * 90 * jolt; camera.position.y += (Math.random() - 0.5) * 60 * jolt; }

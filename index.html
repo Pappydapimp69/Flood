@@ -75,6 +75,15 @@
       background: #0b2a36e6; color: #fff; font: 600 17px system-ui, sans-serif; padding: 10px 18px; border-radius: 14px;
       box-shadow: 0 4px 16px #0006; pointer-events: none; text-align: center; max-width: min(92vw, 560px); }
     #coach b { color: #ffcf3a; }
+    #alti { position: fixed; left: calc(18px + env(safe-area-inset-left, 0px)); top: 22%; height: 52%; width: 10px; border-radius: 5px;
+      background: linear-gradient(#cfe9ff55, #0e344288); box-shadow: 0 0 0 1px #ffffff55; pointer-events: none; }
+    #alti[hidden] { display: none; }
+    #alti .gnd { position: absolute; left: -6px; width: 22px; height: 3px; background: #6b8e23; transform: translateY(-50%); }
+    #alti i { position: absolute; left: -9px; width: 28px; height: 12px; border-radius: 6px; background: #f4f8ffe6; transform: translateY(-50%); }
+    #alti i.lv { background: #ffcf3a; }
+    #alti em { position: absolute; left: 16px; transform: translateY(-50%); font: 800 13px system-ui, sans-serif; color: #fff;
+      text-shadow: 0 1px 3px #000c; white-space: nowrap; font-style: normal; }
+    #alti em::before { content: "◀ "; color: #45d2ff; }
     #lesson { position: fixed; left: 50%; bottom: calc(12% + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 15;
       width: min(560px, calc(100vw - 32px)); box-sizing: border-box; background: #0b2a36f2; color: #eefaff; border-radius: 16px;
       padding: 16px 20px; font: 16px/1.45 system-ui, sans-serif; box-shadow: 0 6px 24px #0008; border: 2px solid #ffcf3a; cursor: pointer; }
@@ -190,6 +199,7 @@
   <div id="hud" hidden><h1>FLOOD</h1><div id="stats"><div id="rank"></div><div id="dist"></div><div id="litres"></div><div id="depth"></div><div id="time"></div></div></div>
   <div id="caption"></div>
   <div id="coach" hidden></div>
+  <div id="alti" hidden></div>
   <div id="lesson" hidden><h3></h3><p></p><small></small></div>
   <div id="finish"></div>
   <div id="build"></div>
