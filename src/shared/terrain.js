@@ -201,7 +201,9 @@ let inCourse = true, lastT = 0, lastSide = 0; // set by rawHeight for the cell i
 // Boulder outcrops down the course: rock no river passes over, Gouge or not
 // (taller than any boosted head reaches). Baked into the ground before the
 // fill, so water's routes, the map's distances and the bots all go round them.
-export const BOULDERS = { count: 26, height: 520, gap: 1600, from: 0.2, to: 0.93, side: 0.55 };
+// Rock domes of mixed height (owner: obstacles to plan for and overcome, not walls): half small (crest them
+// with speed or Surge), a third medium (Gouge or a big river), the rest tall (go round).
+export const BOULDERS = { count: 40, gap: 1100, from: 0.2, to: 0.93, side: 0.6, kinds: [[0.5, 10, 25, 2], [0.35, 40, 80, 3], [0.15, 150, 220, 3]] };
 
 // The three peaks' cells, where each summit cone stands highest.
 function summitCells(height, n, S) {
@@ -263,13 +265,16 @@ function placeBoulders(seed, n, cell, height, mask, along, across) {
     const k = Math.floor(rng() * n * n), cx = k % n, cy = (k - cx) / n;
     if (!mask[k] || height[k] <= 5 || along[k] < BOULDERS.from || along[k] > BOULDERS.to || across[k] > BOULDERS.side) continue;
     if (out.some((b) => Math.hypot(b.cx - cx, b.cy - cy) * cell < BOULDERS.gap)) continue;
-    const rad = 1 + Math.floor(rng() * 2); // 1-2 cells: an outcrop 200-500 m across
-    for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
-      const x = cx + dx, y = cy + dy, d = Math.hypot(dx, dy);
-      if (d > rad + 0.5 || x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
-      height[y * n + x] += BOULDERS.height * (d <= rad - 0.5 ? 1 : 0.6);
+    let pick = rng(), kind = BOULDERS.kinds[0];
+    for (const kd of BOULDERS.kinds) { if (pick < kd[0]) { kind = kd; break; } pick -= kd[0]; }
+    const h = kind[1] + rng() * (kind[2] - kind[1]), rad = kind[3] + rng(); // a dome, rad cells across its half
+    const R = Math.ceil(rad);
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      const x = cx + dx, y = cy + dy, q = (dx * dx + dy * dy) / (rad * rad);
+      if (q >= 1 || x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
+      height[y * n + x] += h * (1 - q) * (1 - q) * (1 + 0.15 * (rng() - 0.5)); // rounded, a little rough
     }
-    out.push({ cx, cy, rad });
+    out.push({ cx, cy, rad, h });
   }
   return out;
 }
