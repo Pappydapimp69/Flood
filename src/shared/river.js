@@ -167,6 +167,7 @@ export const TUNE = {
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
   bumpRadius: 350, // metres (was 220: rams rarely landed)
   bumpDepth: 300, // metres of height
+  dropCalm: 90, // ticks at the start of a descent (the 4.5 s opening shot) when no drop can bump or be bumped
   // Slipstream: flying within draftLength behind another drop (draftWidth either
   // side, within bumpDepth of its height) glides draftBoost faster, past the stick's cap.
   draftLength: 600, draftWidth: 120, draftBoost: 0.2,
@@ -176,6 +177,9 @@ export const TUNE = {
   bumpLoss: 0.02, // share of volume lost to a knock as fast as the base glide (head-on at full glide: about 4%)
   bumpLossMax: 0.08, // most of its volume a drop can lose to one bump
   bumpCool: 40, // ticks before the same two drops can bump again
+  // Anti-bullying: the drop hit darts away (bumpBurst faster for bumpBurstTicks), the
+  // hitter is checked (bumpRecoil of its glide for bumpRecoilTicks), so a chaser can't pin a drop.
+  bumpBurst: 0.6, bumpBurstTicks: 10, bumpRecoil: 0.5, bumpRecoilTicks: 20,
   bumpTransfer: 0.7, // share of the loser's spill the winner of a bump soaks up (the rest goes to the sky)
   bumpSteal: true, // the side with more momentum into the hit wins it (Brain flood#E122: the winner must gain; dlist#E71: damage by momentum)
   bumpWinLoss: 0.15, // the winner still spills this share of what the loser does
@@ -608,7 +612,11 @@ function glide(world, r, steer, fwd, g = 0) {
   // On the floor there is no height left to trade: a dive there is no faster.
   const dive = fwd > 0 && r.onFloor ? 0 : fwd;
   const v = TUNE.glideSpeed * Math.min(2.2, (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g) * (dive > 0 ? 1 + TUNE.diveSpeed * dive : 1 + TUNE.floatSpeed * dive));
-  const vDraft = r.draft ? v * (1 + TUNE.draftBoost) : v;
+  // After a bump: the drop that was hit darts away for a moment, the one that hit is checked.
+  const kick = (r.burstT > 0 ? 1 + TUNE.bumpBurst : 1) * (r.recoilT > 0 ? TUNE.bumpRecoil : 1);
+  if (r.burstT > 0) r.burstT--;
+  if (r.recoilT > 0) r.recoilT--;
+  const vDraft = (r.draft ? v * (1 + TUNE.draftBoost) : v) * kick;
   const heavy = 1 + TUNE.heavyFall * Math.max(0, r.size - 1); // cloud water makes a drop heavier: it falls faster
   r.glideV = v;
   const kx = r.kx ?? 0, kz = r.kz ?? 0; // a bump's knock, fading
@@ -1380,6 +1388,9 @@ export function heatFront(world) {
 // fading sideways knock, and each loses water to spray (into the sky store) in
 // proportion to how hard it was knocked. Pairs in id order, so the result never
 // depends on the order rivers were added.
+// The descent's opening (the client's comet shot): no bumps while it plays.
+export const calm = (r) => (r.fallT ?? 0) < TUNE.dropCalm;
+
 function dropBumps(world) {
   const falling = world.rivers.filter((r) => isRacing(r) && r.dropping).sort(byId);
   // Slipstream: a drop flying close behind another, at its height, glides faster
@@ -1396,6 +1407,7 @@ function dropBumps(world) {
     const a = falling[i], b = falling[j];
     const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
     if (d > TUNE.bumpRadius || Math.abs(a.alt - b.alt) > TUNE.bumpDepth) continue;
+    if (calm(a) || calm(b)) continue; // the opening shot: nobody can be hit while they can't steer
     const key = `${a.id}|${b.id}`;
     if (world.tick < (bumps.get(key) ?? -1)) continue;
     const nx = d > 1e-6 ? dx / d : 1, nz = d > 1e-6 ? dz / d : 0;
@@ -1426,9 +1438,14 @@ function dropBumps(world) {
       const take = TUNE.bumpTransfer * Math.max(la, lb);
       if (la < lb) ga = take; else gb = take;
     }
+    // The hitter (more of its own speed into the other) is checked: slowed for a second.
+    // The one hit darts away, faster for half a second, so a bump never pins a drop down.
+    const aHits = ca > cb || (ca === cb && a.id < b.id), [hitter, hit] = aHits ? [a, b] : [b, a];
+    hitter.recoilT = TUNE.bumpRecoilTicks; hit.burstT = TUNE.bumpBurstTicks;
+    hit.hitBy = { id: hitter.id, tick: world.tick };
     grow(a, ga - la); grow(b, gb - lb);
     world.sky = (world.sky ?? 0) + la + lb - ga - gb;
-    world.events.push({ type: 'bump', a: a.idx, b: b.idx, lossA: la, lossB: lb, gainA: ga, gainB: gb, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, tick: world.tick });
+    world.events.push({ type: 'bump', a: a.idx, b: b.idx, hitter: hitter.idx, lossA: la, lossB: lb, gainA: ga, gainB: gb, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, tick: world.tick });
   }
 }
 

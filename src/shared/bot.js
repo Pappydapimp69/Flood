@@ -4,14 +4,20 @@
 // randomness comes from its own id-keyed stream.
 
 import { stream } from './rng.js';
-import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, DT, TUNE } from './river.js';
+import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, slopeT, DT, TUNE } from './river.js';
 import { downhill } from './terrain.js';
 
-const OFFSETS = [-1.6, -0.7, -0.35, 0, 0.35, 0.7, 1.6]; // sideways share added to heading; + = left
+// Headings a bot weighs: straight and up to 30 degrees either side (all it can see).
+const OFFSETS = [-Math.tan(Math.PI / 6), -0.35, -0.17, 0, 0.17, 0.35, Math.tan(Math.PI / 6)]; // sideways share added to heading; + = left
 // 2026-11-06 race pass (12 bots, seeds 4 5 8 11, median finish): 206 s as it was; skills whenever ready
 // + heading along the mapped route (aim 1) + deciding every 2 ticks + half the fear of deeper rivals: 182 s.
 // Steering alone (route traces, pursuit, think, hands-off) moved it under 4%, inside the noise.
-export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10, route: false, look: 3000, think: 2, surgeEager: false, handsOff: true, pursue: 0, aim: 1, aimLook: 1000, danger: 2, skills: true };
+export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10, route: false, look: 3000, think: 2, surgeEager: false, handsOff: true, pursue: 0, aim: 0, aimLook: 1000, danger: 2, skills: true,
+  // Line of sight for finding a way: this far ahead (within 30 degrees either side),
+  // a quarter less through trees and half as far past a ridge. No map, no view of the finish.
+  view: 1200, viewTrees: 0.75, viewRidge: 0.5, eye: 8,
+  // In the descent: chase one drop for at most chase ticks (x0.5 to x1.5 by aggression) or chaseHits hits, then leave it be for spare ticks.
+  chase: 240, chaseHits: 2, spare: 600 };
 
 // The shortest water route to the beach from (x, z), as the map shows it: step
 // to the neighbour nearest the beach (world.toBeach) until `metres` are covered.
@@ -166,7 +172,7 @@ export function botSteer(world, bot) {
     bot.steer = Math.abs(cross) < d * 0.05 ? 0 : cross < 0 ? -1 : 1;
     return bot.steer;
   }
-  const here = world.toBeach[cellIndex(t, r.x, r.z)];
+  const here = slopeT(world, r.x, r.z), metres = 2 * t.long * (t.worldSize / 2); // progress down the island, as anyone can see it
   const goal = TUNE_BOT.aim ? beachRoute(world, r.x, r.z, TUNE_BOT.aimLook) : null; // where the map says the route goes
   const rivals = world.rivers.filter((o) => o !== r && isRacing(o));
   const scores = new Map();
@@ -177,12 +183,13 @@ export function botSteer(world, bot) {
     hx /= hl; hz /= hl;
     // Where would the water actually go holding this heading? It runs down
     // the fall line bent toward the heading (see moveRiver), so trace it.
-    const path = TUNE_BOT.route ? routeAhead(world, r, hx, hz, TUNE_BOT.look).path : flowFrom(world, r, hx, hz);
+    const seen = sightAlong(world, r, hx, hz);
+    const path = (TUNE_BOT.route ? routeAhead(world, r, hx, hz, TUNE_BOT.look).path : flowFrom(world, r, hx, hz)).filter((p) => p.d <= seen);
     if (!path.length) path.push({ x: r.x, z: r.z, d: 0, blocked: true });
     const end = path[path.length - 1];
     const travelled = Math.max(TUNE_BOT.step, end.d);
     let score = -Math.abs(a) * 0.12; // mild preference for going straight
-    score += ((here - world.toBeach[cellIndex(t, end.x, end.z)]) / travelled) * 2; // progress toward the finish beach
+    score += (((slopeT(world, end.x, end.z) - here) * metres) / travelled) * 2; // progress down the island, as far as it can see
     if (end.blocked) score -= 0.6;
     if (goal) { const gx = goal.x - r.x, gz = goal.z - r.z, gl = Math.hypot(gx, gz) || 1; score += TUNE_BOT.aim * (hx * gx + hz * gz) / gl; } // heading along the mapped route
     const dx = (end.x - r.x) / (end.d || 1), dz = (end.z - r.z) / (end.d || 1);
@@ -224,18 +231,49 @@ export function botSteer(world, bot) {
   return bot.steer;
 }
 
+// How far a bot can see along heading (hx, hz): TUNE_BOT.view, a quarter less
+// if trees stand in the way, half as far if the ground rises above its eye (a ridge).
+function sightAlong(world, r, hx, hz) {
+  const t = world.terrain, eye = surfaceAt(world, r.x, r.z, r.idx) + TUNE_BOT.eye, stepM = t.cell * 2;
+  let trees = false, ridge = false;
+  for (let d = stepM; d <= TUNE_BOT.view; d += stepM) {
+    const x = r.x + hx * d, z = r.z + hz * d, k = cellIndex(t, x, z);
+    if (world.trees?.[k]) trees = true;
+    if (t.filled[k] > eye) ridge = true;
+  }
+  return TUNE_BOT.view * (trees ? TUNE_BOT.viewTrees : 1) * (ridge ? TUNE_BOT.viewRidge : 1);
+}
+
 // Falling: drift away from the nearest other drop, so bots land spread out.
 function botGlide(world, bot) {
   const r = bot.river, ax = world.terrain.axis.x, az = world.terrain.axis.y;
   // A drop it can beat close by: ram it (the harder hitter wins the spill). An
   // aggressive bot also takes on drops its own size and a little heavier, and
   // looks further for them: the descent is a fight, not a queue.
-  const bold = bot.aggression ?? 0.5, reachM = 700 + 900 * bold;
-  let prey = null, pd = reachM * reachM;
-  for (const o of world.rivers) {
-    if (o === r || !o.dropping || !isRacing(o) || o.volume > r.volume * (0.98 + 0.2 * bold) || Math.abs(o.alt - r.alt) > TUNE.bumpDepth * 2) continue;
-    const d = (o.x - r.x) ** 2 + (o.z - r.z) ** 2;
-    if (d < pd && (o.x - r.x) * ax + (o.z - r.z) * az > -200) { pd = d; prey = o; }
+  // A chase has a time limit: after it, that drop is left alone for a while and the
+  // bot looks for another in range. Bumped by some other drop, it turns on that one.
+  const bold = bot.aggression ?? 0.5, reachM = 700 + 900 * bold, now = world.tick;
+  const spared = (bot.spared ??= new Map());
+  const fair = (o) => o !== r && o.dropping && isRacing(o) && !calm(o) && !calm(r) && Math.abs(o.alt - r.alt) <= TUNE.bumpDepth * 2 && (o.x - r.x) ** 2 + (o.z - r.z) ** 2 <= reachM * reachM && now >= (spared.get(o.id) ?? -1);
+  let prey = null;
+  if (r.hitBy && now - r.hitBy.tick < 10 && r.hitBy.id !== bot.prey?.id) {
+    const o = world.rivers.find((x) => x.id === r.hitBy.id);
+    if (o && fair(o)) bot.prey = { id: o.id, until: now + TUNE_BOT.chase * (0.5 + bold) };
+  }
+  if (bot.prey) {
+    const o = world.rivers.find((x) => x.id === bot.prey.id);
+    // A hit it landed on its target (the target's hitBy names it): two and it moves on.
+    if (o?.hitBy?.id === r.id && o.hitBy.tick !== bot.prey.lastHit) { bot.prey.lastHit = o.hitBy.tick; bot.prey.hits = (bot.prey.hits ?? 0) + 1; }
+    if (now >= bot.prey.until || (bot.prey.hits ?? 0) >= TUNE_BOT.chaseHits || !o || !fair(o)) { spared.set(bot.prey.id, now + TUNE_BOT.spare); bot.prey = null; } else prey = o;
+  }
+  if (!prey) {
+    let pd = Infinity;
+    for (const o of world.rivers) {
+      if (!fair(o) || o.volume > r.volume * (0.98 + 0.2 * bold)) continue;
+      const d = (o.x - r.x) ** 2 + (o.z - r.z) ** 2;
+      if (d < pd && (o.x - r.x) * ax + (o.z - r.z) * az > -200) { pd = d; prey = o; }
+    }
+    if (prey) bot.prey = { id: prey.id, until: now + TUNE_BOT.chase * (0.5 + bold) };
   }
   // Diving onto it from above closes the gap (a dive is faster): a drop flying straight ahead is still catchable.
   // Under it: float up to its height first (out of bump height, a chase never lands).
