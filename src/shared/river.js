@@ -163,6 +163,7 @@ export const TUNE = {
   bumpLoss: 0.02, // share of volume lost to a knock as fast as the base glide (head-on at full glide: about 4%)
   bumpLossMax: 0.08, // most of its volume a drop can lose to one bump
   bumpCool: 40, // ticks before the same two drops can bump again
+  bumpTransfer: 0, // share of the loser's spill the winner of a bump takes (T198's B pole; 0 = both lose, the owner's rule)
   zoneSlack: 2400, // metres a falling drop may stray from the landing rings: wide enough to glide to another mountain's
   glideTurn: 0.08, // radians per tick while falling: a full circle in about 4 s
   startElevation: 0.91, // starts ring each summit cone this far up its peak
@@ -1337,7 +1338,10 @@ function dropBumps(world) {
     const lose = (r, k, ram) => Math.min(r.volume * TUNE.bumpLossMax, r.volume * TUNE.bumpLoss * (k / TUNE.glideSpeed) * (1.5 - ram));
     const la = lose(a, ka, ramA), lb = lose(b, kb, 1 - ramA);
     grow(a, -la); grow(b, -lb);
-    world.sky = (world.sky ?? 0) + la + lb;
+    // (T198 B pole, off by default: the one that lost less takes a share of the other's spill.)
+    const take = TUNE.bumpTransfer * Math.max(la, lb);
+    if (take > 0) grow(la < lb ? a : b, take);
+    world.sky = (world.sky ?? 0) + la + lb - take;
     world.events.push({ type: 'bump', a: a.idx, b: b.idx, lossA: la, lossB: lb, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, tick: world.tick });
   }
 }
