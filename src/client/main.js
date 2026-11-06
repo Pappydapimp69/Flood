@@ -182,7 +182,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (falling: push where you want to go, all the way to glide fast) · right stick up / down: fall faster / slower; once landed it looks around, up for a raised view · A: gouge (select / race again in menus) · RB: surge · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (falling: left / right turns, up is full throttle, centre half, back none) · right stick up / down: falling, dive / slow the fall; once landed it looks around, up for a raised view · A: gouge (select / race again in menus) · RB: surge · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -864,8 +864,6 @@ function sampleSteer() {
   // screen; a long drag dives faster, a short one glides slower.
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
   if (aim) { steer = aim.s; f = aim.f; }
-  const pa = river?.dropping && dbg.forceSteer === undefined ? padAim() : null;
-  if (pa) { if (pa.s !== null) steer = pa.s; g = pa.g; }
   if (coach) { if (f) coach.fell = true; if (g > 0) coach.glided = true; }
   dbg.steers.push(steer);
   watchCoach(steer);
@@ -908,22 +906,6 @@ function dragAim() {
   // Steering left (-1) turns the heading toward negative cross; within ~6 degrees, hold.
   const s = dot > 0.995 ? 0 : cross < 0 ? -1 : 1;
   return { s, f: len > STICK_FAR ? 1 : 0 };
-}
-
-// Falling, the camera looks straight down with the beach at the top of the
-// screen and never turns (Brain T182: no yaw to make anyone sick), so the left
-// stick / D-pad aims the drop by SCREEN direction: push where you want to go and
-// the drop turns that way; push all the way to glide fast (opticon#E42: map
-// input through the view the player actually sees).
-function padAim() {
-  const v = input.stick();
-  if (!v) return null;
-  const len = Math.hypot(v.x, v.y);
-  if (len < 0.3) return { s: null, g: -1 }; // let go: keep the heading and hover (slow glide) to wait for a cloud
-  const ax = camDir.x, az = camDir.y; // screen up, on the ground: the way the drop camera faces
-  const wx = -az * v.x + ax * -v.y, wz = ax * v.x + az * -v.y, wl = Math.hypot(wx, wz) || 1; // screen right is (-az, ax)
-  const cross = river.dx * (wz / wl) - river.dz * (wx / wl), dot = river.dx * (wx / wl) + river.dz * (wz / wl);
-  return { s: dot > 0.995 ? 0 : cross < 0 ? -1 : 1, g: len > 0.85 ? 1 : 0 };
 }
 
 function soloTick() {
@@ -1280,9 +1262,9 @@ const COACH = [
   { text: () => `Slow on the flat? <b>SURGE</b> (${key('RB', 'Q', 'tap')}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
 ];
 const TUTORIAL = [
-  { drop: true, text: () => `${key('Push the <b>left stick</b> where you want to glide', 'Turn your falling drop with <b>← →</b>', 'Drag toward where you want to glide')}`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `${key('Push it <b>all the way</b> to glide fast', '', 'A <b>long drag</b> glides fast')}`, pass: (c) => c.glided || lowPower || !padSeen },
-  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: dive to go faster and lower, float to go slower and higher (clouds sit at different heights)`, pass: (c) => c.fell },
+  { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Drag toward where you want to glide')}`, pass: (c) => c.steered > 8 },
+  { drop: true, text: () => `${key('<b>Left stick ↑</b> is full throttle, centre half, <b>↓</b> none', '', 'A <b>long drag</b> glides fast')}`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag far or near')}</b>: <b>↑</b> descends faster, <b>↓</b> slows the descent, like flaps (clouds sit at different heights)`, pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
   { text: () => 'Follow the <b>gold beacons</b> down the course', pass: (c) => c.stage >= 2 },
