@@ -4,8 +4,17 @@
 // randomness comes from its own id-keyed stream.
 
 import { stream } from './rng.js';
-import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, slopeT, DT, TUNE } from './river.js';
+import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, DT, TUNE } from './river.js';
 import { downhill } from './terrain.js';
+
+// Each bot has a personality: what it weighs, besides running downhill.
+// racer: downhill first. grower: detours for full lakes. hunter: goes after smaller rivers.
+// (None knows where the finish is until it sees the finish beach.)
+export const PERSONAS = [
+  { name: 'racer', down: 2, lake: 0.6, hunt: 0.4, fear: 1 },
+  { name: 'grower', down: 1.5, lake: 2.2, hunt: 0.5, fear: 1 },
+  { name: 'hunter', down: 1.5, lake: 0.8, hunt: 2.2, fear: 0.6 },
+];
 
 // Headings a bot weighs: straight and up to 30 degrees either side (all it can see).
 const OFFSETS = [-Math.tan(Math.PI / 6), -0.35, -0.17, 0, 0.17, 0.35, Math.tan(Math.PI / 6)]; // sideways share added to heading; + = left
@@ -15,7 +24,7 @@ const OFFSETS = [-Math.tan(Math.PI / 6), -0.35, -0.17, 0, 0.17, 0.35, Math.tan(M
 export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10, route: false, look: 3000, think: 2, surgeEager: false, handsOff: true, pursue: 0, aim: 0, aimLook: 1000, danger: 2, skills: true,
   // Line of sight for finding a way: this far ahead (within 30 degrees either side),
   // a quarter less through trees and half as far past a ridge. No map, no view of the finish.
-  view: 1200, viewTrees: 0.75, viewRidge: 0.5, eye: 8,
+  view: 1200, viewTrees: 0.75, viewRidge: 0.5, eye: 8, course: 0.6,
   // In the descent: chase one drop for at most chase ticks (x0.5 to x1.5 by aggression) or chaseHits hits, then leave it be for spare ticks.
   chase: 240, chaseHits: 2, spare: 600 };
 
@@ -129,6 +138,7 @@ export function createBot(world, river, skill) {
     skill: skill ?? 0.45 + rng() * 0.5, // 0..1: less noise, more lake-seeking
     aggression: rng(), // appetite for chasing smaller rivals
     think: 4 + Math.floor(rng() * 4), // ticks between decisions
+    persona: PERSONAS[Math.floor(rng() * PERSONAS.length)],
     next: 0,
     steer: 0,
   };
@@ -172,7 +182,7 @@ export function botSteer(world, bot) {
     bot.steer = Math.abs(cross) < d * 0.05 ? 0 : cross < 0 ? -1 : 1;
     return bot.steer;
   }
-  const here = slopeT(world, r.x, r.z), metres = 2 * t.long * (t.worldSize / 2); // progress down the island, as anyone can see it
+  const P = bot.persona ?? PERSONAS[0]; // water knows downhill, not where the finish is
   const goal = TUNE_BOT.aim ? beachRoute(world, r.x, r.z, TUNE_BOT.aimLook) : null; // where the map says the route goes
   const rivals = world.rivers.filter((o) => o !== r && isRacing(o));
   const scores = new Map();
@@ -183,13 +193,20 @@ export function botSteer(world, bot) {
     hx /= hl; hz /= hl;
     // Where would the water actually go holding this heading? It runs down
     // the fall line bent toward the heading (see moveRiver), so trace it.
-    const seen = sightAlong(world, r, hx, hz);
+    const sight = sightAlong(world, r, hx, hz), seen = sight.d;
     const path = (TUNE_BOT.route ? routeAhead(world, r, hx, hz, TUNE_BOT.look).path : flowFrom(world, r, hx, hz)).filter((p) => p.d <= seen);
     if (!path.length) path.push({ x: r.x, z: r.z, d: 0, blocked: true });
     const end = path[path.length - 1];
     const travelled = Math.max(TUNE_BOT.step, end.d);
     let score = -Math.abs(a) * 0.12; // mild preference for going straight
-    score += (((slopeT(world, end.x, end.z) - here) * metres) / travelled) * 2; // progress down the island, as far as it can see
+    // Downhill: how far the water drops along what it can see, per metre (a 4% grade scores 1).
+    // (The ground it can see, out to the end of its sight along this heading, filled level over pits.)
+    const far = t.filled[cellIndex(t, r.x + hx * seen, r.z + hz * seen)];
+    score += P.down * Math.max(-1, Math.min(2, (t.filled[cellIndex(t, r.x, r.z)] - far) / seen / 0.04));
+    if (sight.beach >= 0) score += 3 * (1 - sight.beach / TUNE_BOT.view); // the finish beach in sight: go for it
+    // Which way the course runs (the way every drop flew in, down the mountain), not where it ends.
+    score += TUNE_BOT.course * (hx * t.axis.x + hz * t.axis.y);
+    if (sight.lake >= 0) score += P.lake * 0.5 * Math.max(-1, Math.min(1, (sight.full - 0.6) * 3)) * (1 - sight.lake / TUNE_BOT.view); // a full lake in sight pays, a low one costs
     if (end.blocked) score -= 0.6;
     if (goal) { const gx = goal.x - r.x, gz = goal.z - r.z, gl = Math.hypot(gx, gz) || 1; score += TUNE_BOT.aim * (hx * gx + hz * gz) / gl; } // heading along the mapped route
     const dx = (end.x - r.x) / (end.d || 1), dz = (end.z - r.z) / (end.d || 1);
@@ -201,7 +218,7 @@ export function botSteer(world, bot) {
         // A full lake pays (its stored water drains out to you through your
         // outlet); a low one costs, since your water goes into filling it first.
         const full = world.lakeVol[lake] / world.lakeCap[lake];
-        score += ((0.6 + bot.skill) * w * Math.max(-1, Math.min(1, (full - 0.85) * 6))) / path.length * 3;
+        score += (P.lake * (0.6 + bot.skill) * w * Math.max(-1, Math.min(1, (full - 0.85) * 6))) / path.length * 3;
       }
       if (world.lava[k]) score -= (3 * w) / path.length * 3; // lava boils water off
       const o = world.owner[k];
@@ -209,7 +226,7 @@ export function botSteer(world, bot) {
         const owner = world.rivers[o];
         // Contact is a depth contest: avoid live water dug deeper than we cut,
         // and cross shallow channels on purpose to siphon them.
-        if (isRacing(owner)) score += (world.carve[k] > r.depth * 0.95 ? -TUNE_BOT.danger * w : world.carve[k] < r.depth * 0.8 ? bot.aggression * 0.8 * w : 0) / path.length * 3;
+        if (isRacing(owner)) score += (world.carve[k] > r.depth * 0.95 ? -P.fear * TUNE_BOT.danger * w : world.carve[k] < r.depth * 0.8 ? P.hunt * bot.aggression * 0.8 * w : 0) / path.length * 3;
       }
     }
     for (const o of rivals) {
@@ -218,7 +235,7 @@ export function botSteer(world, bot) {
       if (d > TUNE_BOT.sight) continue;
       const toward = (ox * dx + oz * dz) / (d || 1); // -1..1
       const near = 1 - d / TUNE_BOT.sight;
-      const danger = o.depth > r.depth * 0.95 ? -TUNE_BOT.danger : o.depth < r.depth * 0.8 ? bot.aggression * 1.2 : 0;
+      const danger = o.depth > r.depth * 0.95 ? -P.fear * TUNE_BOT.danger : o.depth < r.depth * 0.8 ? P.hunt * bot.aggression * 1.2 : 0;
       score += danger * toward * near * (1 + widthOf(o) / 400);
     }
     score += (bot.rng() - 0.5) * (1 - bot.skill) * 1.2;
@@ -232,16 +249,22 @@ export function botSteer(world, bot) {
 }
 
 // How far a bot can see along heading (hx, hz): TUNE_BOT.view, a quarter less
-// if trees stand in the way, half as far if the ground rises above its eye (a ridge).
+// if trees stand in the way, half as far if the ground rises above its eye (a ridge);
+// and how far off the finish beach is, if it can see it (-1 if not).
 function sightAlong(world, r, hx, hz) {
   const t = world.terrain, eye = surfaceAt(world, r.x, r.z, r.idx) + TUNE_BOT.eye, stepM = t.cell * 2;
-  let trees = false, ridge = false;
+  let trees = false, ridge = false, beach = -1, lake = -1, full = 0;
   for (let d = stepM; d <= TUNE_BOT.view; d += stepM) {
     const x = r.x + hx * d, z = r.z + hz * d, k = cellIndex(t, x, z);
+    const reach = TUNE_BOT.view * (trees ? TUNE_BOT.viewTrees : 1) * (ridge ? TUNE_BOT.viewRidge : 1);
+    if (d > reach) break;
+    if (beach < 0 && world.beach?.[k]) beach = d; // the finish beach, seen
+    const lk = world.lakeOf[k];
+    if (lake < 0 && lk >= 0 && !r.via.has(lk)) { lake = d; full = world.lakeVol[lk] / world.lakeCap[lk]; } // the first new lake it can see
     if (world.trees?.[k]) trees = true;
     if (t.filled[k] > eye) ridge = true;
   }
-  return TUNE_BOT.view * (trees ? TUNE_BOT.viewTrees : 1) * (ridge ? TUNE_BOT.viewRidge : 1);
+  return { d: TUNE_BOT.view * (trees ? TUNE_BOT.viewTrees : 1) * (ridge ? TUNE_BOT.viewRidge : 1), beach, lake, full };
 }
 
 // Falling: drift away from the nearest other drop, so bots land spread out.
