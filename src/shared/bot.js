@@ -237,7 +237,9 @@ function botGlide(world, bot) {
     const d = (o.x - r.x) ** 2 + (o.z - r.z) ** 2;
     if (d < pd && (o.x - r.x) * ax + (o.z - r.z) * az > -200) { pd = d; prey = o; }
   }
-  if (prey) return { s: turnTo(r, prey.x, prey.z), f: 0, g: 1 };
+  // Diving onto it from above closes the gap (a dive is faster): a drop flying straight ahead is still catchable.
+  // Under it: float up to its height first (out of bump height, a chase never lands).
+  if (prey) return { s: turnTo(r, prey.x, prey.z), f: r.alt > prey.alt + 40 ? 1 : r.alt < prey.alt - TUNE.bumpDepth * 0.6 ? -1 : 0, g: 1 };
   // A rain cloud ahead it can still reach: go for it (crowds and all: that's where the fight is).
   let cloud = null, cd = Infinity, fast = false;
   for (const c of skyClouds(world)) {
@@ -252,9 +254,10 @@ function botGlide(world, bot) {
     const f = r.alt > cloud.alt + TUNE.cloudDepth * 0.5 ? 1 : r.alt < cloud.alt - TUNE.cloudDepth * 0.5 ? -1 : 0;
     return { s: turnTo(r, cloud.x, cloud.z), f, g: fast ? 1 : 0 };
   }
-  // Nothing to chase: fly down the slope to the start line.
+  // Nothing to chase: fly down the slope to the start line, stick all the way
+  // (as fast as a player can: a bot left at the base glide falls behind the pack).
   const cross = r.dx * az - r.dz * ax, dot = r.dx * ax + r.dz * az;
-  return dot > 0.97 ? 0 : cross < 0 ? -1 : 1;
+  return { s: dot > 0.97 ? 0 : cross < 0 ? -1 : 1, f: 0, g: 1 };
 }
 const turnTo = (r, x, z) => {
   const d = Math.hypot(x - r.x, z - r.z) || 1, cross = r.dx * (z - r.z) - r.dz * (x - r.x);

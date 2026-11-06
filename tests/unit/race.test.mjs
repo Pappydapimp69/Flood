@@ -211,8 +211,8 @@ test('drop: with bots, every drop reaches the line within the course and nobody 
   }
   assert.ok(w.rivers.every((r) => !r.dropping), 'someone never landed');
   assert.ok(w.rivers.every((r) => pastLine(w, r.path[0].x, r.path[0].z)), 'a drop landed off the line');
-  // (A full dive glides at up to 2.2x; sliding down a narrowing lane wall moves diagonally on top: allow 40% more.)
-  assert.ok(worst <= (TUNE.glideSpeed * 2.2 / 20) * 1.4 + 1, `a drop moved ${worst.toFixed(0)} m in a tick: dragged`);
+  // (A full dive glides at up to 2.2x, a slipstream adds draftBoost; sliding down a narrowing lane wall moves diagonally on top: allow 40% more.)
+  assert.ok(worst <= (TUNE.glideSpeed * 2.2 * (1 + TUNE.draftBoost) / 20) * 1.4 + 1, `a drop moved ${worst.toFixed(0)} m in a tick: dragged`);
 });
 
 test('drop: a bump goes to whoever hits with more momentum: the loser spills water, the winner soaks most of it up', async () => {
@@ -232,4 +232,17 @@ test('drop: a bump goes to whoever hits with more momentum: the loser spills wat
   const spilled = (va + vb) - (a.volume + b.volume);
   assert.ok(Math.abs((w.sky - sky) - spilled) < 1e-6 * va, 'what was spilled did not go to the sky');
   assert.ok(Math.hypot(b.kx, b.kz) > 0, 'not knocked');
+});
+
+test('drop: a drop flying close behind another at its height glides faster (slipstream), one beside it does not', () => {
+  const w = rollIsland(5, 2).world;
+  const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
+  const c = addRiver(w, 'c', undefined, { drop: true });
+  Object.assign(a, { dx: 1, dz: 0 });
+  Object.assign(b, { x: a.x + 300, z: a.z, alt: a.alt, dx: 1, dz: 0 }); // b is 300 m ahead of a
+  Object.assign(c, { x: a.x, z: a.z + 2000, alt: a.alt, dx: 1, dz: 0 }); // c flies alone, off to the side
+  const ax0 = a.x, cx0 = c.x;
+  for (let k = 0; k < 3; k++) step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: 1 }], ['c', { s: 0, f: 0, g: 1 }]]));
+  assert.ok(a.draft && !c.draft, 'slipstream flags wrong');
+  assert.ok(a.x - ax0 > (c.x - cx0) * 1.05, `drafting ${(a.x - ax0).toFixed(0)} m vs alone ${(c.x - cx0).toFixed(0)} m`);
 });
