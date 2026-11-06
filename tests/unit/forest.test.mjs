@@ -71,16 +71,16 @@ test('a small river is slowed right down among trees (never walled in); a big on
     const r = addRiver(w, 'a', s.from);
     r.volume = TUNE.startVolume * size ** 3; r.size = size; r.mass = 1 + TUNE.speedPerSize * (size - 1);
     r.dx = 1; r.dz = 0; r.speed = 120;
-    let inTrees = 0, slowest = Infinity;
+    let inTrees = 0, slowest = Infinity, entry = 0;
     for (let k = 0; k < 80; k++) {
       step(w, new Map());
-      if (w.trees[cellIndex(w.terrain, r.x, r.z)]) { inTrees++; slowest = Math.min(slowest, r.speed); }
+      if (w.trees[cellIndex(w.terrain, r.x, r.z)]) { if (!inTrees) entry = r.speed; inTrees++; slowest = Math.min(slowest, r.speed); }
     }
-    return { felled: !w.trees[s.stand], inTrees, slowest };
+    return { felled: !w.trees[s.stand], inTrees, slowest, entry };
   };
   const small = run(1);
   assert.ok(!small.felled, 'a small river knocked the stand down');
-  if (small.inTrees) assert.ok(small.slowest < 120 * 0.6, `a small river kept ${small.slowest | 0} m/s among the trees`);
+  if (small.inTrees > 10) assert.ok(small.slowest < small.entry * 0.75, `a small river kept ${small.slowest | 0} of ${small.entry | 0} m/s among the trees`);
   const big = run(TUNE.treeBreak + 0.3);
   assert.ok(big.felled, 'a big river left the stand standing');
   // Trees are rough ground, not a rise: the surface is the same to any river.

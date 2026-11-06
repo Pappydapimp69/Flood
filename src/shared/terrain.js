@@ -119,6 +119,7 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   const topW = ((S.gap + SUMMIT.room) / 0.62) * (1 - smooth(0.15, 0.35, t));
   const side = Math.abs(wv) / Math.max(halfW, topW); // 0 down the middle, 1 at the wall tops
   inCourse = !(side > 1 || t < -0.03 || t > 1.08);
+  lastT = t; lastSide = side;
   if (!inCourse) {
     // Behind and beside the summits: the mountain's far side, falling away to
     // the sea. Scenery only: no spawns, no landings, no lakes (the course mask).
@@ -196,7 +197,11 @@ const GATE = { height: 45, thick: 0.007, gap: 0.12, spread: 0.06 };
 const SUMMIT = { top: 1.2, grade: 7500, at: 0.1, room: 0.06 };
 // The land behind the start line (scenery): how far back it runs (in slope lengths) and how much wider it spreads.
 const BACK = { len: 0.2, spread: 0.8 };
-let inCourse = true; // set by rawHeight for the cell it just made
+let inCourse = true, lastT = 0, lastSide = 0; // set by rawHeight for the cell it just made
+// Boulder outcrops down the course: rock no river passes over, Gouge or not
+// (taller than any boosted head reaches). Baked into the ground before the
+// fill, so water's routes, the map's distances and the bots all go round them.
+export const BOULDERS = { count: 26, height: 520, gap: 1600, from: 0.2, to: 0.93, side: 0.55 };
 
 // The three peaks' cells, where each summit cone stands highest.
 function summitCells(height, n, S) {
@@ -252,9 +257,27 @@ function fillDepressions(h, n) {
   return filled;
 }
 
+function placeBoulders(seed, n, cell, height, mask, along, across) {
+  const rng = stream(seed, 'boulders'), out = [];
+  for (let tries = 0; tries < BOULDERS.count * 40 && out.length < BOULDERS.count; tries++) {
+    const k = Math.floor(rng() * n * n), cx = k % n, cy = (k - cx) / n;
+    if (!mask[k] || height[k] <= 5 || along[k] < BOULDERS.from || along[k] > BOULDERS.to || across[k] > BOULDERS.side) continue;
+    if (out.some((b) => Math.hypot(b.cx - cx, b.cy - cy) * cell < BOULDERS.gap)) continue;
+    const rad = 1 + Math.floor(rng() * 2); // 1-2 cells: an outcrop 200-500 m across
+    for (let dy = -rad; dy <= rad; dy++) for (let dx = -rad; dx <= rad; dx++) {
+      const x = cx + dx, y = cy + dy, d = Math.hypot(dx, dy);
+      if (d > rad + 0.5 || x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
+      height[y * n + x] += BOULDERS.height * (d <= rad - 0.5 ? 1 : 0.6);
+    }
+    out.push({ cx, cy, rad });
+  }
+  return out;
+}
+
 export function generateIsland(seed = 1, opts = {}) {
   const { size: n, worldSize, maxHeight, seaDepth, course } = { ...DEFAULTS, ...opts };
   const height = new Float32Array(n * n), mask = new Uint8Array(n * n); // mask: 1 on the race slope, 0 on scenery and sea
+  const along = new Float32Array(n * n), across = new Float32Array(n * n);
   const shape = opts.course === 'tutorial' ? tutorialShape() : shapeOf(seed);
   for (let y = 0; y < n; y++) {
     const v = (y / (n - 1)) * 2 - 1;
@@ -262,10 +285,12 @@ export function generateIsland(seed = 1, opts = {}) {
       const u = (x / (n - 1)) * 2 - 1;
       height[y * n + x] = rawHeight(u, v, seed, maxHeight, seaDepth, shape);
       mask[y * n + x] = inCourse ? 1 : 0;
+      along[y * n + x] = lastT; across[y * n + x] = lastSide;
     }
   }
+  const boulders = opts.course === 'tutorial' || opts.boulders === false ? [] : placeBoulders(seed, n, worldSize / (n - 1), height, mask, along, across);
   const filled = fillDepressions(height, n);
-  return { seed, course, mask, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
+  return { seed, course, mask, boulders, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
     summits: summitCells(height, n, shape), axis: { x: shape.ax, y: shape.ay }, long: shape.long };
 }
 
