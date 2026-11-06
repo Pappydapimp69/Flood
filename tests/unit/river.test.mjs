@@ -178,7 +178,8 @@ test('more water stands taller: a big river pushes over rises a small one is tur
   };
   assert.ok(headOf({ size: 3 }) === 9 * headOf({ size: 1 }));
   const small = climb(1), big = climb(3);
-  assert.ok(big > small + 2, `small river rose ${small.toFixed(1)} m, big ${big.toFixed(1)} m`);
+  // (Size no longer doubles speed (T175, 2026-11-06), so the gap is the taller head and slower bleed, not raw speed.)
+  assert.ok(big > small + 1, `small river rose ${small.toFixed(1)} m, big ${big.toFixed(1)} m`);
   // Same stick, same turn, whatever the size.
   const turn = (size) => {
     const w = createWorld(islands.get(2));

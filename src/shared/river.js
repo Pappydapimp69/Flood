@@ -12,7 +12,11 @@ export const TUNE = {
   turnStep: 0.06, // radians per tick at full steer, at starting size
   minSpeed: 18, // m/s, water always creeps
   baseSpeed: 55, // m/s on level ground at starting size
-  slopeSpeed: 1800, // extra m/s per unit downhill slope
+  slopeSpeed: 1800, // m/s lost per unit of uphill slope (climbing)
+  // Downhill, speed levels off instead of rising with steepness (T181, owner
+  // 2026-11-06): extra speed = satSpeed * (1 - e^(-slope / satSlope)).
+  satSpeed: 90, satSlope: 0.015,
+  climbDrag: 0.03, // share of speed a climb takes per tick at a 5% rise, boosted or not
   maxSpeed: 240,
   speedEase: 0.12, // share of the way to target speed per tick, at starting size, speeding up...
   slowEase: 0.03, // ...and slowing down (divided by size): carried speed halves in about 1.1 s, not 0.27 s
@@ -37,7 +41,7 @@ export const TUNE = {
   // momentum (slower to speed up, slow down and turn), faster flow, deeper cuts.
   startVolume: 500_000,
   trickle: 25, // litres gained per metre of trail: longer trails hold more water
-  speedPerSize: 1, // speed multiplier gained per unit of size above 1: twice the size, twice the speed
+  speedPerSize: 0.1, // speed multiplier gained per unit of size above 1: twice the size, +10% (real rivers barely speed up as they grow: T175, owner 2026-11-06)
   // Lakes are reservoirs. They hold still until water flows in: every river
   // pouring in raises the level (its own volume holds while its head is in).
   // A river leaving cuts an outlet as deep as its head; water over that lip
@@ -58,7 +62,7 @@ export const TUNE = {
   spillWidth: 50, // metres
   spillCells: 160, // longest spill channel, cells
   shallowWater: 0.3, // metres of standing water that count as under water (no digging)
-  levelGlide: 0.997, // on level water or flats, speed fades only this much per tick: momentum carries
+  levelGlide: 0.99, // on level water or flats, carried speed fades this much per tick: halves in about 3.5 s (owner: it carried too long)
   joinShare: 0, // nothing taken at once on joining: only what flows out is added
   fullAt: 0.999, // a lake this full is level ground you flow across
   maxPoolTicks: 200, // guaranteed exit: after 10 s pooled, the basin tops up and spills
@@ -116,7 +120,7 @@ export const TUNE = {
   // The drop: every river falls for 30 s from high above the island, steering
   // (turn, and faster or slower) to choose where it lands. It lands on the
   // nearest cell of the start contour: every start is at the same elevation.
-  dropTicks: 800, // a fall at the steady rate lasts this long (40 s)...
+  dropTicks: 1600, // a fall at the steady rate lasts this long (80 s)...
   dropAlt: 6000, // metres above the start line's height at the start
   // The drop comes in like a comet: it starts this share of a steady glide's
   // run behind its start spot, so flying straight lands it there on time.
@@ -147,7 +151,7 @@ export const TUNE = {
   stormMaxWater: 5_000_000, // ...carrying at most this much, rained out until it's empty
   cloudWater: [150_000, 450_000],
   slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
-  glideSpeed: 150, // m/s across the ground while falling (stick all the way: x1.8, stick let go: x0.4)
+  glideSpeed: 110, // m/s across the ground while falling (stick all the way: x1.8, stick let go: x0.4)
   // Bumps between falling drops: touching (within bumpRadius across and
   // bumpDepth up or down) and closing, they knock each other off course and
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
@@ -1000,11 +1004,18 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   // down among them, but never walled in; a big one flattens them.
   const drag = world.trees?.[cHere] && r.size < TUNE.treeBreak ? TUNE.forestDrag : 1;
   const target = (level ? Math.max(TUNE.baseSpeed * mass, Math.min(TUNE.maxSpeed * mass, r.speed * TUNE.levelGlide))
-    : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + TUNE.slopeSpeed * along) * mass))) * drag;
+    : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + (along >= 0 ? TUNE.satSpeed * (1 - Math.exp(-along / TUNE.satSlope)) : TUNE.slopeSpeed * along)) * mass))) * drag;
   // Momentum: more water surges up to speed just as fast, but holds it
   // longer, slowing down only slowly.
   r.speed += (target - r.speed) * (target > r.speed ? TUNE.speedEase : TUNE.slowEase / r.size);
-  if (r.boost > 0) r.speed = Math.max(r.speed, r.boostSpeed); // boosted: the speed it had plus the boost; the climb can't slow it
+  // Climbing always costs speed, boosted or surging too (owner: going over higher ground should slow it).
+  if (!onLake && along < 0) {
+    const keep = 1 - (TUNE.climbDrag * Math.min(1, -along / 0.05)) / Math.max(1, r.size) ** 1.5; // more water pushes further up
+    r.speed *= keep;
+    if (r.boostSpeed) r.boostSpeed *= keep;
+    if (r.surgeSpeed) r.surgeSpeed *= keep;
+  }
+  if (r.boost > 0) r.speed = Math.max(r.speed, r.boostSpeed); // boosted: the speed it had plus the boost (less what climbs cost)
   if (r.surgeT >= 0) r.speed = Math.max(r.speed, r.surgeSpeed); // surging: its speed plus the surge
   r.depth = depthOf(r);
 
