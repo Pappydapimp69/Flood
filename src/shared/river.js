@@ -114,7 +114,8 @@ export const TUNE = {
   // Comeback experiments (off by default).
   stormAim: 'pack', // 'pack': storms blow in just ahead of the middle of the field; 'tail': over its back
   catchUp: 0, // extra trickle share for rivers more than catchUpGap behind the leader
-  catchUpGap: 3000,
+  catchUpGap: 3000, // metres behind the leader that count as far behind
+  tailUnlock: true, // far behind, Surge unlocks whatever your size
   massEase: 0.04, // share of the way a river's momentum moves to its new size each tick
   stallTicks: 20, stallMin: 30, stallNet: 0.35,
   routeHold: 10, // ticks a head keeps to the way out once it takes it
@@ -910,7 +911,7 @@ const clampUnit = (v) => Math.max(-1, Math.min(1, v | 0));
 // 3. water moves between rivers and lakes;
 // 4. channel digs and erosion are applied, in id order.
 export function step(world, inputs) {
-  if (TUNE.catchUp) {
+  if (TUNE.catchUp || TUNE.tailUnlock) {
     let lead = Infinity;
     for (const r of world.rivers) if (isRacing(r) && !r.dropping) lead = Math.min(lead, world.toBeach[cellIndex(world.terrain, r.x, r.z)]);
     world.leadReach = lead;
@@ -949,7 +950,10 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
     normalize(r);
   }
   // Skills unlock as the river grows, and stay unlocked.
-  if (!r.surgeOn && r.volume >= TUNE.surgeUnlock) { r.surgeOn = true; world.events.push({ type: 'unlock', skill: 'surge', river: r.idx, tick: world.tick }); }
+  // A river far behind the leader gets Surge before it has grown enough for it: a way
+  // back by speed, not handed water (Brain flood#E112; 36 bot races: tail comebacks 11 -> 20 of 108).
+  const behind = TUNE.tailUnlock && world.leadReach !== undefined && world.toBeach[cellIndex(world.terrain, r.x, r.z)] - world.leadReach > TUNE.catchUpGap;
+  if (!r.surgeOn && (r.volume >= TUNE.surgeUnlock || behind)) { r.surgeOn = true; world.events.push({ type: 'unlock', skill: 'surge', river: r.idx, why: r.volume >= TUNE.surgeUnlock ? 'size' : 'behind', tick: world.tick }); }
   if (!r.gougeOn && r.volume >= TUNE.gougeUnlock) { r.gougeOn = true; world.events.push({ type: 'unlock', skill: 'gouge', river: r.idx, tick: world.tick }); }
   // A player's Gouge fires whenever it is ready; bots press it only facing a
   // rise the boost can carry them over (see bot.js).

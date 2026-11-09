@@ -293,3 +293,17 @@ test('no river goes back behind the start line, even aimed uphill with a boost',
     for (const r of w.rivers) if (isRacing(r)) assert.ok(!behindLine(w, r.x, r.z), `${r.id} behind the line at tick ${w.tick}`);
   }
 });
+
+// Far behind the leader, Surge unlocks whatever the river's size (TUNE.tailUnlock).
+test('a river far behind the leader gets Surge before it is big enough', () => {
+  const { world: w } = rollIsland(7, 2);
+  const line = startLine(w), n = w.terrain.size, ws = w.terrain.worldSize, at = (c) => ({ x: ((c % n) / (n - 1) - 0.5) * ws, z: (Math.floor(c / n) / (n - 1) - 0.5) * ws });
+  let ahead = -1;
+  for (let k = 0; k < n * n; k++) if (w.toBeach[k] > 0 && w.toBeach[k] < line.L - TUNE.catchUpGap - 2000 && w.lakeOf[k] < 0 && (ahead < 0 || w.toBeach[k] > w.toBeach[ahead])) ahead = k;
+  const lead = addRiver(w, 'lead', at(ahead)), tail = addRiver(w, 'tail', at(line.cells[line.cells.length >> 1]));
+  assert.ok(tail.volume < TUNE.surgeUnlock && !tail.surgeOn);
+  step(w, new Map());
+  assert.ok(tail.surgeOn, 'the far-behind river has Surge');
+  assert.ok(!lead.surgeOn, 'the leader does not');
+  assert.equal(w.events.find((e) => e.type === 'unlock' && e.river === tail.idx)?.why, 'behind');
+});
