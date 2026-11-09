@@ -586,7 +586,7 @@ function newRun() {
 let everOpen = false;
 function goOnline(name) {
   mode = 'online';
-  input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true, river.dropping ? input.forward() : 0, river.dropping ? input.glide() : 0); };
+  input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true, river.dropping ? input.forward() : 0, river.dropping ? (input.glide() || 1) : 0); };
   input.onSkill = () => { if (river && isRacing(river) && !river.dropping) net?.skill(input.sample()); };
   input.onSurge = () => { if (river && isRacing(river) && !river.dropping) net?.surge(input.sample()); };
   if (!terrain) { useIsland(1); camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0); }
@@ -925,6 +925,9 @@ function sampleSteer() {
   // Falling, the drag stick flies the drop (see dragAim).
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
   if (aim) { steer = aim.s; f = aim.f; g = aim.g; }
+  // Cruise at full glide like the bots do; pull back (or ↓) to slow. (Players cruised at half
+  // and were passed and out-landed by every bot, owner 2026-11-09.)
+  if (river?.dropping && g === 0) g = 1;
   if (coach) { if (f) coach.fell = true; if (g > 0) coach.glided = true; }
   dbg.steers.push(steer);
   watchCoach(steer);
