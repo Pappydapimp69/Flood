@@ -98,6 +98,7 @@ export const TUNE = {
   gougeMinCost: 80_000, // ...but never less than this many litres
   gougeKeep: 0.5, // share of the starting volume a river must keep after paying
   gougeCool: 240, // ticks from one gouge to the next (12 s; owner +1 s twice)
+  rockBelow: 1000, // the summit is rock down to this far below the start line: no erosion there (owner)
   gougeDeepen: 0.05, // each gouge deepens the river's whole channel by this share (owner, 2026-11-09)
   gougeSizeCost: false, // experiment: cost share x size (big rivers pay more)
   // Surge, the second skill: a short wind-up, then
@@ -989,7 +990,8 @@ export function step(world, inputs) {
 export const surgeReady = (world, r) => TUNE.surgeOn && !!r.surgeOn && isRacing(r) && !r.dropping && r.pooled < 0 && r.gougeT < 0 && !(r.surgeT >= 0)
   && world.tick >= (r.surgeAt ?? 0) && r.volume - Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare) >= TUNE.gougeKeep * TUNE.startVolume;
 function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: surge }) {
-  if (r.dropping) return glide(world, r, steer, fwd, glideIn);
+  // The opening shot (owner): nobody steers, players or bots; everyone glides straight at full throttle.
+  if (r.dropping) return calm(r) ? glide(world, r, 0, 0, 1) : glide(world, r, steer, fwd, glideIn);
   if (steer) {
     // Turn by adding a sideways component, then renormalising (angle = atan(a)).
     // A bigger river answers the stick as well as a small one: more water is
@@ -1909,11 +1911,14 @@ function pulses(world) {
 // river's flow depth, shallower at the banks), the river's size and the slope
 // there, for the whole interval since the last pulse. Big rivers on steep
 // ground carve canyons; small ones on the flats barely scour.
+// The mountain top is rock down to rockBelow metres (by water) under the start line: channels there never erode.
+const onRock = (world, k) => world.toBeach[k] > startLine(world).L - TUNE.rockBelow;
+
 function erodeAt(world, r, c, flow, every) {
   const t = world.terrain, n = t.size, cx = c % n, cy = (c - cx) / n;
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     const k = (cy + dy) * n + cx + dx;
-    if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL || underWater(world, k)) continue;
+    if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL || underWater(world, k) || onRock(world, k)) continue;
     if (world.erodedBy?.[k] === world.tick) continue; // once a tick, however many points cross it
     (world.erodedBy ??= new Int32Array(n * n).fill(-1))[k] = world.tick;
     const was = world.carve[k];
@@ -2302,7 +2307,7 @@ function deepenChannels(world) {
   const t = world.terrain;
   for (const r of world.deepen.sort(byId)) {
     for (let k = 0; k < world.carve.length; k++) {
-      if (world.owner[k] !== r.idx || !(world.carve[k] > 0)) continue;
+      if (world.owner[k] !== r.idx || !(world.carve[k] > 0) || onRock(world, k)) continue;
       const v = Math.min(world.carve[k] * (1 + TUNE.gougeDeepen), Math.max(0, t.height[k] + world.rock[k] - SEA_LEVEL - 0.5)); // never below the sea
       if (v > world.carve[k]) { world.carve[k] = v; world.dirty.push(k); }
     }
