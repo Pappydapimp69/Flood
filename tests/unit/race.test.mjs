@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateIsland } from '../../src/shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, standings, isRacing, knockoutFloor, behindLine, startLine, cellIndex, spawnPoint, surfaceAt, TUNE, TICK_HZ } from '../../src/shared/river.js';
+import { createWorld, rollIsland, addRiver, step, standings, isRacing, knockoutFloor, behindLine, startLine, cellIndex, descentLane, spawnPoint, surfaceAt, TUNE, TICK_HZ } from '../../src/shared/river.js';
 import { createBot, botSteer } from '../../src/shared/bot.js';
 
 const islands = new Map([1, 2, 42].map((s) => [s, generateIsland(s)]));
@@ -239,9 +239,11 @@ test('drop: a bump goes to whoever hits with more momentum: the loser spills wat
 });
 
 test('drop: a drop flying close behind another at its height glides faster (slipstream), one beside it does not', () => {
+  const lane0 = TUNE.laneEntry; TUNE.laneEntry = 1.25; // a wide lane: this tests the slipstream, not the cone's walls
   const w = rollIsland(5, 2).world;
   const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
   const c = addRiver(w, 'c', undefined, { drop: true });
+  TUNE.laneEntry = lane0;
   Object.assign(a, { dx: 1, dz: 0 });
   Object.assign(b, { x: a.x + 300, z: a.z, alt: a.alt, dx: 1, dz: 0 }); // b is 300 m ahead of a
   Object.assign(c, { x: a.x, z: a.z + 2000, alt: a.alt, dx: 1, dz: 0 }); // c flies alone, off to the side
@@ -272,10 +274,11 @@ test('drop: no bumps during the opening shot (TUNE.dropCalm), then bumps as usua
 test('drop: after a bump the drop hit darts away and the hitter is checked', () => {
   const w = rollIsland(5, 2).world;
   const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
-  Object.assign(a, { dx: 1, dz: 0, fallT: TUNE.dropCalm });
-  Object.assign(b, { x: a.x + 300, z: a.z, alt: a.alt, dx: 0, dz: 1, fallT: TUNE.dropCalm }); // a rams b side-on
+  const ax = w.terrain.axis.x, az = w.terrain.axis.y; // fly along the slope: headings over 60 deg off it are turned back
+  Object.assign(a, { dx: ax, dz: az, fallT: TUNE.dropCalm });
+  Object.assign(b, { x: a.x + ax * 300, z: a.z + az * 300, alt: a.alt, dx: ax, dz: az, fallT: TUNE.dropCalm }); // a rams b from behind: b throttles right back
   let bump = null;
-  for (let k = 0; k < 20 && !bump; k++) { step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: 1 }]])); bump = w.events.splice(0).find((e) => e.type === 'bump'); }
+  for (let k = 0; k < 20 && !bump; k++) { step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: -1 }]])); bump = w.events.splice(0).find((e) => e.type === 'bump'); }
   assert.ok(bump, 'no bump');
   assert.equal(bump.hitter, a.idx, 'the rammer is the hitter');
   assert.ok(a.recoilT > 0 && b.burstT > 0, 'no recoil or burst');
@@ -314,10 +317,13 @@ test('a river far behind the leader gets Surge before it is big enough', () => {
   assert.equal(w.events.find((e) => e.type === 'unlock' && e.river === tail.idx)?.why, 'behind');
 });
 
-// Random starts (TUNE.dropRandom): drops start at different heights and places, the same on every machine.
-test('drop: starts are random per river and repeatable', () => {
+// The cone: everyone starts together in the lane's narrow mouth (jittered inside it), the same on every machine.
+test('drop: everyone starts together in the cone mouth, jittered and repeatable', () => {
   const make = () => { const w = rollIsland(5, 4).world; for (const id of ['p', 'q', 'r', 's']) addRiver(w, id, undefined, { drop: true }); return w.rivers.map((r) => [r.x, r.z, r.alt]); };
   const one = make(), two = make();
   assert.deepEqual(one, two, 'not repeatable');
-  assert.ok(new Set(one.map((p) => Math.round(p[2]))).size > 1, 'every drop starts at the same height');
+  const w = rollIsland(5, 4).world, lane = descentLane(w), ax = w.terrain.axis.x, az = w.terrain.axis.y;
+  const lats = one.map((p) => -p[0] * az + p[1] * ax);
+  assert.ok(lats.every((l) => Math.abs(l - lane.c) <= lane.entry + 1), 'a drop started outside the cone mouth');
+  assert.ok(new Set(lats.map((l) => Math.round(l))).size > 1, 'every drop starts on the same spot');
 });

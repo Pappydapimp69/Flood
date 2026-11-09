@@ -263,7 +263,7 @@ await check('touch drop: one drag stick flies it like a plane (left / right turn
   const turned = await page.evaluate(() => ({ steers: __flood.steers.slice(), stick: document.getElementById('stick').classList.contains('on') }));
   if (!turned.stick) throw new Error('no stick drawn under the finger');
   if (!turned.steers.includes(1)) throw new Error(`drag right gave steers ${turned.steers.join('')}`);
-  // Drag up: nose down, full throttle: the glide is well over the base 110 m/s.
+  // Drag up: nose down, full throttle: the glide is well over the base 82.5 m/s.
   await fire('pointermove', 195, 520);
   t0 = (await state(page)).tick;
   await until(page, (s) => s.tick > t0 + 10, '10 ticks nose down');
@@ -274,7 +274,8 @@ await check('touch drop: one drag stick flies it like a plane (left / right turn
   await until(page, (s) => s.tick > t0 + 10, '10 ticks nose up');
   const slow = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
   await fire('pointerup', 195, 680);
-  if (fast >= 0 && slow >= 0 && !(fast > 150 && slow < 80)) throw new Error(`nose down ${fast.toFixed(0)} m/s, nose up ${slow.toFixed(0)} m/s`);
+  // (the glide is TUNE.glideSpeed 82.5 m/s: full throttle is 1.8x, about 148; dive adds no ground speed)
+  if (fast >= 0 && slow >= 0 && !(fast > 130 && slow < 60)) throw new Error(`nose down ${fast.toFixed(0)} m/s, nose up ${slow.toFixed(0)} m/s`);
   await ctx.close();
 });
 
