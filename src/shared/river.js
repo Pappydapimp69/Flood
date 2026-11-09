@@ -1943,10 +1943,26 @@ export function standings(world) {
   return [...fin, ...racing, ...out];
 }
 
+// Behind the start line: land whose water route to the beach is longer than the
+// line's. A landed river can never go there (owner, 2026-11-09).
+export function behindLine(world, x, z) {
+  const t = world.terrain, k = cellIndex(t, x, z);
+  if (!(t.filled[k] > SEA_LEVEL)) return false;
+  const tb = world.toBeach[k], line = startLine(world);
+  if (tb < 1e8) return tb > line.L * (1 + TUNE.lineTol);
+  return slopeT(world, x, z) < line.t; // ground with no route to the beach: judge by the slope
+}
+
 function moveTo(world, r, nx, nz) {
   const half = world.terrain.worldSize / 2;
   nx = Math.max(-half, Math.min(half, nx));
   nz = Math.max(-half, Math.min(half, nz));
+  // The start line is a wall from the course side: slide along it, never through.
+  if (!r.dropping && behindLine(world, nx, nz) && !behindLine(world, r.x, r.z)) {
+    if (!behindLine(world, nx, r.z)) nz = r.z;
+    else if (!behindLine(world, r.x, nz)) nx = r.x;
+    else { nx = r.x; nz = r.z; }
+  }
   const mx = nx - r.x, mz = nz - r.z;
   const moved = Math.sqrt(mx * mx + mz * mz);
   r.travelled += moved;
