@@ -98,6 +98,7 @@ export const TUNE = {
   gougeMinCost: 80_000, // ...but never less than this many litres
   gougeKeep: 0.5, // share of the starting volume a river must keep after paying
   gougeCool: 240, // ticks from one gouge to the next (12 s; owner +1 s twice)
+  lakeJunctions: false, // waves end at lakes, shared over every outlet (off: 4 test races went 7.5 -> 4.5 finishes, first finish 97 -> 204 s)
   rockBelow: 1000, // the summit is rock down to this far below the start line: no erosion there (owner)
   gougeDeepen: 0.05, // each gouge deepens the river's whole channel by this share (owner, 2026-11-09)
   gougeSizeCost: false, // experiment: cost share x size (big rivers pay more)
@@ -1869,6 +1870,17 @@ function pulses(world) {
               world.lakePending[lake] += take;
               world.events.push({ type: 'soak', river: r.idx, lake, amount: take, tick: world.tick });
             }
+          }
+          // Lakes are junctions (owner, 2026-11-09): the wave ends here. Its water joins the lake, and the
+          // lake's rising level pours out through every outlet (by depth over each lip), feeding every river
+          // that leaves it. Not river water passing through: the lake's own gain, shared by all its outlets.
+          if (TUNE.lakeJunctions && p.amount > 0) {
+            // Shared at once over every river leaving the lake, by how deep each has cut its outlet
+            // (stored in the lake, a full lake spilled it into ownerless channels: finishes 9 -> 5).
+            const outs = world.rivers.filter((o) => isRacing(o) && !o.dropping && o.via.has(lake)).sort(byId);
+            const wsum = outs.reduce((a, o) => a + Math.max(0.5, o.via.get(lake).e), 0);
+            for (const o of outs) feed(o, o.via.get(lake).at ?? 0, p.amount * Math.max(0.5, o.via.get(lake).e) / wsum);
+            if (outs.length) p.amount = 0;
           }
         }
       }
