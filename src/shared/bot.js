@@ -4,7 +4,7 @@
 // randomness comes from its own id-keyed stream.
 
 import { stream } from './rng.js';
-import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, DT, TUNE } from './river.js';
+import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, descentLane, laneHalf, DT, TUNE } from './river.js';
 import { downhill } from './terrain.js';
 
 // Each bot has a personality: what it weighs, besides running downhill.
@@ -275,7 +275,13 @@ function botGlide(world, bot) {
   // looks further for them: the descent is a fight, not a queue.
   // A chase has a time limit: after it, that drop is left alone for a while and the
   // bot looks for another in range. Bumped by some other drop, it turns on that one.
-  const bold = bot.aggression ?? 0.5, reachM = 700 + 900 * bold, now = world.tick;
+  // Everyone starts together in the cone's mouth (owner, 2026-11-09), so chasing is the exception: only
+  // the boldest bots hunt, only after the first third of the fall, and only close by (was 700-1600 m from
+  // the start: bots spawned together and chased each other all the way down).
+  const bold = bot.aggression ?? 0.5, now = world.tick, hunting = bold > 0.6 && (r.fallT ?? 0) > TUNE.dropTicks / 3;
+  const reachM = hunting ? 300 + 400 * bold : 0;
+  // Its own place across the start line, fanned out as the cone widens.
+  bot.slot ??= (stream(world.terrain.seed, `bot-slot:${r.id}`)() * 2 - 1) * 0.85;
   const spared = (bot.spared ??= new Map());
   const fair = (o) => o !== r && o.dropping && isRacing(o) && !calm(o) && !calm(r) && Math.abs(o.alt - r.alt) <= TUNE.bumpDepth * 2 && (o.x - r.x) ** 2 + (o.z - r.z) ** 2 <= reachM * reachM && now >= (spared.get(o.id) ?? -1);
   let prey = null;
@@ -316,17 +322,22 @@ function botGlide(world, bot) {
     if ((c.x - r.x) * ax + (c.z - r.z) * az < 0) continue; // behind it: no turning back
     const ticks = Math.max(0, r.alt - c.alt) / (TUNE.dropAlt / TUNE.dropTicks);
     const d = Math.hypot(c.x - r.x, c.z - r.z), reach = ticks * TUNE.glideSpeed * 1.8 * DT;
-    if (d < reach + 600 && d < cd) { cd = d; cloud = c; fast = d > 400; }
+    // Clouds toward its own side of the cone count as nearer: bots spread over the clouds instead of all taking one.
+    const lane = descentLane(world), cu = c.x * ax + c.z * az, ruu = r.x * ax + r.z * az;
+    const slotLat = lane.c + bot.slot * laneHalf(lane, lane.uLine - cu), clat = -c.x * az + c.z * ax;
+    const score = d + 0.8 * Math.abs(clat - slotLat);
+    if (d < reach + 600 && score < cd) { cd = score; cloud = c; fast = d > 400; }
   }
   if (cloud) {
     // Height too: dive or float toward the cloud's.
     const f = r.alt > cloud.alt + TUNE.cloudDepth * 0.5 ? 1 : r.alt < cloud.alt - TUNE.cloudDepth * 0.5 ? -1 : 0;
     return { s: turnTo(r, cloud.x, cloud.z), f, g: fast ? 1 : 0 };
   }
-  // Nothing to chase: fly down the slope to the start line, stick all the way
-  // (as fast as a player can: a bot left at the base glide falls behind the pack).
-  const cross = r.dx * az - r.dz * ax, dot = r.dx * ax + r.dz * az;
-  return { s: dot > 0.97 ? 0 : cross < 0 ? -1 : 1, f: 0, g: 1 };
+  // Nothing to chase: fly for its own place across the line, fanning out as the cone widens,
+  // stick all the way (as fast as a player can: a bot left at the base glide falls behind the pack).
+  const lane = descentLane(world), u = r.x * ax + r.z * az + 1500;
+  const want = lane.c + bot.slot * laneHalf(lane, lane.uLine - u);
+  return { s: turnTo(r, ax * u - az * want, az * u + ax * want), f: 0, g: 1 };
 }
 const turnTo = (r, x, z) => {
   const d = Math.hypot(x - r.x, z - r.z) || 1, cross = r.dx * (z - r.z) - r.dz * (x - r.x);

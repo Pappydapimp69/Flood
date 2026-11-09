@@ -134,8 +134,10 @@ export const TUNE = {
   // The drop comes in like a comet: it starts this share of a steady glide's
   // run behind its start spot, so flying straight lands it there on time.
   cometRun: 1,
-  laneEntry: 1.25, // the descent lane's half-width where comets come in, as a share of the start line's half-span...
-  laneEnd: 1 / 6, // ...and at the line (its middle sixth, about 2.5 km: a third left bots where clouds already brought them)
+  // The descent is a cone (owner, 2026-11-09): everyone starts together in a narrow mouth and the
+  // field fans out to the start line's full width at the bottom. (Was the reverse: 1.25 wide in, 1/6 at the line.)
+  laneEntry: 0.04, // the lane's half-width where comets come in, as a share of the start line's half-span (about 300 m)...
+  laneEnd: 0.9, // ...and at the line: nine tenths of it (its very ends run into the course walls)
   // The start line: every course cell this far from the beach by water (the fair
   // cells' median), so wherever a drop crosses it, the race ahead is the same length.
   lineTol: 0.004, // share of that distance either side drawn as the line
@@ -172,7 +174,7 @@ export const TUNE = {
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
   bumpRadius: 350, // metres (was 220: rams rarely landed)
   bumpDepth: 300, // metres of height
-  dropRandom: { back: 0.12, alt: 0.15 }, // random starts: up to 12% nearer or farther back, 15% higher or lower (null: fair, fixed starts)
+  dropRandom: { back: 0, alt: 0 }, // a jitter inside the cone's mouth (owner: everyone starts together); back / alt: shares of the run and height
   dropCalm: 90, // ticks at the start of a descent (the 4.5 s opening shot) when no drop can bump or be bumped
   // Slipstream: flying within draftLength behind another drop (draftWidth either
   // side, within bumpDepth of its height) glides draftBoost faster, past the stick's cap.
@@ -598,6 +600,12 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     }
     const bx = best >= 0 ? ((best % n) / (n - 1) - 0.5) * t.worldSize : at.x, bz = best >= 0 ? (Math.floor(best / n) / (n - 1) - 0.5) * t.worldSize : at.z;
     river.x = bx - ax * run; river.z = bz - az * run;
+    {
+      // Everyone starts together: squeeze the drop's place across the line into the cone's mouth.
+      const lane = descentLane(world), u0 = river.x * ax + river.z * az, l0 = lat(river.x, river.z);
+      const l1 = lane.c + (l0 - lane.c) * (lane.entry / Math.max(1, lane.end));
+      river.x = ax * u0 - az * l1; river.z = az * u0 + ax * l1;
+    }
     if (TUNE.dropRandom) {
       // Random starts (owner, 2026-11-09): anywhere across the lane's mouth, a little nearer or
       // farther back, higher or lower. Seeded by the island and the river, so every machine agrees.
