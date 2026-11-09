@@ -67,6 +67,7 @@ function sectionsOf(seed) {
   for (let i = kinds.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [kinds[i], kinds[j]] = [kinds[j], kinds[i]]; }
   return kinds.map((kind, i) => ({ kind, t0: SECTION.from + i * SECTION.len }));
 }
+export const sectionsOfExport = (seed) => sectionsOf(seed);
 const slalomT = (seed, i) => { const sl = sectionsOf(seed).find((x) => x.kind === 'slalom'); return sl.t0 + SECTION.len * (i + 0.5) / GATES(); };
 const fract = (x) => x - Math.floor(x);
 const windowAt = (t, t0) => { const u = clamp01((t - t0) / SECTION.len); return 16 * u * u * (1 - u) * (1 - u); }; // 0 at the ends, 1 mid
@@ -134,7 +135,7 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
     const w = windowAt(t, sec.t0);
     if (!w) continue;
     if (sec.kind === 'gorge') halfW *= 1 - 0.55 * w;
-    if (sec.kind === 'switchback') { const q = fract((t - sec.t0) / (SECTION.len / 2)), tri = 1 - 4 * Math.abs(q - 0.5); wv -= 0.6 * halfW * w * tri * (3 - 2 * Math.abs(tri)) / (1 + 0 * tri); }
+    if (sec.kind === 'switchback') { const q = fract((t - sec.t0) / SECTION.len), tri = 1 - 4 * Math.abs(q - 0.5); wv -= 0.3 * halfW * w * tri * (3 - 2 * Math.abs(tri)) / 2; } // one long S (0.6 and two bends crowded rivers into the bends: 26 of 37 non-finishers)
   }
   // Wide enough at the top for three summits side by side inside the walls.
   const topW = ((S.gap + SUMMIT.room) / 0.62) * (1 - smooth(0.15, 0.35, t));
@@ -215,7 +216,7 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
 // Island shape settings (exported so tuning passes can try others; defaults keep every island as it was).
 // 2026-11-02 map pass: more lakes and a wider, winding corridor. wide 1.5 or warp 2 put
 // a fifth of the start cells nearer another summit than their own; 1.3 / 1.5 keeps all of them.
-export const ISLAND = { mixed: false, lakes: 20, gates: 6, // mixed: the four-section course (off: 4 test races, finishes 8.3 -> 3)
+export const ISLAND = { mixed: true, lakes: 20, gates: 5, // mixed: the four-section course (4 test races: finishes 8.3 -> 10.8, knockouts 3.25 -> 1.25)
   wide: 1.3, taper: 2, warp: 1.5, trough: 200 };
 // trough: metres the floor rises toward the walls (was 60). 200 pulls routes toward the centre line so rivals
 // cross each other's channels more: contacts +17% on two fresh sets of islands (12 and 16 races), finishes held.
