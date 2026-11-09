@@ -272,10 +272,11 @@ test('drop: no bumps during the opening shot (TUNE.dropCalm), then bumps as usua
 test('drop: after a bump the drop hit darts away and the hitter is checked', () => {
   const w = rollIsland(5, 2).world;
   const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
-  Object.assign(a, { dx: 1, dz: 0, fallT: TUNE.dropCalm });
-  Object.assign(b, { x: a.x + 300, z: a.z, alt: a.alt, dx: 0, dz: 1, fallT: TUNE.dropCalm }); // a rams b side-on
+  const ax = w.terrain.axis.x, az = w.terrain.axis.y; // fly along the slope: headings over 60 deg off it are turned back
+  Object.assign(a, { dx: ax, dz: az, fallT: TUNE.dropCalm });
+  Object.assign(b, { x: a.x + ax * 300, z: a.z + az * 300, alt: a.alt, dx: ax, dz: az, fallT: TUNE.dropCalm }); // a rams b from behind: b throttles right back
   let bump = null;
-  for (let k = 0; k < 20 && !bump; k++) { step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: 1 }]])); bump = w.events.splice(0).find((e) => e.type === 'bump'); }
+  for (let k = 0; k < 20 && !bump; k++) { step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: -1 }]])); bump = w.events.splice(0).find((e) => e.type === 'bump'); }
   assert.ok(bump, 'no bump');
   assert.equal(bump.hitter, a.idx, 'the rammer is the hitter');
   assert.ok(a.recoilT > 0 && b.burstT > 0, 'no recoil or burst');

@@ -1813,7 +1813,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · you land where you cross the start line · fly through clouds for water' : '← → steer · hold ↑ to fly fast and land first · ↓ float: stay up for clouds')
+  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · you land where you cross the start line · fly through clouds for water' : '← → steer · ↑ dive to low clouds · ↓ float: stay up for clouds')
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`

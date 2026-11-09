@@ -144,7 +144,7 @@ export const TUNE = {
   dropCloudShare: 0.156, // descent clouds hold this share of cloudWater (they gave far too much; 0.25 x 10/16 clouds)
   cloudSpread: 4500, // metres either side of the comet path the first clouds sit; they close in toward the start line
   diveRate: 1.6,
-  diveSpeed: 0.5, floatSpeed: 0.3, // diving glides this much faster, floating this much slower // ...diving falls up to this much faster (about 12 s)...
+  diveSpeed: 0, floatSpeed: 0.3, // diving only loses height, no ground speed (was 0.5: bots dived half the descent and outran players, owner 2026-11-09); // diving glides this much faster, floating this much slower // ...diving falls up to this much faster (about 12 s)...
   floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
   // Rain clouds hang in the sky over the summits: fall through one and its
   // water is yours, a bigger start; each can only be taken once.
@@ -615,19 +615,20 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
 // steer turns, fwd hurries (+1) or slows (-1) the fall, g glides faster or slower across the ground.
 function glide(world, r, steer, fwd, g = 0) {
   if (steer) {
-    // A comet keeps coming in: at most 70 degrees off straight down the slope. Turning further
+    // A comet keeps coming in: at most 60 degrees off straight down the slope (was 70: held there with no
+    // dive boost it crept in at a third of its speed). Turning further
     // from downhill eases off from 45 degrees instead of stopping dead at the limit (it read as
     // the stick doing nothing a quarter of the time); turning back is always full rate.
     const ax0 = world.terrain.axis.x, az0 = world.terrain.axis.y, cosNow = r.dx * ax0 + r.dz * az0;
     const a0 = (TUNE.glideTurn * -steer) / Math.max(1, r.size); // heavier turns slower
     const away = (r.dx + r.dz * a0) * ax0 + (r.dz - r.dx * a0) * az0 < cosNow; // this turn takes it further from downhill
-    const a = a0 * (away ? Math.max(0.15, Math.min(1, (cosNow - 0.342) / (0.707 - 0.342))) : 1);
+    const a = a0 * (away ? Math.max(0.15, Math.min(1, (cosNow - 0.5) / (0.707 - 0.5))) : 1);
     const dx = r.dx + r.dz * a, dz = r.dz - r.dx * a;
     r.dx = dx; r.dz = dz;
     normalize(r);
   }
   {
-    const ax = world.terrain.axis.x, az = world.terrain.axis.y, MAXC = 0.342; // cos 70
+    const ax = world.terrain.axis.x, az = world.terrain.axis.y, MAXC = 0.5; // cos 60
     if (r.dx * ax + r.dz * az < MAXC) {
       const side = r.dx * az - r.dz * ax < 0 ? -1 : 1, sn = Math.sqrt(1 - MAXC * MAXC);
       r.dx = ax * MAXC + az * sn * side; r.dz = az * MAXC - ax * sn * side;
