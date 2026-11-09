@@ -64,12 +64,14 @@ test('steering changes where the river goes', () => {
 
 // Erosion is forever: the whole trail keeps deepening, start included.
 test('the start of a trail keeps eroding long after the head has left', () => {
+  const rock0 = TUNE.rockBelow; TUNE.rockBelow = -1e9; // no rock summit here: this tests erosion itself
   const w = createWorld(islands.get(2));
   const r = addRiver(w, 'p1');
   for (let k = 0; k < 200; k++) step(w, new Map());
   const p = r.path[1], c = cellIndex(w.terrain, p.x, p.z);
   const d0 = w.carve[c];
   for (let k = 0; k < 400 && !r.finished; k++) step(w, new Map());
+  TUNE.rockBelow = rock0;
   assert.ok(w.carve[c] > d0 + 0.5, `start went ${d0} -> ${w.carve[c]}`);
 });
 

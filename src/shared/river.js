@@ -98,6 +98,9 @@ export const TUNE = {
   gougeMinCost: 80_000, // ...but never less than this many litres
   gougeKeep: 0.5, // share of the starting volume a river must keep after paying
   gougeCool: 240, // ticks from one gouge to the next (12 s; owner +1 s twice)
+  cutRide: true, cutSpan: 2, rideTicks: 50, rideLeak: 0.002, ridePush: 1.2, // cuts vs rides (owner): span in channel widths; leak per tick; wave shove x base speed
+  lakeJunctions: false, // waves end at lakes, shared over every outlet (off: 4 test races went 7.5 -> 4.5 finishes, first finish 97 -> 204 s)
+  rockBelow: 1000, // the summit is rock down to this far below the start line: no erosion there (owner)
   gougeDeepen: 0.05, // each gouge deepens the river's whole channel by this share (owner, 2026-11-09)
   gougeSizeCost: false, // experiment: cost share x size (big rivers pay more)
   // Surge, the second skill: a short wind-up, then
@@ -989,7 +992,8 @@ export function step(world, inputs) {
 export const surgeReady = (world, r) => TUNE.surgeOn && !!r.surgeOn && isRacing(r) && !r.dropping && r.pooled < 0 && r.gougeT < 0 && !(r.surgeT >= 0)
   && world.tick >= (r.surgeAt ?? 0) && r.volume - Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare) >= TUNE.gougeKeep * TUNE.startVolume;
 function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: surge }) {
-  if (r.dropping) return glide(world, r, steer, fwd, glideIn);
+  // The opening shot (owner): nobody steers, players or bots; everyone glides straight at full throttle.
+  if (r.dropping) return calm(r) ? glide(world, r, 0, 0, 1) : glide(world, r, steer, fwd, glideIn);
   if (steer) {
     // Turn by adding a sideways component, then renormalising (angle = atan(a)).
     // A bigger river answers the stick as well as a small one: more water is
@@ -1336,9 +1340,9 @@ function resolveContacts(world) {
     // Head in a rival's live channel: the channel's water is as deep as it was dug.
     const k = cellIndex(world.terrain, a.x, a.z);
     const o = owner[k];
-    if (o >= 0 && o !== a.idx && live.has(o) && carve[k] > TUNE.contactDepth && isLive(world, k)) {
-      cuts.push([a, a.depth, world.rivers[o], carve[k], k]); // head depth vs the channel as cut right here
-    }
+    const inCh = o >= 0 && o !== a.idx && live.has(o) && carve[k] > TUNE.contactDepth && isLive(world, k);
+    if (!TUNE.cutRide) { if (inCh) cuts.push([a, a.depth, world.rivers[o], carve[k], k]); } // head depth vs the channel as cut right here
+    else trackChannel(world, a, inCh ? o : -1, k, cuts);
     // Heads touching.
     for (const b of rs) {
       if (b.idx <= a.idx) continue;
@@ -1794,6 +1798,38 @@ function feed(r, at, litres) {
 }
 
 // The path point of river r nearest cell k (searching back from the head).
+// Cuts and rides (owner, 2026-11-09). A cut is a crossing: the head comes in from one bank and leaves by the
+// other within cutSpan channel widths of travel; only then does the junction form. Staying in a rival's
+// channel rideTicks is a ride: the rider leaks water into the channel (down to whatever it feeds) and the
+// owner's waves splash off it, shoving it on, their water going to the sky. Entering or leaving along it is no cut.
+function trackChannel(world, a, o, k, cuts) {
+  const t = world.terrain, ch = a.ch;
+  const sideOf = (c, x, z) => Math.sign(c.dx * (z - c.pz) - c.dz * (x - c.px)) || 1;
+  if (ch && ch.o !== o) {
+    // Leaving (or into another channel): a cut if it came in one side and left the other, quickly.
+    const rival = world.rivers[ch.o];
+    if (!ch.ride && isRacing(rival) && sideOf(ch, a.x, a.z) === -ch.side && a.travelled - ch.s <= TUNE.cutSpan * widthOf(rival)) cuts.push([a, a.depth, rival, world.carve[ch.k], ch.k]);
+    a.ch = null;
+  }
+  if (o >= 0 && !a.ch) {
+    const rival = world.rivers[o], i = nearestIndex(world, rival, k), P = rival.path;
+    const p0 = P[Math.max(0, i - 1)], p1 = P[Math.min(P.length - 1, i + 1)], l = Math.hypot(p1.x - p0.x, p1.z - p0.z) || 1;
+    const c = { o, k, s: a.travelled, tick: world.tick, dx: (p1.x - p0.x) / l, dz: (p1.z - p0.z) / l, px: P[i].x, pz: P[i].z, ride: false };
+    c.side = sideOf(c, a.lastX ?? a.x, a.lastZ ?? a.z);
+    a.ch = c;
+  }
+  if (a.ch) {
+    const rival = world.rivers[a.ch.o];
+    a.ch.at = nearestIndex(world, rival, k);
+    if (!a.ch.ride && world.tick - a.ch.tick >= TUNE.rideTicks) a.ch.ride = true;
+    if (a.ch.ride && isRacing(rival)) { // the leak: into the channel, down to its head (and lakes on the way)
+      const leak = a.volume * TUNE.rideLeak;
+      grow(a, -leak); feed(rival, a.ch.at, leak);
+    }
+  }
+  a.lastX = a.x; a.lastZ = a.z;
+}
+
 function nearestIndex(world, r, k) {
   const t = world.terrain, n = t.size;
   const kx = ((k % n) / (n - 1) - 0.5) * t.worldSize, kz = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
@@ -1848,6 +1884,15 @@ function pulses(world) {
       // Every path point passed this tick.
       while (p.i < r.path.length && r.path[p.i].s <= s1) {
         const q = r.path[p.i++], c = cellIndex(t, q.x, q.z);
+        if (TUNE.cutRide && p.amount > 0) for (const rd of world.rivers) {
+          if (!rd.ch?.ride || rd.ch.o !== r.idx || rd.ch.at !== p.i - 1 || !isRacing(rd)) continue;
+          // The wave splashes off the rider: it shoves the rider on, its water goes to the sky, the owner never gets it.
+          const shove = TUNE.ridePush * TUNE.baseSpeed * Math.min(1, p.amount / (rd.volume * TUNE.surgeShare));
+          rd.speed = Math.min(rd.speed + shove, TUNE.maxSpeed * (rd.mass ?? 1) * TUNE.surgeCap);
+          world.sky = (world.sky ?? 0) + p.amount; p.amount = 0;
+          world.events.push({ type: 'splash', river: rd.idx, owner: r.idx, tick: world.tick });
+          break;
+        }
         // (The head itself doesn't erode: a head that stops can't dig itself a pit.)
         if (p.erode && p.i <= r.path.length - TUNE.headSpared) erodeAt(world, r, c, flow, p.every);
         const lake = world.lakeOf[c];
@@ -1867,6 +1912,17 @@ function pulses(world) {
               world.lakePending[lake] += take;
               world.events.push({ type: 'soak', river: r.idx, lake, amount: take, tick: world.tick });
             }
+          }
+          // Lakes are junctions (owner, 2026-11-09): the wave ends here. Its water joins the lake, and the
+          // lake's rising level pours out through every outlet (by depth over each lip), feeding every river
+          // that leaves it. Not river water passing through: the lake's own gain, shared by all its outlets.
+          if (TUNE.lakeJunctions && p.amount > 0) {
+            // Shared at once over every river leaving the lake, by how deep each has cut its outlet
+            // (stored in the lake, a full lake spilled it into ownerless channels: finishes 9 -> 5).
+            const outs = world.rivers.filter((o) => isRacing(o) && !o.dropping && o.via.has(lake)).sort(byId);
+            const wsum = outs.reduce((a, o) => a + Math.max(0.5, o.via.get(lake).e), 0);
+            for (const o of outs) feed(o, o.via.get(lake).at ?? 0, p.amount * Math.max(0.5, o.via.get(lake).e) / wsum);
+            if (outs.length) p.amount = 0;
           }
         }
       }
@@ -1909,11 +1965,14 @@ function pulses(world) {
 // river's flow depth, shallower at the banks), the river's size and the slope
 // there, for the whole interval since the last pulse. Big rivers on steep
 // ground carve canyons; small ones on the flats barely scour.
+// The mountain top is rock down to rockBelow metres (by water) under the start line: channels there never erode.
+const onRock = (world, k) => world.toBeach[k] > startLine(world).L - TUNE.rockBelow;
+
 function erodeAt(world, r, c, flow, every) {
   const t = world.terrain, n = t.size, cx = c % n, cy = (c - cx) / n;
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
     const k = (cy + dy) * n + cx + dx;
-    if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL || underWater(world, k)) continue;
+    if (k < 0 || k >= n * n || world.owner[k] !== r.idx || t.filled[k] <= SEA_LEVEL || underWater(world, k) || onRock(world, k)) continue;
     if (world.erodedBy?.[k] === world.tick) continue; // once a tick, however many points cross it
     (world.erodedBy ??= new Int32Array(n * n).fill(-1))[k] = world.tick;
     const was = world.carve[k];
@@ -2270,7 +2329,12 @@ export function predictPath(world, r, ticks = 120, every = 4) {
     for (let i = 0; i < ticks && isRacing(g); i++) {
       moveRiver(ghost, g, { s: 0, f: 0, k: 0 });
       ghost.tick++;
-      if (i % every === every - 1) out.push({ x: g.x, z: g.z, speed: g.speed, kind: g.stuck || g.filling ? 'stuck' : g.route !== null || g.exit >= 0 ? 'route' : g.speed < TUNE.climbSpeed ? 'slow' : 'run' });
+      if (i % every === every - 1) {
+        // A rival's live channel under this point: its depth against what this river's head will be (the preview's markers).
+        const k = cellIndex(world.terrain, g.x, g.z), o = world.owner[k];
+        const cross = o >= 0 && o !== r.idx && isLive(world, k) && world.carve[k] > TUNE.contactDepth ? { o, theirs: world.carve[k], mine: depthOf(g) } : null;
+        out.push({ x: g.x, z: g.z, speed: g.speed, cross, kind: g.stuck || g.filling ? 'stuck' : g.route !== null || g.exit >= 0 ? 'route' : g.speed < TUNE.climbSpeed ? 'slow' : 'run' });
+      }
     }
   } finally { predicting = false; }
   return out;
@@ -2302,7 +2366,7 @@ function deepenChannels(world) {
   const t = world.terrain;
   for (const r of world.deepen.sort(byId)) {
     for (let k = 0; k < world.carve.length; k++) {
-      if (world.owner[k] !== r.idx || !(world.carve[k] > 0)) continue;
+      if (world.owner[k] !== r.idx || !(world.carve[k] > 0) || onRock(world, k)) continue;
       const v = Math.min(world.carve[k] * (1 + TUNE.gougeDeepen), Math.max(0, t.height[k] + world.rock[k] - SEA_LEVEL - 0.5)); // never below the sea
       if (v > world.carve[k]) { world.carve[k] = v; world.dirty.push(k); }
     }
