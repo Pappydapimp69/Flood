@@ -97,7 +97,7 @@ export const TUNE = {
   gougeShare: 0.1, // share of the river's volume each gouge spends...
   gougeMinCost: 80_000, // ...but never less than this many litres
   gougeKeep: 0.5, // share of the starting volume a river must keep after paying
-  gougeCool: 200, // ticks from one gouge to the next (10 s)
+  gougeCool: 220, // ticks from one gouge to the next (11 s; owner +1 s)
   gougeSizeCost: false, // experiment: cost share x size (big rivers pay more)
   // Surge, the second skill: a short wind-up, then
   // a burst of speed on the flat; costs water, its own cooldown.
@@ -106,7 +106,8 @@ export const TUNE = {
   surgeAdd: 2, // times base speed Surge adds on top of the speed the head already has
   surgeFloor: 110, // ...and at least this many m/s while it lasts
   surgeShare: 0.08, // share of volume each surge spends (min gougeMinCost)
-  surgeCool: 160, // ticks from one surge to the next (8 s)
+  surgeCool: 180, // ticks from one surge to the next (9 s; owner +1 s)
+  lakeCoolPer: 0.001, lakeCoolLitres: 10_000, lakeCoolMin: 0.25, // lakes are buffs: cooldowns 0.1% shorter per 10k L of lake water taken in (never under a quarter)
   // Skills unlock as a river grows (litres; once unlocked, kept), and share one
   // cooldown: using either restarts it for both, at the length of the one used.
   surgeUnlock: 1_200_000,
@@ -940,7 +941,8 @@ export const gougeUsable = (world, r) => gougeReady(world, r) && gougeTarget(wor
 function startGouge(world, r) {
   const cost = gougeCost(r);
   grow(r, -cost);
-  r.gougeAt = r.surgeAt = world.tick + TUNE.gougeCool; r.coolLen = TUNE.gougeCool; // one cooldown for both skills
+  const cool = coolOf(r, TUNE.gougeCool);
+  r.gougeAt = r.surgeAt = world.tick + cool; r.coolLen = cool; // one cooldown for both skills
   r.boost = TUNE.gougeBoost;
   r.boostSpeed = Math.max(TUNE.gougeFloor, r.speed + TUNE.baseSpeed * TUNE.gougeAdd * Math.max(1, r.mass ?? 1));
   r.speed = r.boostSpeed;
@@ -1014,7 +1016,7 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   if (surge && surgeReady(world, r)) {
     const cost = Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare);
     // Like Gouge, it never stops the head: the speed it has is kept and Surge adds to it.
-    grow(r, -cost); r.surgeT = 0; r.surgeAt = r.gougeAt = world.tick + TUNE.surgeCool; r.coolLen = TUNE.surgeCool;
+    grow(r, -cost); r.surgeT = 0; const cool = coolOf(r, TUNE.surgeCool); r.surgeAt = r.gougeAt = world.tick + cool; r.coolLen = cool;
     r.surgeSpeed = Math.max(TUNE.surgeFloor, r.speed + TUNE.baseSpeed * TUNE.surgeAdd * Math.max(1, r.mass ?? 1));
     r.speed = r.surgeSpeed;
     world.events.push({ type: 'surge-wind', river: r.idx, cost, tick: world.tick });
@@ -1730,6 +1732,7 @@ function hydrology(world) {
     if (gain > 0) {
       feed(r, o.at ?? 0, gain);
       r.inflow += gain;
+      r.lakeTaken = (r.lakeTaken ?? 0) + gain; // lake water shortens skill cooldowns (coolOf)
       (r.lakeFeeds ??= new Map()).set(o.at ?? 0, lake); // that pulse is this lake's water
     }
     // Erosion follows the water over the lip and the river's volume: a high
@@ -2138,6 +2141,12 @@ function joinLake(world, r, lake, cell) {
   const take = world.lakeVol[lake] * TUNE.joinShare;
   grow(r, take);
   world.events.push({ type: 'join', lake, river: r.idx, gain: take, tick: world.tick });
+}
+
+// A skill's cooldown, shortened 0.1% per 10k L of lake water the river has taken in (owner, 2026-11-09).
+export function coolOf(r, ticks) {
+  const k = Math.max(TUNE.lakeCoolMin, 1 - TUNE.lakeCoolPer * (r.lakeTaken ?? 0) / TUNE.lakeCoolLitres);
+  return Math.max(1, Math.round(ticks * k));
 }
 
 function grow(r, litres) {
