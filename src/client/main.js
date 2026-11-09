@@ -1701,11 +1701,11 @@ renderer.setAnimationLoop(() => {
     // so the clouds ahead sit at their true height beside you and the ground
     // shadows (yours and theirs) show where you are over it.
     // It turns with the drop again, so steering reads, but never faster than
-    // 45 deg/s (Brain T182: visually induced sickness peaks at 60 deg/s).
+    // 52 deg/s, matched to how fast a drop turns (Brain T182: visually induced sickness peaks at 60 deg/s).
     if (cut) camDir.set(focus.dx, focus.dz).normalize();
     else {
       const ang = Math.atan2(camDir.x * focus.dz - camDir.y * focus.dx, camDir.x * focus.dx + camDir.y * focus.dz);
-      const turn = Math.sign(ang) * Math.min(Math.abs(ang) * (1 - Math.exp(-frameDt * 3)), 0.785 * frameDt);
+      const turn = Math.sign(ang) * Math.min(Math.abs(ang) * (1 - Math.exp(-frameDt * 6)), 0.91 * frameDt); // up to 52 deg/s: as fast as a drop turns, under T182's 60
       camDir.rotateAround(new THREE.Vector2(0, 0), turn).normalize();
       dbg.dropYawRate = Math.max(dbg.dropYawRate ?? 0, Math.abs(turn) / Math.max(frameDt, 1e-3));
     }

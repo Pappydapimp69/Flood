@@ -341,3 +341,24 @@ Owner: "the descent sucks". Measured first (Brain flood#E126: time to first even
 - Haze thins with the drop's height (aerosol scale height 1.5 km): the island reads from 7 km up.
 - Audit of M21 against the descent: no knockouts while falling, no river behind the line, Surge not
   handed to drops on landing.
+
+## M23 — A tighter descent and a more contested map (2026-11-09)
+Owner: "make the race map more competitive" and "the descent is still sloppy". Measured first, bots only.
+- Descent: a weaving, diving player had 13.2 height jolts a minute (the floor shoved it up as hills
+  passed under, up to 13 m a tick; near the line the ceiling dropped it up to 52 m a tick) and 7.3 sideways
+  jolts (the lane wall re-placed it, up to 17 m a tick). Now: the floor looks 1.5 s ahead and the climb
+  speeds up and fades by 0.6 m a tick; the ceiling pulls at most 6 m a tick faster than the fall; the lane
+  wall is a 150 m cushion that fades outward motion (always moving on down the lane). 1.8 and 3.3 jolts a minute.
+- Descent: drops turned at 92 deg/s but the camera may turn 45 (Brain T182), so the view lagged 47 deg
+  behind a 1 s turn. Both now 52 deg/s (still under T182's 60). Turning away from downhill eases off from
+  45 deg instead of stopping dead at 70.
+- Map: rivals are rarely near each other (median nearest rival about 2 km; within 400 m about 4% of
+  racing time), so the fight is cutting rivals' channels. A stronger centre trough (ISLAND.trough 60 -> 200)
+  raised channel contacts 17% on two fresh island sets (12 and 16 races) with finishes held. More gates
+  bunched rivers (14% near a rival) but cost finishes; a narrower corridor, more lakes or a narrower landing
+  did nothing reliable.
+- Fixed on the way: the sea current could clip a shore cell 0.23 m above the sea and leave a river
+  flowing back and forth for good; the start-line wall no longer applies at sea.
+- Tests: the forest test checks the tree rule itself (a small river made fast by a slope breaks through,
+  by design); the online test decodes frames (a falling steer travels with the glide throttle).
+- Open: the river leading 60 s after landing wins 12-13 of 16 races. That is speed parity, not the map.

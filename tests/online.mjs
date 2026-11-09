@@ -4,7 +4,7 @@
 import { createRequire } from 'node:module';
 import { startServer } from '../src/server/server.mjs';
 import { Room } from '../src/server/room.js';
-import { FP_EVERY } from '../src/shared/protocol.js';
+import { FP_EVERY, decodeFrame } from '../src/shared/protocol.js';
 
 const { chromium } = createRequire(import.meta.url)('playwright');
 const shotDir = process.argv[2];
@@ -54,11 +54,13 @@ try {
   if (va.you === vb.you) throw new Error('both players got the same seat');
   const slotA = room.ids.indexOf(va.you);
 
-  // Hold left until the server has stamped it into a frame (the page may render slowly).
+  // Hold left until the server has stamped it into a frame (the page may render slowly). Falling, a
+  // steer travels with the glide throttle, so decode the frame rather than look for the bare left char.
+  const steeredLeft = (f) => { const v = decodeFrame(room.ids, f).get(va.you); return (typeof v === 'object' ? v.s : v) === -1; };
   await a.keyboard.down('ArrowLeft');
-  for (let i = 0; i < 300 && !room.log.some((f) => f[slotA] === '-'); i++) await a.waitForTimeout(50);
+  for (let i = 0; i < 300 && !room.log.some(steeredLeft); i++) await a.waitForTimeout(50);
   await a.keyboard.up('ArrowLeft');
-  if (!room.log.some((f) => f[slotA] === '-')) throw new Error('A steering never reached the server');
+  if (!room.log.some(steeredLeft)) throw new Error('A steering never reached the server');
   await until(a, (v) => v.tick > 2 * FP_EVERY + 10, 'A past two checks');
   console.log(`ok   both players in one race (${room.ids.length} rivers), A's steering reached the server`);
 

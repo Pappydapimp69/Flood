@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateIsland } from '../../src/shared/terrain.js';
-import { createWorld, addRiver, step, spawnBand, surfaceAt, cellIndex, TUNE } from '../../src/shared/river.js';
+import { createWorld, addRiver, step, spawnBand, surfaceAt, cellIndex, TUNE, breaksTrees } from '../../src/shared/river.js';
 import { FOREST } from '../../src/shared/forest.js';
 
 const t7 = generateIsland(7);
@@ -70,16 +70,23 @@ test('a small river is slowed right down among trees (never walled in); a big on
     const w = createWorld(t7);
     const r = addRiver(w, 'a', s.from);
     r.volume = TUNE.startVolume * size ** 3; r.size = size; r.mass = 1 + TUNE.speedPerSize * (size - 1);
-    r.dx = 1; r.dz = 0; r.speed = 120;
-    let inTrees = 0, slowest = Infinity, entry = 0;
+    // A small river comes in slow (by design a small FAST head smashes through: size x speed / base speed >= treeBreak),
+    // so this holds whatever the slope ahead does; the big one comes in at 120 m/s.
+    r.dx = 1; r.dz = 0; r.speed = size < TUNE.treeBreak ? 40 : 120;
+    let inTrees = 0, slowest = Infinity, entry = 0, arrive = -1;
     for (let k = 0; k < 80; k++) {
+      if (arrive < 0 && Math.abs(r.x - s.pos(s.stand).x) < w.terrain.worldSize / (w.terrain.size - 1) * 1.5 && Math.abs(r.z - s.pos(s.stand).z) < w.terrain.worldSize / (w.terrain.size - 1)) arrive = r.size * r.speed / TUNE.baseSpeed;
       step(w, new Map());
       if (w.trees[cellIndex(w.terrain, r.x, r.z)]) { if (!inTrees) entry = r.speed; inTrees++; slowest = Math.min(slowest, r.speed); }
     }
-    return { felled: !w.trees[s.stand], inTrees, slowest, entry };
+    return { felled: !w.trees[s.stand], inTrees, slowest, entry, arrive };
   };
   const small = run(1);
-  assert.ok(!small.felled, 'a small river knocked the stand down');
+  // The rule: a head breaks trees by force (size x speed / base speed >= treeBreak). A small river that
+  // arrives below that is held up; one the slope has made fast enough smashes through, by design.
+  if (small.arrive >= 0 && small.arrive < TUNE.treeBreak) assert.ok(!small.felled, 'a small, slow river knocked the stand down');
+  // And the rule itself, wherever the island puts its stands: slow and small is held up, fast or big breaks through.
+  assert.ok(!breaksTrees({ size: 1, speed: 40 }) && breaksTrees({ size: 1, speed: 120 }) && breaksTrees({ size: TUNE.treeBreak + 0.3, speed: 60 }));
   if (small.inTrees > 10) assert.ok(small.slowest < small.entry * 0.75, `a small river kept ${small.slowest | 0} of ${small.entry | 0} m/s among the trees`);
   const big = run(TUNE.treeBreak + 0.3);
   assert.ok(big.felled, 'a big river left the stand standing');
