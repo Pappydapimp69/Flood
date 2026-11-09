@@ -86,7 +86,7 @@ function shapeOf(seed) {
     // same notch.
     gates: Array.from({ length: GATES() }, (_, i) => ({
       t: 0.4 + (0.5 * (i + 0.3 + 0.4 * r())) / GATES(),
-      v: (i % 2 ? 1 : -1) * (0.2 + 0.3 * r()),
+      v: (i % 2 ? 1 : -1) * (0.4 + 0.25 * r()), // a slalom: gaps 0.4-0.65 out to alternate sides (was 0.2-0.5; 0.5-0.7 left a river facing a cliff on one island; owner 2026-11-09)
     })),
   };
 }
