@@ -867,6 +867,13 @@ function menuActions() {
     if (!splash.hidden) { if (a === 'confirm') leaveSplash(); continue; }
     if (lesson && a === 'confirm') { endLesson(); continue; }
     if (a === 'mute') { audio.toggle(); showMute(); }
+    else if (!pauseEl.hidden && (a === 'up' || a === 'down' || a === 'confirm')) {
+      // Pause menu on a pad: up / down move between its controls, A presses (ticks a box, presses a button).
+      const ctl = [...pauseEl.querySelectorAll('button:not([hidden]), input')];
+      const i = ctl.indexOf(document.activeElement);
+      if (a === 'confirm') { if (i >= 0) ctl[i].click(); else ctl[0]?.focus(); }
+      else ctl[i < 0 ? 0 : (i + (a === 'down' ? 1 : ctl.length - 1)) % ctl.length]?.focus();
+    }
     else if (menuOpen && (a === 'up' || a === 'down')) {
       const btns = [...hud.menu.querySelectorAll('button:not([hidden])')];
       const i = btns.indexOf(document.activeElement);

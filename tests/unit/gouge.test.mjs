@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { rollIsland, addRiver, step, gougeReady, gougeTarget, gougeCost, surfaceAt, riverFingerprint, TUNE } from '../../src/shared/river.js';
+import { rollIsland, addRiver, step, gougeReady, gougeTarget, gougeCost, surfaceAt, riverFingerprint, coolOf, TUNE } from '../../src/shared/river.js';
 import { encodeFrame, decodeFrame } from '../../src/shared/protocol.js';
 
 // A river run unsteered until a rise ahead stops it that the boost can carry it over.
@@ -49,7 +49,7 @@ test('cooldown is 10 s from the press and shared by both skills; the water floor
   const at = w.tick;
   for (let k = 0; k < TUNE.gougeBoost + 2; k++) step(w, new Map());
   assert.equal(gougeReady(w, r), false, 'still recharging');
-  assert.equal(r.gougeAt, at - 1 + TUNE.gougeCool);
+  assert.equal(r.gougeAt, at - 1 + coolOf(r, TUNE.gougeCool)); // (lake water shortens it)
   assert.equal(r.surgeAt, r.gougeAt, 'one cooldown for both skills');
   const w2 = rollIsland(4, 12).world, r2 = addRiver(w2, 'a');
   r2.volume = TUNE.gougeKeep * TUNE.startVolume + TUNE.gougeMinCost - 1;
