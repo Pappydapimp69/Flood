@@ -741,6 +741,27 @@ function placeTag(el, x, y) {
   el.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`;
 }
 
+// The preview's channel markers (see showFlow): ▲ red, their channel is deeper (it drains you);
+// ▼ green, shallower (you drain it); = grey, too close to call. Symbols as well as colour.
+let crossMarks = [];
+const crossTagPool = [];
+function placeCrossTags(on) {
+  const marks = on ? crossMarks.slice(0, 4) : [];
+  while (crossTagPool.length < marks.length) { const el = document.createElement('div'); tagBox.append(el); crossTagPool.push(el); }
+  crossTagPool.forEach((el, i) => {
+    const m = marks[i];
+    if (!m) { el.hidden = true; return; }
+    tmpV.set(m.x, surfaceAt(world, m.x, m.z) * VERT + 40, m.z).project(camera);
+    if (tmpV.z > 1 || Math.abs(tmpV.x) > 1 || Math.abs(tmpV.y) > 1) { el.hidden = true; return; }
+    const lead = (m.theirs - m.mine) / Math.max(m.mine, 0.5), rival = world.rivers[m.o];
+    const t = lead > TUNE.siphonDeadband ? 1 : lead < -TUNE.siphonDeadband ? -1 : 0;
+    el.hidden = false;
+    el.className = t > 0 ? 'threat' : t < 0 ? 'prey' : '';
+    el.textContent = `${t > 0 ? '▲ deeper' : t < 0 ? '▼ shallower' : '= even'}${m.n >= 12 ? ' · ride' : ''} · ${nameOf(rival)}`;
+    placeTag(el, tmpV.x, tmpV.y);
+  });
+}
+
 // Lake markers: the lakes ahead, seen through the trees, with how full each
 // is and whether it already feeds you. (Bots read the same lakes.)
 const lakeTagPool = [];
@@ -1432,9 +1453,19 @@ function showFlow(now) {
   const me = river;
   const on = !!me && isRacing(me) && !me.dropping && me.gougeT < 0 && !mapView && settings.preview;
   flowLine.visible = on;
+  placeCrossTags(on);
   if (!on || now - flowAt < 250) return;
   flowAt = now;
   const path = [{ x: me.x, z: me.z, kind: 'run' }, ...predictPath(world, me, (PREVIEW_PTS - 1) * 4, 4)].slice(0, PREVIEW_PTS);
+  // Where the preview crosses or runs along a rival's live channel: one marker each, deeper or shallower than
+  // your head will be there (owner, 2026-11-09). Along it for 12+ points (about 2.4 s) is a ride, not a cut.
+  crossMarks = [];
+  for (const p of path) {
+    const last = crossMarks[crossMarks.length - 1];
+    if (!p.cross) { if (last) last.open = false; continue; }
+    if (last?.open && last.o === p.cross.o) { last.n++; continue; }
+    crossMarks.push({ x: p.x, z: p.z, ...p.cross, n: 1, open: true });
+  }
   const pos = flowLine.geometry.attributes.position, col = flowLine.geometry.attributes.color;
   const half = Math.max(18, widthOf(me) * 0.18);
   for (let i = 0; i < path.length; i++) {

@@ -2287,7 +2287,12 @@ export function predictPath(world, r, ticks = 120, every = 4) {
     for (let i = 0; i < ticks && isRacing(g); i++) {
       moveRiver(ghost, g, { s: 0, f: 0, k: 0 });
       ghost.tick++;
-      if (i % every === every - 1) out.push({ x: g.x, z: g.z, speed: g.speed, kind: g.stuck || g.filling ? 'stuck' : g.route !== null || g.exit >= 0 ? 'route' : g.speed < TUNE.climbSpeed ? 'slow' : 'run' });
+      if (i % every === every - 1) {
+        // A rival's live channel under this point: its depth against what this river's head will be (the preview's markers).
+        const k = cellIndex(world.terrain, g.x, g.z), o = world.owner[k];
+        const cross = o >= 0 && o !== r.idx && isLive(world, k) && world.carve[k] > TUNE.contactDepth ? { o, theirs: world.carve[k], mine: depthOf(g) } : null;
+        out.push({ x: g.x, z: g.z, speed: g.speed, cross, kind: g.stuck || g.filling ? 'stuck' : g.route !== null || g.exit >= 0 ? 'route' : g.speed < TUNE.climbSpeed ? 'slow' : 'run' });
+      }
     }
   } finally { predicting = false; }
   return out;
