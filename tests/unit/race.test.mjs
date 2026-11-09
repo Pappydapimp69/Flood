@@ -159,7 +159,9 @@ test('bots reach the sea faster than rivers that never steer, from the same star
 test('drop: a drop lands right where it crosses the start line: no jump, steering moves it, the line is fair', async () => {
   const { startLine, pastLine, cellIndex } = await import('../../src/shared/river.js');
   const w = createWorld(rolled(2));
+  const random = TUNE.dropRandom; TUNE.dropRandom = null; // fixed starts: this compares landings against each other
   for (const id of ['a', 'b', 'c']) addRiver(w, id, undefined, { drop: true });
+  TUNE.dropRandom = random;
   const line = startLine(w), at = {}, jump = {};
   for (let k = 0; k < TUNE.dropTicks * 3 && w.rivers.some((r) => r.dropping); k++) {
     const before = w.rivers.map((r) => [r.x, r.z]);
@@ -244,7 +246,11 @@ test('drop: a drop flying close behind another at its height glides faster (slip
   Object.assign(b, { x: a.x + 300, z: a.z, alt: a.alt, dx: 1, dz: 0 }); // b is 300 m ahead of a
   Object.assign(c, { x: a.x, z: a.z + 2000, alt: a.alt, dx: 1, dz: 0 }); // c flies alone, off to the side
   const ax0 = a.x, cx0 = c.x;
-  for (let k = 0; k < 3; k++) step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: 1 }], ['c', { s: 0, f: 0, g: 1 }]]));
+  const inp = () => new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: 1 }], ['c', { s: 0, f: 0, g: 1 }]]);
+  step(w, inp());
+  const firstGain = (a.x - ax0) / (c.x - cx0);
+  assert.ok(firstGain < 1 + TUNE.draftBoost / 2, `the slipstream should build, not switch on (first tick x${firstGain.toFixed(3)})`);
+  for (let k = 1; k < 60; k++) step(w, inp());
   assert.ok(a.draft && !c.draft, 'slipstream flags wrong');
   assert.ok(a.x - ax0 > (c.x - cx0) * 1.05, `drafting ${(a.x - ax0).toFixed(0)} m vs alone ${(c.x - cx0).toFixed(0)} m`);
 });
@@ -306,4 +312,12 @@ test('a river far behind the leader gets Surge before it is big enough', () => {
   assert.ok(tail.surgeOn, 'the far-behind river has Surge');
   assert.ok(!lead.surgeOn, 'the leader does not');
   assert.equal(w.events.find((e) => e.type === 'unlock' && e.river === tail.idx)?.why, 'behind');
+});
+
+// Random starts (TUNE.dropRandom): drops start at different heights and places, the same on every machine.
+test('drop: starts are random per river and repeatable', () => {
+  const make = () => { const w = rollIsland(5, 4).world; for (const id of ['p', 'q', 'r', 's']) addRiver(w, id, undefined, { drop: true }); return w.rivers.map((r) => [r.x, r.z, r.alt]); };
+  const one = make(), two = make();
+  assert.deepEqual(one, two, 'not repeatable');
+  assert.ok(new Set(one.map((p) => Math.round(p[2]))).size > 1, 'every drop starts at the same height');
 });
