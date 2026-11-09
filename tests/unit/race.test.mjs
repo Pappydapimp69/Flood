@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateIsland } from '../../src/shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, standings, isRacing, knockoutFloor, spawnPoint, surfaceAt, TUNE, TICK_HZ } from '../../src/shared/river.js';
+import { createWorld, rollIsland, addRiver, step, standings, isRacing, knockoutFloor, behindLine, startLine, cellIndex, spawnPoint, surfaceAt, TUNE, TICK_HZ } from '../../src/shared/river.js';
 import { createBot, botSteer } from '../../src/shared/bot.js';
 
 const islands = new Map([1, 2, 42].map((s) => [s, generateIsland(s)]));
@@ -274,4 +274,22 @@ test('drop: after a bump the drop hit darts away and the hitter is checked', () 
   assert.equal(bump.hitter, a.idx, 'the rammer is the hitter');
   assert.ok(a.recoilT > 0 && b.burstT > 0, 'no recoil or burst');
   assert.equal(b.hitBy.id, 'a');
+});
+
+// Owner, 2026-11-09: no river may travel behind the start line. Aim every
+// river straight up the slope at full speed with Gouge's boost and steer it
+// uphill for 20 s: none ever stands behind the line.
+test('no river goes back behind the start line, even aimed uphill with a boost', () => {
+  const { world: w } = rollIsland(7, 12);
+  const line = startLine(w), n = w.terrain.size, ws = w.terrain.worldSize;
+  for (let i = 0; i < 12; i++) {
+    const c = line.cells[Math.floor((i + 0.5) * line.cells.length / 12)];
+    addRiver(w, `u${i}`, { x: ((c % n) / (n - 1) - 0.5) * ws, z: (Math.floor(c / n) / (n - 1) - 0.5) * ws });
+  }
+  const ax = w.terrain.axis.x, az = w.terrain.axis.y;
+  for (let k = 0; k < 20 * TICK_HZ; k++) {
+    for (const r of w.rivers) Object.assign(r, { dx: -ax, dz: -az, speed: TUNE.maxSpeed, volume: Math.max(r.volume, 4e6), gougeAt: 0, surgeAt: 0 });
+    step(w, new Map(w.rivers.map((r) => [r.id, { s: 0, k: 1, u: k % 2 }])));
+    for (const r of w.rivers) if (isRacing(r)) assert.ok(!behindLine(w, r.x, r.z), `${r.id} behind the line at tick ${w.tick}`);
+  }
 });
