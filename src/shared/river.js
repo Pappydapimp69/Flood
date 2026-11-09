@@ -150,6 +150,7 @@ export const TUNE = {
   // water is yours, a bigger start; each can only be taken once.
   skyClouds: 16, // rain clouds along the comet path in, closer together near the start line (was 10:
   // an engaged drop's longest quiet stretch 18 s, worst 29 s; now 13 s, worst 16 s, same total water)...
+  cloudsRandom: true, // anywhere in the lane, any reachable height (owner); off: cloudsOnPath placement
   cloudsOnPath: true, // ...each at the height a steady fall passes it, so steering to one can reach it
   slopeClouds: 14, // ...and low rain clouds spread evenly down the slope, caught by flowing under them
   cloudRadius: 500, // metres across the sky...
@@ -171,10 +172,12 @@ export const TUNE = {
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
   bumpRadius: 350, // metres (was 220: rams rarely landed)
   bumpDepth: 300, // metres of height
+  dropRandom: { back: 0.12, alt: 0.15 }, // random starts: up to 12% nearer or farther back, 15% higher or lower (null: fair, fixed starts)
   dropCalm: 90, // ticks at the start of a descent (the 4.5 s opening shot) when no drop can bump or be bumped
   // Slipstream: flying within draftLength behind another drop (draftWidth either
   // side, within bumpDepth of its height) glides draftBoost faster, past the stick's cap.
   draftLength: 600, draftWidth: 120, draftBoost: 0.2,
+  boostBuild: 0.04, boostFade: 0.08, // dive / float build by this share a tick and fade by this (slipstream: 0.6x both)
   bumpKnock: 1.4, // knock speed per m/s of closing speed, shared by weight
   bumpDecay: 0.93, // knock left after each tick (a bump carries them well apart)
   bumpMin: 30, // (was 40, scaled with the 25% slower glide) m/s of closing speed below which drops just touch: no bump (the 110 m/s glide closes slower)
@@ -595,6 +598,15 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     }
     const bx = best >= 0 ? ((best % n) / (n - 1) - 0.5) * t.worldSize : at.x, bz = best >= 0 ? (Math.floor(best / n) / (n - 1) - 0.5) * t.worldSize : at.z;
     river.x = bx - ax * run; river.z = bz - az * run;
+    if (TUNE.dropRandom) {
+      // Random starts (owner, 2026-11-09): anywhere across the lane's mouth, a little nearer or
+      // farther back, higher or lower. Seeded by the island and the river, so every machine agrees.
+      const rng = stream(t.seed, `drop-start:${id}`), lane = descentLane(world);
+      const u = (river.x * ax + river.z * az) - run * TUNE.dropRandom.back * (rng() * 2 - 1);
+      const side = lane.c + lane.entry * 0.9 * (rng() * 2 - 1);
+      river.x = ax * u - az * side; river.z = az * u + ax * side;
+      river.alt = TUNE.dropAlt * (1 + TUNE.dropRandom.alt * (rng() * 2 - 1));
+    }
   }
   return river;
 }
@@ -623,13 +635,18 @@ function glide(world, r, steer, fwd, g = 0) {
   }
   // Diving trades height for speed (and floating, speed for height), on top of the stick's glide: capped at 2.2x.
   // On the floor there is no height left to trade: a dive there is no faster.
-  const dive = fwd > 0 && r.onFloor ? 0 : fwd;
+  // Dive and float build up and fade (owner, 2026-11-09): about 1.2 s to full, 0.6 s to let go.
+  const want = fwd > 0 && r.onFloor ? 0 : fwd;
+  r.diveK = (r.diveK ?? 0) + Math.max(-TUNE.boostFade, Math.min(TUNE.boostBuild, want - (r.diveK ?? 0)));
+  const dive = r.diveK;
   const v = TUNE.glideSpeed * Math.min(2.2, (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g) * (dive > 0 ? 1 + TUNE.diveSpeed * dive : 1 + TUNE.floatSpeed * dive));
   // After a bump: the drop that was hit darts away for a moment, the one that hit is checked.
   const kick = (r.burstT > 0 ? 1 + TUNE.bumpBurst : 1) * (r.recoilT > 0 ? TUNE.bumpRecoil : 1);
   if (r.burstT > 0) r.burstT--;
   if (r.recoilT > 0) r.recoilT--;
-  const vDraft = (r.draft ? v * (1 + TUNE.draftBoost) : v) * kick;
+  // The slipstream builds while you sit in it (about 2 s to full) and fades over 1 s when you leave.
+  r.draftK = (r.draftK ?? 0) + (r.draft ? Math.min(TUNE.boostBuild * 0.6, 1 - (r.draftK ?? 0)) : -Math.min(TUNE.boostFade * 0.6, r.draftK ?? 0));
+  const vDraft = v * (1 + TUNE.draftBoost * r.draftK) * kick;
   const heavy = 1 + TUNE.heavyFall * Math.max(0, r.size - 1); // cloud water makes a drop heavier: it falls faster
   r.glideV = v;
   const kx = r.kx ?? 0, kz = r.kz ?? 0; // a bump's knock, fading
@@ -678,7 +695,7 @@ function glide(world, r, steer, fwd, g = 0) {
   for (const ahead of [0, 0.5, 1, 1.5]) gnd = Math.max(gnd, surfaceAt(world, r.x + r.dx * v * ahead, r.z + r.dz * v * ahead, r.idx));
   gnd -= skyBase(world);
   const floor = gnd + TUNE.floorGap * near, ceil = Math.max(floor, d * TUNE.ceilSlope + under * (1 - near)); // the ceiling meets the ground under the drop at the line (not the look-ahead: a hill leaving it dropped the ceiling 52 m in a tick)
-  const rate = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * (fwd > 0 ? 1 + TUNE.diveRate * fwd : 1 + TUNE.floatRate * fwd) * heavy;
+  const rate = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * (dive > 0 ? 1 + TUNE.diveRate * dive : 1 + TUNE.floatRate * dive) * heavy;
   // Below the floor, climb to it with a climb speed that builds and fades by 0.6 m a tick, never in one jump.
   const fallTo = r.alt - rate, need = floor - fallTo;
   r.climb = need > 0 ? Math.min(need, (r.climb ?? 0) + 0.6, 14) : Math.max(0, (r.climb ?? 0) - 0.6);
@@ -712,15 +729,17 @@ export function skyClouds(world) {
   world.clouds = Array.from({ length: TUNE.skyClouds }, (_, id) => {
     // The first two come early (within about the first 10 s) and near the lanes the drops fly in on,
     // so the descent opens with a choice instead of empty sky (Brain: time to first event, not median gap).
-    const early = id < 2;
-    const p = early ? 0.05 + 0.05 * id + 0.02 * rng() : 0.12 + 0.8 * Math.pow((id - 2 + 0.3 + 0.4 * rng()) / (TUNE.skyClouds - 2), 0.6); // then denser toward the line
-    const side = early ? (id ? 1 : -1) * (600 + rng() * 1200) : (rng() * 2 - 1) * (TUNE.cloudSpread * Math.pow(1 - p, 0.8) + 250);
+    const early = id < 2 && !TUNE.cloudsRandom;
+    // Random clouds (owner, 2026-11-09): anywhere along the run and across the lane, at any reachable height.
+    const p = TUNE.cloudsRandom ? 0.04 + 0.92 * rng() : early ? 0.05 + 0.05 * id + 0.02 * rng() : 0.12 + 0.8 * Math.pow((id - 2 + 0.3 + 0.4 * rng()) / (TUNE.skyClouds - 2), 0.6); // then denser toward the line
+    const lane = descentLane(world);
+    const side = TUNE.cloudsRandom ? lane.c - (-sx * az + sz * ax) + (rng() * 2 - 1) * laneHalf(lane, run * (1 - p)) * 0.95 : early ? (id ? 1 : -1) * (600 + rng() * 1200) : (rng() * 2 - 1) * (TUNE.cloudSpread * Math.pow(1 - p, 0.8) + 250);
     const back = run * (1 - p);
     return {
       id,
       x: sx - ax * back - az * side,
       z: sz - az * back + ax * side,
-      alt: early || TUNE.cloudsOnPath ? TUNE.dropAlt * (1 - p) * (0.85 + 0.1 * rng()) : Math.max(150, back * (0.3 + 0.9 * rng())), // on the steady path (TUNE.cloudsOnPath: all of them), else anywhere a drop can reach
+      alt: TUNE.cloudsRandom ? TUNE.dropAlt * (1 - p) * (0.3 + 0.9 * rng()) + 150 : early || TUNE.cloudsOnPath ? TUNE.dropAlt * (1 - p) * (0.85 + 0.1 * rng()) : Math.max(150, back * (0.3 + 0.9 * rng())), // on the steady path (TUNE.cloudsOnPath: all of them), else anywhere a drop can reach
       water: (TUNE.cloudWater[0] + rng() * (TUNE.cloudWater[1] - TUNE.cloudWater[0])) * TUNE.dropCloudShare,
       taken: -1,
     };
