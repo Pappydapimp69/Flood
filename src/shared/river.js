@@ -85,8 +85,8 @@ export const TUNE = {
   seaCurrent: 150, // m/s: the current that carries a river off the wrong coast along to the beach
   // Gouge, a skill: the head rears up and slams down, and for gougeBoost the
   // water can run over ground far higher than it normally can, uphill where
-  // it's aimed, without the climb bleeding its speed. The wind-up holds the
-  // head still and open to rivals, and the slam spends water.
+  // it's aimed, without the climb bleeding its speed. It never stops the head
+  // (owner, 2026-11-03: no wind-up pause, so T188 is moot), and it spends water.
   gougeAdd: 1.5, // times base speed Gouge adds on top of the speed the head already has
   gougeFloor: 140, // ...and at least this many m/s for the whole boost, from a standstill too; climbs can't drain it below
   gougeGrow: 0.5, // size it adds for the boost (a taller, deeper head; gone when the boost ends)
@@ -245,6 +245,7 @@ export const TUNE = {
   siphonCap: 0.015,
   siphonDeadband: 0.05,
   floor: 0.4, // below this share of the starting volume a river dries up and is out
+  knockoutHandoff: true, // a river knocked out hands what's left to the river that drained it (T178)
   contactDepth: 1,
   liveTicks: 300, // a drained river's channel stays live this long, then it's a dry bed
   graceTicks: 100,
@@ -1364,7 +1365,12 @@ function resolveContacts(world) {
     if (r.volume >= TUNE.floor * TUNE.startVolume) continue;
     const by = top.get(r).by;
     r.out = { by: by.id, tick: world.tick };
-    world.events.push({ type: 'merge', winner: by.idx, loser: r.idx, gain: 0, how: 'drained', tick: world.tick });
+    // What's left of a river knocked out runs on into the one that drained it, so
+    // no water leaves the world (T178: the sink barely curbed the snowball and lost
+    // about 16% of a crowded field's water per race).
+    const gain = TUNE.knockoutHandoff ? r.volume : 0;
+    if (gain > 0) { grow(by, gain); grow(r, -gain); }
+    world.events.push({ type: 'merge', winner: by.idx, loser: r.idx, gain, how: 'drained', tick: world.tick });
   }
 }
 
