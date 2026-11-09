@@ -58,6 +58,19 @@ function ridged(x, y, seed, octaves) {
 // summits side by side across its top end. Which way it points, its length, its width and how it
 // tapers. No trig (the direction is a
 // unit vector from sqrt), so every machine builds the same island.
+// A mixed course (owner, 2026-11-09): below the summits the slope runs through four sections in an
+// order set by the island: a slalom (the gates), a gorge (the corridor pinches to under half), a
+// switchback (the corridor winds side to side) and terraces (flat benches and drops).
+const SECTION = { from: 0.32, len: 0.15 };
+function sectionsOf(seed) {
+  const r = stream(seed, 'sections'), kinds = ['slalom', 'gorge', 'switchback', 'terraces'];
+  for (let i = kinds.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [kinds[i], kinds[j]] = [kinds[j], kinds[i]]; }
+  return kinds.map((kind, i) => ({ kind, t0: SECTION.from + i * SECTION.len }));
+}
+const slalomT = (seed, i) => { const sl = sectionsOf(seed).find((x) => x.kind === 'slalom'); return sl.t0 + SECTION.len * (i + 0.5) / GATES(); };
+const fract = (x) => x - Math.floor(x);
+const windowAt = (t, t0) => { const u = clamp01((t - t0) / SECTION.len); return 16 * u * u * (1 - u) * (1 - u); }; // 0 at the ends, 1 mid
+
 function shapeOf(seed) {
   const r = stream(seed, 'shape');
   let ax = r() * 2 - 1, ay = r() * 2 - 1;
@@ -84,8 +97,9 @@ function shapeOf(seed) {
     // Water hitting an arm slides along it to the gap, slowly; a river aimed
     // at the gap early keeps its speed, and everyone squeezes through the
     // same notch.
+    sections: sectionsOf(seed),
     gates: Array.from({ length: GATES() }, (_, i) => ({
-      t: 0.4 + (0.5 * (i + 0.3 + 0.4 * r())) / GATES(),
+      t: ISLAND.mixed ? slalomT(seed, i) : 0.4 + (0.5 * (i + 0.3 + 0.4 * r())) / GATES(),
       v: (i % 2 ? 1 : -1) * (0.4 + 0.25 * r()), // a slalom: gaps 0.4-0.65 out to alternate sides (was 0.2-0.5; 0.5-0.7 left a river facing a cliff on one island; owner 2026-11-09)
     })),
   };
@@ -111,10 +125,17 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   // x, y in [-1, 1]; u runs down the slope, v across it.
   const u = x * S.ax + y * S.ay, v = -x * S.ay + y * S.ax;
   const wu = u + S.warp * (fbm(x * 2.2, y * 2.2, seed + 11, 4) - 0.5);
-  const wv = v + S.warp * (fbm(x * 2.2 + 5, y * 2.2 - 3, seed + 23, 4) - 0.5);
+  let wv = v + S.warp * (fbm(x * 2.2 + 5, y * 2.2 - 3, seed + 23, 4) - 0.5);
   const t = (wu + S.long) / (2 * S.long); // 0 at the summit end, 1 at the sea end
   // Width wanders and tapers at both ends.
-  const halfW = S.wide * (1 + S.taper * (fbm(t * 3.1, 0.5, seed + 31, 3) - 0.5) * 2) * (0.75 + 0.25 * smooth(0.0, 0.2, t)) * (1 - 0.3 * smooth(0.85, 1.0, t));
+  let halfW = S.wide * (1 + S.taper * (fbm(t * 3.1, 0.5, seed + 31, 3) - 0.5) * 2) * (0.75 + 0.25 * smooth(0.0, 0.2, t)) * (1 - 0.3 * smooth(0.85, 1.0, t));
+  // The mixed course's gorge and switchback bend the corridor itself.
+  for (const sec of ISLAND.mixed ? S.sections ?? [] : []) {
+    const w = windowAt(t, sec.t0);
+    if (!w) continue;
+    if (sec.kind === 'gorge') halfW *= 1 - 0.55 * w;
+    if (sec.kind === 'switchback') { const q = fract((t - sec.t0) / (SECTION.len / 2)), tri = 1 - 4 * Math.abs(q - 0.5); wv -= 0.6 * halfW * w * tri * (3 - 2 * Math.abs(tri)) / (1 + 0 * tri); }
+  }
   // Wide enough at the top for three summits side by side inside the walls.
   const topW = ((S.gap + SUMMIT.room) / 0.62) * (1 - smooth(0.15, 0.35, t));
   const side = Math.abs(wv) / Math.max(halfW, topW); // 0 down the middle, 1 at the wall tops
@@ -146,6 +167,11 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   let floor = maxHeight * 0.9 * a * (0.7 + 0.3 * a) - 40 * smooth(0.9, 1.05, t);
   // Hills, dips and gullies down the floor, stronger high up.
   floor += (hills - 0.5) * (90 + 140 * (1 - tt)) + (peaks - 0.4) * 120 * (1 - tt);
+  // Terraces: flat benches, then a drop, about every 3% of the slope.
+  for (const sec of ISLAND.mixed ? S.sections ?? [] : []) {
+    if (sec.kind !== 'terraces' || !windowAt(tt, sec.t0)) continue;
+    floor += maxHeight * 0.9 * 0.03 * 0.8 * (fract((tt - sec.t0) / 0.03) - 0.5) * Math.min(1, windowAt(tt, sec.t0) * 2);
+  }
   // A gentle trough down the middle so water gathers toward the centre line.
   floor += ISLAND.trough * side * side;
   // Walls along both sides, high enough that no river climbs out.
@@ -189,7 +215,8 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
 // Island shape settings (exported so tuning passes can try others; defaults keep every island as it was).
 // 2026-11-02 map pass: more lakes and a wider, winding corridor. wide 1.5 or warp 2 put
 // a fifth of the start cells nearer another summit than their own; 1.3 / 1.5 keeps all of them.
-export const ISLAND = { lakes: 20, gates: 6, wide: 1.3, taper: 2, warp: 1.5, trough: 200 };
+export const ISLAND = { mixed: false, lakes: 20, gates: 6, // mixed: the four-section course (off: 4 test races, finishes 8.3 -> 3)
+  wide: 1.3, taper: 2, warp: 1.5, trough: 200 };
 // trough: metres the floor rises toward the walls (was 60). 200 pulls routes toward the centre line so rivals
 // cross each other's channels more: contacts +17% on two fresh sets of islands (12 and 16 races), finishes held.
 const LAKES = () => ISLAND.lakes; // lake basins down the slope
