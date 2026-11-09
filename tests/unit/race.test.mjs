@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { generateIsland } from '../../src/shared/terrain.js';
-import { createWorld, rollIsland, addRiver, step, standings, isRacing, spawnPoint, surfaceAt, TUNE, TICK_HZ } from '../../src/shared/river.js';
+import { createWorld, rollIsland, addRiver, step, standings, isRacing, knockoutFloor, spawnPoint, surfaceAt, TUNE, TICK_HZ } from '../../src/shared/river.js';
 import { createBot, botSteer } from '../../src/shared/bot.js';
 
 const islands = new Map([1, 2, 42].map((s) => [s, generateIsland(s)]));
@@ -72,7 +72,7 @@ test('contact: the deeper river siphons the shallower until it dries up', () => 
   // Hold the contact: b drains to the floor and is out, credited to a.
   for (let k = 0; k < 400 && !b.out; k++) { park(); step(w, new Map()); }
   assert.equal(b.out?.by, 'a');
-  assert.ok(b.volume < TUNE.floor * TUNE.startVolume);
+  assert.ok(b.volume < knockoutFloor(b));
   // Every litre b lost to siphoning arrived at a (lakes and travel add on top).
   // and between the pair, water only ever moved one way in a tick.
   const moved = w.events.filter((e) => e.type === 'siphon');

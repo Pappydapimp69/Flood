@@ -171,7 +171,7 @@ entries below for context. Each ends with a log entry here.
 
 **Built** (ADR 0003)
 - Cutting depth from size and speed; contact siphons water from the shallower river each tick
-  (1.2% at a full lead, 5% deadband, 1.5% cap); out below 40% of starting water.
+  (1.2% at a full lead, 5% deadband, 1.5% cap); out below 40% of starting water. (Later: 4% / 5% cap and out below half your peak, ADR 0007.)
 - Live rival channels no longer shape the surface others flow on — crossing costs water, never
   traps. Dry beds are still terrain.
 - Bots compare depth instead of volume.
