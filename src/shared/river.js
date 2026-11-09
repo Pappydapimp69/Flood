@@ -188,7 +188,8 @@ export const TUNE = {
   bumpSteal: true, // the side with more momentum into the hit wins it (Brain flood#E122: the winner must gain; dlist#E71: damage by momentum)
   bumpWinLoss: 0.15, // the winner still spills this share of what the loser does
   zoneSlack: 2400, // metres a falling drop may stray from the landing rings: wide enough to glide to another mountain's
-  glideTurn: 0.08, // radians per tick while falling: a full circle in about 4 s
+  glideTurn: 0.045, // radians per tick while falling (52 deg/s; was 0.08 = 92 deg/s, twice what the drop camera
+  // may turn without sickness, Brain T182: the view lagged 47 deg behind a 1 s turn and the drop swung across the screen)
   startElevation: 0.91, // starts ring each summit cone this far up its peak
   startTolerance: 0.006, // starts within ±0.6% of the peak's height of each other
   fairReach: 0.025, // and within ±2.5% of the same route length to the sea // +- share of the peak
@@ -602,12 +603,17 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
 // steer turns, fwd hurries (+1) or slows (-1) the fall, g glides faster or slower across the ground.
 function glide(world, r, steer, fwd, g = 0) {
   if (steer) {
-    const a = (TUNE.glideTurn * -steer) / Math.max(1, r.size); // heavier turns slower
+    // A comet keeps coming in: at most 70 degrees off straight down the slope. Turning further
+    // from downhill eases off from 45 degrees instead of stopping dead at the limit (it read as
+    // the stick doing nothing a quarter of the time); turning back is always full rate.
+    const ax0 = world.terrain.axis.x, az0 = world.terrain.axis.y, cosNow = r.dx * ax0 + r.dz * az0;
+    const a0 = (TUNE.glideTurn * -steer) / Math.max(1, r.size); // heavier turns slower
+    const away = (r.dx + r.dz * a0) * ax0 + (r.dz - r.dx * a0) * az0 < cosNow; // this turn takes it further from downhill
+    const a = a0 * (away ? Math.max(0.15, Math.min(1, (cosNow - 0.342) / (0.707 - 0.342))) : 1);
     const dx = r.dx + r.dz * a, dz = r.dz - r.dx * a;
     r.dx = dx; r.dz = dz;
     normalize(r);
   }
-  // A comet keeps coming in: at most 70 degrees off straight down the slope, so it always reaches the line.
   {
     const ax = world.terrain.axis.x, az = world.terrain.axis.y, MAXC = 0.342; // cos 70
     if (r.dx * ax + r.dz * az < MAXC) {
@@ -649,8 +655,15 @@ function glide(world, r, steer, fwd, g = 0) {
     const lane = descentLane(world), ax = t.axis.x, az = t.axis.y;
     const lat = -nx * az + nz * ax, u = nx * ax + nz * az, half = laneHalf(lane, lane.uLine - u), off = lat - lane.c;
     if (Math.abs(off) > half) {
-      // Against a wall: slide along it at the glide's speed (down the lane), not stall pressing into it.
-      const u0 = r.x * ax + r.z * az, uu = Math.max(u, u0 + v * DT * 0.9), h2 = laneHalf(lane, lane.uLine - uu), l2 = lane.c + Math.sign(off) * h2;
+      // Against a wall: keep the move down the lane, drop the part going out through the wall, and
+      // ease back inside by at most 3 m a tick (it used to re-place the drop on the wall: up to 17 m jumps).
+      // A 150 m cushion past the wall fades the outward part of the move to nothing; beyond it,
+      // ease back in by 3 m a tick. (It used to re-place the drop on the wall: jumps up to 17 m.)
+      const lat0 = -r.x * az + r.z * ax, sg = Math.sign(off), over = Math.abs(off) - half, dl = lat - lat0;
+      let l2 = lat;
+      if (dl * sg > 0) l2 = lat0 + dl * Math.max(0, 1 - over / 150);
+      if (Math.abs(l2 - lane.c) > half + 150) l2 -= sg * 3;
+      const uu = Math.max(u, r.x * ax + r.z * az + v * DT * 0.5); // always on down the lane: pinned against a course wall too, it got stuck
       nx = ax * uu - az * l2; nz = az * uu + ax * l2;
     }
   }
@@ -658,10 +671,19 @@ function glide(world, r, steer, fwd, g = 0) {
   // Height is for the clouds: dive or float between a floor (just over the
   // ground) and a ceiling that closes in, so the drop meets the ground right at the line.
   const d = toLine(world, r.x, r.z), near = Math.min(1, d / 1500);
-  const gnd = surfaceAt(world, r.x, r.z, r.idx) - skyBase(world); // the ground under it, from the start line's height
-  const floor = gnd + TUNE.floorGap * near, ceil = Math.max(floor, d * TUNE.ceilSlope + gnd * (1 - near));
+  // The ground under it and up to 1.5 s ahead, from the start line's height: the floor rises before
+  // a hill instead of shoving the drop up as the hill passes under it (39% of a weaving fall, up to 13 m a tick).
+  const under = surfaceAt(world, r.x, r.z, r.idx) - skyBase(world);
+  let gnd = -Infinity;
+  for (const ahead of [0, 0.5, 1, 1.5]) gnd = Math.max(gnd, surfaceAt(world, r.x + r.dx * v * ahead, r.z + r.dz * v * ahead, r.idx));
+  gnd -= skyBase(world);
+  const floor = gnd + TUNE.floorGap * near, ceil = Math.max(floor, d * TUNE.ceilSlope + under * (1 - near)); // the ceiling meets the ground under the drop at the line (not the look-ahead: a hill leaving it dropped the ceiling 52 m in a tick)
   const rate = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * (fwd > 0 ? 1 + TUNE.diveRate * fwd : 1 + TUNE.floatRate * fwd) * heavy;
-  r.alt = Math.min(ceil, Math.max(floor, r.alt - rate));
+  // Below the floor, climb to it with a climb speed that builds and fades by 0.6 m a tick, never in one jump.
+  const fallTo = r.alt - rate, need = floor - fallTo;
+  r.climb = need > 0 ? Math.min(need, (r.climb ?? 0) + 0.6, 14) : Math.max(0, (r.climb ?? 0) - 0.6);
+  // The ceiling pulls down at most 6 m a tick faster than the fall (no snaps), except in the last 30 m to the line.
+  r.alt = Math.max(Math.min(ceil, fallTo + r.climb), d > 30 ? fallTo - 6 : -Infinity);
   r.onFloor = r.alt <= floor + 1;
   const straight = Math.max(0, (line.t - slopeT(world, r.x, r.z)) * 2 * t.long * (t.worldSize / 2)); // flight distance to the line
   r.dropping = Math.max(1, Math.ceil(straight / (TUNE.glideSpeed * DT))); // ticks to the line at the base glide (the HUD's countdown)
@@ -975,6 +997,9 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   // current carries the river along the coast to it (no steering out at sea).
   const kSea = cellIndex(world.terrain, r.x, r.z);
   if (world.terrain.filled[kSea] <= SEA_LEVEL && !world.beach[kSea]) return seaCurrent(world, r, kSea);
+  // Riding the current, a shore cell barely above the sea is still the sea: carry on from the last
+  // sea cell (clipping one 0.23 m up, a river flowed back and forth there for good).
+  if (r.offCourse && r.seaCell >= 0 && world.terrain.filled[kSea] <= SEA_LEVEL + 2 && !world.beach[kSea] && world.lakeOf[kSea] < 0) return seaCurrent(world, r, r.seaCell);
   if (r.pooled >= 0) {
     // Pooled in a lake below full: the water rises; the head waits.
     r.pooledTicks++;
@@ -1964,7 +1989,8 @@ function moveTo(world, r, nx, nz) {
   nx = Math.max(-half, Math.min(half, nx));
   nz = Math.max(-half, Math.min(half, nz));
   // The start line is a wall from the course side: slide along it, never through.
-  if (!r.dropping && behindLine(world, nx, nz) && !behindLine(world, r.x, r.z)) {
+  // (Not at sea: the current along the coast may brush land behind the line, and must carry on to the beach.)
+  if (!r.dropping && world.terrain.filled[cellIndex(world.terrain, r.x, r.z)] > SEA_LEVEL && behindLine(world, nx, nz) && !behindLine(world, r.x, r.z)) {
     if (!behindLine(world, nx, r.z)) nz = r.z;
     else if (!behindLine(world, r.x, nz)) nx = r.x;
     else {
@@ -2176,6 +2202,7 @@ function finishBeach(t) {
 
 function seaCurrent(world, r, k) {
   const t = world.terrain, n = t.size;
+  if (t.filled[k] <= SEA_LEVEL) r.seaCell = k;
   let to = k;
   for (let i = 0; i < 3 && world.seaNext[to] >= 0; i++) to = world.seaNext[to];
   const tx = ((to % n) / (n - 1) - 0.5) * t.worldSize - r.x, tz = (Math.floor(to / n) / (n - 1) - 0.5) * t.worldSize - r.z;
