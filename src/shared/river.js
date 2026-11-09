@@ -97,7 +97,8 @@ export const TUNE = {
   gougeShare: 0.1, // share of the river's volume each gouge spends...
   gougeMinCost: 80_000, // ...but never less than this many litres
   gougeKeep: 0.5, // share of the starting volume a river must keep after paying
-  gougeCool: 220, // ticks from one gouge to the next (11 s; owner +1 s)
+  gougeCool: 240, // ticks from one gouge to the next (12 s; owner +1 s twice)
+  gougeDeepen: 0.05, // each gouge deepens the river's whole channel by this share (owner, 2026-11-09)
   gougeSizeCost: false, // experiment: cost share x size (big rivers pay more)
   // Surge, the second skill: a short wind-up, then
   // a burst of speed on the flat; costs water, its own cooldown.
@@ -135,10 +136,8 @@ export const TUNE = {
   // The drop comes in like a comet: it starts this share of a steady glide's
   // run behind its start spot, so flying straight lands it there on time.
   cometRun: 1,
-  // The descent is a cone (owner, 2026-11-09): everyone starts together in a narrow mouth and the
-  // field fans out to the start line's full width at the bottom. (Was the reverse: 1.25 wide in, 1/6 at the line.)
-  laneEntry: 0.04, // the lane's half-width where comets come in, as a share of the start line's half-span (about 300 m)...
-  laneEnd: 0.9, // ...and at the line: nine tenths of it (its very ends run into the course walls)
+  laneEntry: 1.25, // the descent lane's half-width where comets come in, as a share of the start line's half-span...
+  laneEnd: 1 / 6, // ...and at the line (its middle sixth, about 2.5 km). (A cone, narrow in and wide at the line, was tried and removed, owner 2026-11-09.)
   // The start line: every course cell this far from the beach by water (the fair
   // cells' median), so wherever a drop crosses it, the race ahead is the same length.
   lineTol: 0.004, // share of that distance either side drawn as the line
@@ -175,7 +174,7 @@ export const TUNE = {
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
   bumpRadius: 350, // metres (was 220: rams rarely landed)
   bumpDepth: 300, // metres of height
-  dropRandom: { back: 0, alt: 0 }, // a jitter inside the cone's mouth (owner: everyone starts together); back / alt: shares of the run and height
+  dropRandom: { back: 0, alt: 0 }, // a 150 m jitter across around each drop's place; back / alt: shares of the run and height
   dropCalm: 90, // ticks at the start of a descent (the 4.5 s opening shot) when no drop can bump or be bumped
   // Slipstream: flying within draftLength behind another drop (draftWidth either
   // side, within bumpDepth of its height) glides draftBoost faster, past the stick's cap.
@@ -601,18 +600,12 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
     }
     const bx = best >= 0 ? ((best % n) / (n - 1) - 0.5) * t.worldSize : at.x, bz = best >= 0 ? (Math.floor(best / n) / (n - 1) - 0.5) * t.worldSize : at.z;
     river.x = bx - ax * run; river.z = bz - az * run;
-    {
-      // Everyone starts together: squeeze the drop's place across the line into the cone's mouth.
-      const lane = descentLane(world), u0 = river.x * ax + river.z * az, l0 = lat(river.x, river.z);
-      const l1 = lane.c + (l0 - lane.c) * (lane.entry / Math.max(1, lane.end));
-      river.x = ax * u0 - az * l1; river.z = az * u0 + ax * l1;
-    }
     if (TUNE.dropRandom) {
       // Random starts (owner, 2026-11-09): anywhere across the lane's mouth, a little nearer or
       // farther back, higher or lower. Seeded by the island and the river, so every machine agrees.
       const rng = stream(t.seed, `drop-start:${id}`), lane = descentLane(world);
       const u = (river.x * ax + river.z * az) - run * TUNE.dropRandom.back * (rng() * 2 - 1);
-      const side = lane.c + lane.entry * 0.9 * (rng() * 2 - 1);
+      const side = lat(river.x, river.z) + 150 * (rng() * 2 - 1); // a jitter around its own place
       river.x = ax * u - az * side; river.z = az * u + ax * side;
       river.alt = TUNE.dropAlt * (1 + TUNE.dropRandom.alt * (rng() * 2 - 1));
     }
@@ -941,6 +934,9 @@ export const gougeUsable = (world, r) => gougeReady(world, r) && gougeTarget(wor
 function startGouge(world, r) {
   const cost = gougeCost(r);
   grow(r, -cost);
+  // Every gouge also deepens the river's whole channel by 5%, applied with the digs (phase 4), so the
+  // order rivers move in can't change what the others feel this tick.
+  (world.deepen ??= []).push(r);
   const cool = coolOf(r, TUNE.gougeCool);
   r.gougeAt = r.surgeAt = world.tick + cool; r.coolLen = cool; // one cooldown for both skills
   r.boost = TUNE.gougeBoost;
@@ -2029,7 +2025,7 @@ function moveTo(world, r, nx, nz) {
       // freeze on the line (a river landed facing along it stood still for 90 s).
       const ax = world.terrain.axis.x, az = world.terrain.axis.y, d = Math.hypot(nx - r.x, nz - r.z);
       if (!behindLine(world, r.x + ax * d, r.z + az * d)) { nx = r.x + ax * d; nz = r.z + az * d; r.dx = ax; r.dz = az; }
-      else { nx = r.x; nz = r.z; }
+      // else: every way is 'behind' (the route twists right at the line): let it go rather than freeze it there.
     }
   }
   const mx = nx - r.x, mz = nz - r.z;
@@ -2301,7 +2297,21 @@ function pushPathPoint(world, r) {
   world.digs.push({ r, x: r.x, z: r.z, width, depth, bed });
 }
 
+function deepenChannels(world) {
+  if (!world.deepen?.length) return;
+  const t = world.terrain;
+  for (const r of world.deepen.sort(byId)) {
+    for (let k = 0; k < world.carve.length; k++) {
+      if (world.owner[k] !== r.idx || !(world.carve[k] > 0)) continue;
+      const v = Math.min(world.carve[k] * (1 + TUNE.gougeDeepen), Math.max(0, t.height[k] + world.rock[k] - SEA_LEVEL - 0.5)); // never below the sea
+      if (v > world.carve[k]) { world.carve[k] = v; world.dirty.push(k); }
+    }
+  }
+  world.deepen.length = 0;
+}
+
 function applyDigs(world) {
+  deepenChannels(world);
   const digs = world.digs.sort((a, b) => byId(a.r, b.r));
   world.digs = [];
   for (const d of digs) dig(world, d);

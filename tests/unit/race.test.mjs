@@ -318,12 +318,9 @@ test('a river far behind the leader gets Surge before it is big enough', () => {
 });
 
 // The cone: everyone starts together in the lane's narrow mouth (jittered inside it), the same on every machine.
-test('drop: everyone starts together in the cone mouth, jittered and repeatable', () => {
+test('drop: starts are jittered and repeatable', () => {
   const make = () => { const w = rollIsland(5, 4).world; for (const id of ['p', 'q', 'r', 's']) addRiver(w, id, undefined, { drop: true }); return w.rivers.map((r) => [r.x, r.z, r.alt]); };
   const one = make(), two = make();
   assert.deepEqual(one, two, 'not repeatable');
-  const w = rollIsland(5, 4).world, lane = descentLane(w), ax = w.terrain.axis.x, az = w.terrain.axis.y;
-  const lats = one.map((p) => -p[0] * az + p[1] * ax);
-  assert.ok(lats.every((l) => Math.abs(l - lane.c) <= lane.entry + 1), 'a drop started outside the cone mouth');
-  assert.ok(new Set(lats.map((l) => Math.round(l))).size > 1, 'every drop starts on the same spot');
+  assert.ok(new Set(one.map((p) => Math.round(p[0]))).size > 1, 'every drop starts on the same spot');
 });
