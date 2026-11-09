@@ -38,6 +38,7 @@ test('a river grows only when a pulse reaches its head, by the water it gathered
 });
 
 test('pulses run faster than the head and erode the channel they pass', () => {
+  const rock0 = TUNE.rockBelow; TUNE.rockBelow = -1e9; // no rock summit here: this tests erosion itself
   const w = createWorld(t5);
   const r = addRiver(w, 'a');
   for (let k = 0; k < 200; k++) step(w, new Map());
