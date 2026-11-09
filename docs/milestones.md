@@ -327,3 +327,17 @@ Measured headless on bot races first (12 rivers, sky drop on), then built.
 - Checked and left alone: following a rival is no longer measurably slower (1.01x and 0.89x on two
   island sets), so no caption claims it. Online play stays off on the published page (it needs a host).
 - Open: T184 (eroded terrain) and T189 (skill cost) keep their defaults: noise terrain, a flat 10%.
+
+## M22 — The descent, audited (2026-11-09)
+Owner: "the descent sucks". Measured first (Brain flood#E126: time to first event and longest quiet gap).
+- Keyboard ↑ is full glide throttle as well as a dive. Nothing on a keyboard set the throttle, so a
+  keyboard drop topped out at 1.5x while pads and bots reached 1.8-2.2x and it landed last however well
+  it was flown. Holding ↑ now lands at 34-37 s, ahead of the bots (median 58 s).
+- 16 sky clouds (was 10), each at the height a steady fall passes it, same total water: an engaged
+  drop's longest quiet stretch 18 s -> 13 s (worst 29 -> 16), cloud water median 14k -> 22k L.
+- HUD while falling: "IN THE SKY · n of 12 landed" instead of #12/12; tags stay whole on screen, step
+  apart instead of stacking, stay clear of the altimeter, and off-screen rivals get none; a cloud above
+  you says "m above" (it said "-300 m below"); the footer's race controls hide; one short hint.
+- Haze thins with the drop's height (aerosol scale height 1.5 km): the island reads from 7 km up.
+- Audit of M21 against the descent: no knockouts while falling, no river behind the line, Surge not
+  handed to drops on landing.

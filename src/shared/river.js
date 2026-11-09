@@ -141,14 +141,16 @@ export const TUNE = {
   lineTol: 0.004, // share of that distance either side drawn as the line
   ceilSlope: 1.3, // highest a drop can be: this many metres up per metre still to go to the line
   floorGap: 60, // lowest: this far over the ground, easing to 0 in the last 1.5 km
-  dropCloudShare: 0.25, // descent clouds hold this share of cloudWater (they gave far too much)
+  dropCloudShare: 0.156, // descent clouds hold this share of cloudWater (they gave far too much; 0.25 x 10/16 clouds)
   cloudSpread: 4500, // metres either side of the comet path the first clouds sit; they close in toward the start line
   diveRate: 1.6,
   diveSpeed: 0.5, floatSpeed: 0.3, // diving glides this much faster, floating this much slower // ...diving falls up to this much faster (about 12 s)...
   floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
   // Rain clouds hang in the sky over the summits: fall through one and its
   // water is yours, a bigger start; each can only be taken once.
-  skyClouds: 10, // rain clouds along the comet path in, closer together near the start line...
+  skyClouds: 16, // rain clouds along the comet path in, closer together near the start line (was 10:
+  // an engaged drop's longest quiet stretch 18 s, worst 29 s; now 13 s, worst 16 s, same total water)...
+  cloudsOnPath: true, // ...each at the height a steady fall passes it, so steering to one can reach it
   slopeClouds: 14, // ...and low rain clouds spread evenly down the slope, caught by flowing under them
   cloudRadius: 500, // metres across the sky...
   cloudDepth: 400, // ...and this far above or below its height
@@ -696,7 +698,7 @@ export function skyClouds(world) {
       id,
       x: sx - ax * back - az * side,
       z: sz - az * back + ax * side,
-      alt: early ? TUNE.dropAlt * (1 - p) * (0.85 + 0.1 * rng()) : Math.max(150, back * (0.3 + 0.9 * rng())), // early ones on the steady path; the rest anywhere a drop can reach
+      alt: early || TUNE.cloudsOnPath ? TUNE.dropAlt * (1 - p) * (0.85 + 0.1 * rng()) : Math.max(150, back * (0.3 + 0.9 * rng())), // on the steady path (TUNE.cloudsOnPath: all of them), else anywhere a drop can reach
       water: (TUNE.cloudWater[0] + rng() * (TUNE.cloudWater[1] - TUNE.cloudWater[0])) * TUNE.dropCloudShare,
       taken: -1,
     };

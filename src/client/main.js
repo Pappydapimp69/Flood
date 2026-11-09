@@ -88,6 +88,17 @@ const fogPatched = fogChunk !== THREE.ShaderChunk.fog_fragment;
 THREE.ShaderChunk.fog_fragment = fogChunk;
 // (If a Three update changed the chunk, the squared form still reaches 2% at the visibility.)
 scene.fog = new THREE.FogExp2(SKY, fogPatched ? 3.912 / VISIBILITY : Math.sqrt(3.912) / VISIBILITY);
+const fogBase = scene.fog.density;
+// Haze lives in the lowest air (an aerosol scale height of about 1.5 km), so looking down from
+// a falling drop crosses far less of it than a view along the ground: thin the fog with height.
+// At 7 km up the island read as a grey wash (descent audit, 2026-11-09).
+const HAZE_HEIGHT = 1500;
+let hazeK = 1;
+function hazeFor(alt, dt) {
+  const want = alt > 0 ? HAZE_HEIGHT / (HAZE_HEIGHT + alt) : 1;
+  hazeK += (want - hazeK) * Math.min(1, dt * 2);
+  if (scene.fog) scene.fog.density = fogBase * hazeK;
+}
 scene.add(new THREE.HemisphereLight('#dbeaf5', '#5b5040', 1.1));
 const sun = new THREE.DirectionalLight('#fff3dc', 2.2);
 scene.add(sun);
@@ -660,12 +671,12 @@ function placeTags() {
     const o = near[i];
     if (!o) { el.hidden = true; return; }
     tmpV.set(...o.e.screen).project(camera);
-    if (tmpV.z > 1) { el.hidden = true; return; }
+    if (tmpV.z > 1 || Math.abs(tmpV.x) > 1 || Math.abs(tmpV.y) > 1) { el.hidden = true; return; } // off screen: no tag
     el.hidden = false;
     const t = river ? threatOf(o.e.r) : 0;
     el.className = o.e.r.dropping ? 'drop' : t > 0 ? 'threat' : t < 0 ? 'prey' : '';
     el.textContent = o.e.r.dropping ? nameOf(o.e.r) : `${nameOf(o.e.r)} ${t > 0 ? '▲' : t < 0 ? '▼' : river ? '=' : ''}`;
-    el.style.transform = `translate(${((tmpV.x + 1) / 2) * innerWidth}px, ${((1 - tmpV.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
+    placeTag(el, tmpV.x, tmpV.y);
   });
 }
 
@@ -703,10 +714,31 @@ function placeCloudTags() {
     const dh = me.dropping ? me.alt - o.c.alt : 0, level = me.dropping && Math.abs(dh) <= TUNE.cloudDepth;
     el.className = level ? 'cloud level' : 'cloud';
     el.textContent = me.dropping
-      ? `☁ +${Math.round(o.c.water / 1000)}k L · ${level ? 'your height: fly in!' : `${Math.round(dh / 100) * 100} m below`}${edge}`
+      ? `☁ +${Math.round(o.c.water / 1000)}k L · ${level ? 'your height: fly in!' : `${Math.abs(Math.round(dh / 100) * 100)} m ${dh > 0 ? 'below' : 'above'}`}${edge}`
       : `☁ +${Math.round(o.c.water / 1000)}k L · ${(o.d / 1000).toFixed(1)} km${edge}`;
-    el.style.transform = `translate(${((x + 1) / 2) * innerWidth}px, ${((1 - y) / 2) * innerHeight}px) translate(-50%, -100%)`;
+    placeTag(el, x, y);
   });
+}
+
+// Put a tag above a screen point (x, y in -1..1), whole on screen: a tag is
+// centred on its point, so near an edge half of it used to fall off.
+// Tags placed this frame step up past any they would cover, so they never stack into a blur.
+let tagFrame = -1;
+const tagRects = [];
+function placeTag(el, x, y) {
+  if (tagFrame !== dbg.frames) { tagFrame = dbg.frames; tagRects.length = 0; }
+  const w = el.offsetWidth, h = el.offsetHeight, m = 8;
+  const ml = document.body.classList.contains('falling') ? 56 : m; // falling: clear of the altimeter on the left
+  const px = Math.min(innerWidth - m - w / 2, Math.max(ml + w / 2, ((x + 1) / 2) * innerWidth));
+  let py = Math.min(innerHeight - m, Math.max(m + h, ((1 - y) / 2) * innerHeight));
+  for (let i = 0; i < 8; i++) {
+    const hit = tagRects.find((r) => Math.abs(r.x - px) < (r.w + w) / 2 + 2 && Math.abs(r.y - py) < (r.h + h) / 2 + 1);
+    if (!hit) break;
+    py = hit.y - (hit.h + h) / 2 - 2;
+  }
+  if (py < m + h) { el.hidden = true; return; } // no room left above: skip it this frame
+  tagRects.push({ x: px, y: py, w, h });
+  el.style.transform = `translate(${px}px, ${py}px) translate(-50%, -100%)`;
 }
 
 // Lake markers: the lakes ahead, seen through the trees, with how full each
@@ -737,7 +769,7 @@ function placeLakeTags() {
     el.hidden = false;
     el.className = `lake${full < 0.5 ? ' dry' : ''}${mine ? ' mine' : ''}`;
     el.textContent = mine ? `your lake · feeding you · ${Math.round(full * 100)}%` : `lake ≈ +${fmtL(worth)} · ${(o.d / 1000).toFixed(1)} km`;
-    el.style.transform = `translate(${((tmpV.x + 1) / 2) * innerWidth}px, ${((1 - tmpV.y) / 2) * innerHeight}px) translate(-50%, -100%)`;
+    placeTag(el, tmpV.x, tmpV.y);
   });
 }
 
@@ -1756,9 +1788,14 @@ renderer.setAnimationLoop(() => {
   const me = river ?? focus;
   const place = table.indexOf(me) + 1;
   // Trailer HUD: big rank (#4/12), km to sea, litres.
-  const rankHtml = river ? `#${place}<small>/${world.rivers.length}</small><em>${alive} flowing</em>` : `<small>SPECTATING</small><em>${alive} flowing</em>`;
+  // Falling, a place means nothing yet (you are last until you land): show who has landed instead.
+  const landed = world.rivers.filter((r) => !r.dropping).length;
+  const rankHtml = !river ? `<small>SPECTATING</small><em>${alive} flowing</em>`
+    : river.dropping ? `<small>IN THE SKY</small><em>${landed} of ${world.rivers.length} landed</em>`
+    : `#${place}<small>/${world.rivers.length}</small><em>${alive} flowing</em>`;
   if (hud.rank.innerHTML !== rankHtml) hud.rank.innerHTML = rankHtml;
-  hud.rank.className = !river ? '' : place === 1 ? 'top' : place <= 4 ? 'mid' : 'low';
+  hud.rank.className = !river || river.dropping ? '' : place === 1 ? 'top' : place <= 4 ? 'mid' : 'low';
+  document.body.classList.toggle('falling', !!river?.dropping); // the footer's race controls hide while falling
   const toSea = world.toBeach[cellIndex(terrain, focus.x, focus.z)];
   const distHtml = focus !== river ? `<small>WATCHING</small> ${escapeHtml(nameOf(focus))}`
     : river.dropping ? `FALLING<small> · ${Math.ceil(river.dropping / TICK_HZ)} S</small>`
@@ -1773,7 +1810,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · you land where you cross the start line · fly through clouds for water' : '← → steer · you land where you cross the start line · ↑ dive: faster and lower · ↓ float: slower and higher')
+  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · you land where you cross the start line · fly through clouds for water' : '← → steer · hold ↑ to fly fast and land first · ↓ float: stay up for clouds')
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`
@@ -1799,6 +1836,8 @@ renderer.setAnimationLoop(() => {
   }
   audio.update(Math.min(1, (river?.speed ?? 0) / 220), !!river && isRacing(river) && !river.dropping, river?.size ?? 1, river?.dropping ? river.dropping / TUNE.dropTicks : 0);
 
+  const hazeView = river ?? focus;
+  hazeFor(hazeView?.dropping && !mapView ? hazeView.alt ?? 0 : 0, frameDt);
   renderer.render(scene, camera);
   dbg.frames++;
   dbg.calls = renderer.info.render.calls;

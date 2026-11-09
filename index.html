@@ -58,6 +58,7 @@
       background: #0e3442d9; color: #eefaff; padding: 10px 14px; border-radius: 12px; font: 600 14px/1.5 system-ui, sans-serif; text-align: center; pointer-events: none; }
     #hint[hidden] { display: none; }
     @media (max-width: 600px) { #help { display: none; } }
+    body.falling #help { display: none; } /* falling, the hint top right says how to fly */
     #hint .g { color: #8be68b; } #hint .r { color: #ff8d80; }
     #mute { position: fixed; right: calc(14px + env(safe-area-inset-right, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
       font-size: 20px; background: #eaf5fbd9; border: 0; border-radius: 10px; min-width: 40px; height: 40px; padding: 0 8px; cursor: pointer; white-space: nowrap; }

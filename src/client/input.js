@@ -101,7 +101,10 @@ export function createInput(target) {
     },
     // Hurry (+1) or slow (-1) the drop.
     forward,
-    glide: () => pad.glide,
+    // Glide throttle: the pad's left stick, or on a keyboard the same keys as the dive. ↑ is full
+    // throttle as well as a dive, so a keyboard drop can fly as fast as a pad's or a bot's (it was
+    // capped at 1.5x against their 1.8-2.2x, and landed last however well it was flown).
+    glide: () => pad.glide || (keys.fwd === keys.back ? 0 : keys.fwd ? 1 : 0),
     // Left stick / D-pad as a screen vector (x right, y down), length 0..1; null with no pad.
     stick: () => (pad.seen ? pad.vec : null),
     // 1 once for each skill press (key, pad B or the on-screen button), then 0.
