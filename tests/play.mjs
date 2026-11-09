@@ -348,8 +348,14 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   // landed it looks up to 30 degrees aside and drifts back when let go.
   const fallingNow = await page.evaluate(() => __flood.river.dropping > 0);
   await page.evaluate(() => { __pad.axes[2] = 1; });
-  await page.waitForTimeout(2500);
-  const yaw = await page.evaluate(() => __flood.camYaw), stillFalling = await page.evaluate(() => __flood.river.dropping > 0);
+  // Wait on the camera, not the clock: headless frames can be seconds apart (up to 25 s).
+  let yaw = 0;
+  for (let i = 0; i < 250; i++) {
+    await page.waitForTimeout(100);
+    yaw = await page.evaluate(() => __flood.camYaw);
+    if (i >= 24 && (yaw >= 0.2 || fallingNow)) break;
+  }
+  const stillFalling = await page.evaluate(() => __flood.river.dropping > 0);
   await page.evaluate(() => { __pad.axes[2] = 0; });
   if (fallingNow && stillFalling && Math.abs(yaw) > 0.05) throw new Error(`right stick turned the falling camera: ${yaw}`);
   if (!fallingNow && !stillFalling) {

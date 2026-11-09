@@ -312,3 +312,18 @@ Each step was measured on the sim first (Brain docs: train-plan-2026-11-02*.md, 
 - Pause and settings (volumes, route preview, camera shake); a first-race coach, one step at a time.
 - Desync fingerprint covers the ground; spray drawn as round droplets.
 - Open: tensions T188 (wind-up length), T189 (skill cost vs size), T184 (eroded terrain), T180 (race ending).
+
+## M21 — Knockouts, a fair start line and a way back (2026-11-09, from Brain + ZaneGPT)
+Measured headless on bot races first (12 rivers, sky drop on), then built.
+- Knockouts again (ADR 0007): 0 in 12 races before, because rivers outgrow a fixed 40%-of-start floor.
+  Out below half your peak (or 40% of the start), and a stronger drain (4% a tick, 5% cap): 2.25 a race.
+- A knocked-out river's water goes to the river that drained it (ADR 0006, Brain T178).
+- The start line is a wall: a landed river slides along it and never travels back behind it.
+- Far behind the leader (3 km), Surge unlocks whatever your size: the last three at 60 s reached the
+  top half 20 of 108 times, against 11 (36 races). A Surge scaled by the gap added nothing.
+- Phones: adaptive resolution steps the pixel ratio down (to 0.75) when frames run under about 40 fps.
+- Tests: the online lobby waits 15 s (slow pages were seated as spectators), and the gamepad look
+  check waits on the camera, not the clock.
+- Checked and left alone: following a rival is no longer measurably slower (1.01x and 0.89x on two
+  island sets), so no caption claims it. Online play stays off on the published page (it needs a host).
+- Open: T184 (eroded terrain) and T189 (skill cost) keep their defaults: noise terrain, a flat 10%.

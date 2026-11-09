@@ -4,6 +4,8 @@ A browser battle royale where every player is a river. Race downhill across an i
 lakes to grow, cut rivals off, and be the first to reach the sea.
 
 ## Play
+In the browser: https://pappydapimp69.github.io/Flood/ (solo against bots; online races need `npm run server`, then `?online`).
+
 Steer with ← → (or A D); ↑ ↓ (W S) hurry or slow your fall. On a phone, hold the left or right side of the screen to steer; while falling, drag to aim the drop where you point (drag far to dive faster).
 
 - **Gouge** (Space / E, pad A or B, or the GOUGE button): your river keeps its momentum and Gouge adds to it: more speed and a bigger head for 3 s, flowing over ground up to 80 m higher than usual. 10 s cooldown; costs water.

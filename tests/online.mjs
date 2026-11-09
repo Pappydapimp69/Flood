@@ -9,7 +9,9 @@ import { FP_EVERY } from '../src/shared/protocol.js';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const shotDir = process.argv[2];
 
-const room = new Room({ seed: 7, opts: { lobbyMs: 2000 } });
+// A long lobby: a page that loads slowly under software GL must still join before the race starts,
+// or it is seated as a spectator and the test times out on 'you null'.
+const room = new Room({ seed: 7, opts: { lobbyMs: 15000 } });
 const srv = await startServer({ port: 0, host: '127.0.0.1', room });
 const base = `http://127.0.0.1:${srv.port}/`;
 const browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'] });
