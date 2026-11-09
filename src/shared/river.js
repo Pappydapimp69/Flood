@@ -165,7 +165,7 @@ export const TUNE = {
   stormMaxWater: 5_000_000, // ...carrying at most this much, rained out until it's empty
   cloudWater: [150_000, 450_000],
   slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
-  glideSpeed: 110, // m/s across the ground while falling (stick all the way: x1.8, stick let go: x0.4)
+  glideSpeed: 82.5, // m/s across the ground while falling (was 110: cut 25%, owner 2026-11-09) (stick all the way: x1.8, stick let go: x0.4)
   // Bumps between falling drops: touching (within bumpRadius across and
   // bumpDepth up or down) and closing, they knock each other off course and
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
@@ -177,7 +177,7 @@ export const TUNE = {
   draftLength: 600, draftWidth: 120, draftBoost: 0.2,
   bumpKnock: 1.4, // knock speed per m/s of closing speed, shared by weight
   bumpDecay: 0.93, // knock left after each tick (a bump carries them well apart)
-  bumpMin: 40, // m/s of closing speed below which drops just touch: no bump (the 110 m/s glide closes slower)
+  bumpMin: 30, // (was 40, scaled with the 25% slower glide) m/s of closing speed below which drops just touch: no bump (the 110 m/s glide closes slower)
   bumpLoss: 0.02, // share of volume lost to a knock as fast as the base glide (head-on at full glide: about 4%)
   bumpLossMax: 0.08, // most of its volume a drop can lose to one bump
   bumpCool: 40, // ticks before the same two drops can bump again
@@ -1967,7 +1967,13 @@ function moveTo(world, r, nx, nz) {
   if (!r.dropping && behindLine(world, nx, nz) && !behindLine(world, r.x, r.z)) {
     if (!behindLine(world, nx, r.z)) nz = r.z;
     else if (!behindLine(world, r.x, nz)) nx = r.x;
-    else { nx = r.x; nz = r.z; }
+    else {
+      // Blocked both ways (heading along the line): turn down the slope and go that way, never
+      // freeze on the line (a river landed facing along it stood still for 90 s).
+      const ax = world.terrain.axis.x, az = world.terrain.axis.y, d = Math.hypot(nx - r.x, nz - r.z);
+      if (!behindLine(world, r.x + ax * d, r.z + az * d)) { nx = r.x + ax * d; nz = r.z + az * d; r.dx = ax; r.dz = az; }
+      else { nx = r.x; nz = r.z; }
+    }
   }
   const mx = nx - r.x, mz = nz - r.z;
   const moved = Math.sqrt(mx * mx + mz * mz);
