@@ -42,6 +42,25 @@ const lowPower = navigator.maxTouchPoints > 0 || matchMedia('(pointer: coarse)')
 // ?lite (tests on software rendering): quarter-resolution, no trees or boulders.
 const lite = new URLSearchParams(location.search).has('lite');
 const maxRatio = lite ? 0.5 : lowPower ? 1.5 : 2;
+// Adaptive resolution: a device that can't hold about 40 fps renders fewer pixels, in steps,
+// never below a pixel ratio of 0.75 (phones) or 1 (desktops). Fill rate grows with the ratio
+// squared (Brain seven#E98). Off in automated browsers, whose software GL is always slow.
+let ratioScale = 1, slowEma = 1 / 60, slowCheck = 0;
+const ratioFloor = lowPower ? 0.75 : 1;
+const adaptive = new URLSearchParams(location.search).has('adaptive') || (!lite && !navigator.webdriver);
+function adaptResolution(dt) {
+  if (!adaptive || dt <= 0 || dt > 1 || document.hidden) return; // over 1 s: a stall or a hidden tab, not the GPU
+  slowEma += (dt - slowEma) * 0.05;
+  if ((slowCheck += dt) < 2) return;
+  slowCheck = 0;
+  const ratio = Math.min(window.devicePixelRatio, maxRatio) * ratioScale;
+  if (slowEma > 1 / 40 && ratio > ratioFloor + 0.01) {
+    ratioScale = Math.max(ratioFloor / Math.min(window.devicePixelRatio, maxRatio), ratioScale * 0.85);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxRatio) * ratioScale);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    slowEma = 1 / 45; // give the new size a fair start
+  }
+}
 
 let renderer;
 try {
@@ -50,7 +69,7 @@ try {
   fail('WebGL is not available in this browser.');
   throw e;
 }
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxRatio));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxRatio) * ratioScale);
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.getElementById('app').appendChild(renderer.domElement);
 
@@ -183,7 +202,7 @@ function fitCamera() {
   camera.fov = baseFov = aspect < 1 ? Math.min(85, (2 * Math.atan(Math.tan((55 * Math.PI) / 360) / aspect) * 180) / Math.PI) : 55;
   camera.updateProjectionMatrix();
   // Re-read the pixel ratio: zoom, OS scaling or a new monitor change it after load.
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxRatio));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, maxRatio) * ratioScale);
   renderer.setSize(window.innerWidth, window.innerHeight);
 }
 fitCamera();
@@ -1491,6 +1510,7 @@ renderer.setAnimationLoop(() => {
   // One clock for both ends (the rAF timestamp can predate a performance.now() start).
   const now = performance.now();
   const frameDt = Math.max(0, Math.min(0.25, (now - last) / 1000));
+  adaptResolution((now - last) / 1000);
   last = now;
   input.poll();
   menuActions();
