@@ -10,7 +10,8 @@
     "test": "node --test tests/unit/*.test.mjs",
     "smoke": "node tests/smoke.mjs",
     "play": "node tests/play.mjs",
-    "online": "node tests/online.mjs"
+    "online": "node tests/online.mjs",
+    "alpha": "node tests/alpha.mjs"
   },
   "dependencies": {
     "ws": "8.22.0"

@@ -10,6 +10,7 @@ import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
 import { connect } from './net.js';
 import { createAudio } from './audio.js';
+import { alphaWanted, createFeedback } from './feedback.js';
 import { buildTrees, buildRocks, clearTrees, clearAround, buildLava, coolLava, pulseLava, treeFade } from './scenery.js';
 
 // Test/debug surface. Tests poll this instead of waiting on wall-clock time.
@@ -29,6 +30,9 @@ if (!BUILD.startsWith('__')) {
   }).catch(() => {});
 }
 const PLAYER = 'you';
+// Alpha feedback mode (?alpha): logs each race, a form for opinions, a report to copy.
+// Opening it pauses a solo race.
+const fb = alphaWanted(params) ? createFeedback({ build: BUILD.startsWith('__') ? 'dev' : BUILD }) : null;
 
 function fail(msg) {
   dbg.error = msg;
@@ -558,6 +562,7 @@ function beginRace(seed, raceIds, me, rolled) {
   if (river?.dropping) highlightZone(terrainMesh, startLine(world).set, true);
   hud.banner.hidden = true;
   hud.feed.textContent = '';
+  fb?.raceStart({ seed, kind: tutorial ? 'tutorial' : 'race', of: world.rivers.length });
   audio.track('race');
   finishShown = false;
   finishEl.classList.remove('on');
@@ -909,6 +914,30 @@ function menuActions() {
 }
 const pendingActions = [];
 
+// Phones: steer with ◀ ▶ under the left thumb; while falling, ▲ DIVE / ▼ FLOAT under the right.
+const touchUI = lowPower;
+document.body.classList.toggle('touch', touchUI);
+const tpad = document.getElementById('tpad'), tfly = document.getElementById('tfly');
+input.bind(document.getElementById('t-left'), 'left');
+input.bind(document.getElementById('t-right'), 'right');
+input.bind(document.getElementById('t-dive'), 'fwd');
+input.bind(document.getElementById('t-float'), 'back');
+const calmNow = () => performance.now() < introUntil; // the opening shot: nobody steers yet
+
+// Landscape only on phones (owner, 2026-11-11). Browsers can lock it only in fullscreen
+// (Android); everywhere else a "turn your phone" card covers the game and a solo race waits.
+const portrait = matchMedia('(orientation: portrait)');
+const mustRotate = () => touchUI && portrait.matches;
+function goLandscape() {
+  if (!touchUI) return;
+  const el = document.documentElement;
+  const full = document.fullscreenElement ? Promise.resolve() : (el.requestFullscreen?.({ navigationUI: 'hide' }) ?? Promise.reject());
+  full.then(() => screen.orientation?.lock?.('landscape')).catch(() => { /* iPhone: no fullscreen; the card asks instead */ });
+}
+const showRotate = () => document.body.classList.toggle('rotate', mustRotate());
+portrait.addEventListener?.('change', showRotate);
+showRotate();
+
 // Pause: Esc / P / Start. Resume, restart (solo), volumes, preview and shake.
 const pauseEl = document.getElementById('pause');
 function setPaused(on) {
@@ -927,6 +956,12 @@ function setPaused(on) {
 document.getElementById('resume').onclick = () => setPaused(false);
 document.getElementById('restart').onclick = () => { setPaused(false); newRun(); };
 document.getElementById('to-menu').onclick = () => location.reload();
+if (fb) {
+  const b = document.createElement('button');
+  b.id = 'fb-pause'; b.textContent = 'Send feedback';
+  b.onclick = () => { setPaused(false); fb.open(); };
+  document.getElementById('to-menu').before(b);
+}
 document.getElementById('vol-music').oninput = (e) => audio.setVolumes({ music: Number(e.target.value) });
 document.getElementById('vol-sfx').oninput = (e) => audio.setVolumes({ sfx: Number(e.target.value) });
 document.getElementById('opt-preview').onchange = (e) => { settings.preview = e.target.checked; saveSettings(); };
@@ -956,11 +991,16 @@ function dropPitch(aim = null) {
 }
 
 // This tick's input: steer, plus dive / float while falling.
+let touchTurn = 0;
 function sampleSteer() {
   let steer = dbg.forceSteer ?? input.sample();
   // Falling, the drag stick flies the drop (see dragAim).
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
   if (aim) steer = aim.s;
+  // Phones turn 20% slower (owner, 2026-11-11): every fifth tick of a held touch turn goes
+  // straight. Steering stays an integer per tick, the sim's rule, so replays and online agree.
+  if (steer && !aim && dbg.forceSteer === undefined && input.touchSteer()) { if (++touchTurn % 5 === 0) steer = 0; }
+  else touchTurn = 0;
   const { f, g } = dropPitch(aim);
   if (coach) { if (f) coach.fell = true; if (g > 0) coach.glided = true; }
   dbg.steers.push(steer);
@@ -1195,6 +1235,10 @@ const fmtL = (v) => `${Math.round(v).toLocaleString('en-US')} L`;
 let gougeHintAt = -1e9;
 function updateSkill() {
   const show = !!river && isRacing(river) && !river.dropping && !mapView;
+  if (touchUI) {
+    tpad.hidden = !river || !isRacing(river) || mapView || calmNow();
+    tfly.hidden = !river?.dropping || mapView || calmNow();
+  }
   hud.skill.hidden = !show;
   hud.surge.hidden = !show || !TUNE.surgeOn;
   if (!show) return;
@@ -1262,9 +1306,16 @@ function showResults(table, final) {
   const again = mode === 'solo'
     ? `<button id="again">Race again</button>`
     : `<small>${final ? 'Next race starts soon' : 'The race goes on — watch it out'}</small>`;
-  hud.banner.innerHTML = `<b>${head}</b>${stars}${sub}${recordLine}<ol>${list}</ol>${final || !river ? '' : '<small>Final results when the race ends</small>'}${again}`;
+  if (river && fb) {
+    const result = river.finished ? 'sea' : river.out ? 'drained' : final ? 'time' : null;
+    if (result) fb.raceEnd({ result, place, of: world.rivers.length, secs, volume: river.volume, lakes: river.lakes,
+      by: river.out ? nameOf(world.rivers.find((r) => r.id === river.out.by)) : undefined });
+  }
+  const fbBtn = fb ? '<button id="fb-results" class="fb-results">Send feedback</button>' : '';
+  hud.banner.innerHTML = `<b>${head}</b>${stars}${sub}${recordLine}<ol>${list}</ol>${final || !river ? '' : '<small>Final results when the race ends</small>'}${again}${fbBtn}`;
   hud.banner.hidden = false;
   document.getElementById('again')?.addEventListener('click', () => newRun());
+  document.getElementById('fb-results')?.addEventListener('click', () => fb.open());
 }
 const escapeHtml = (t) => String(t).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -1341,7 +1392,7 @@ addEventListener('keydown', (e) => { if (lesson && (e.code === 'Enter' || e.code
 // The Tutorial (menu) runs the longer TUTORIAL list every time.
 const key = (pad, kb, touch) => (lowPower ? touch : padSeen ? pad : kb);
 const COACH = [
-  { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>`, pass: (c) => c.steered > 8 },
+  { text: () => `Steer with <b>${key('the left stick', '← →', 'the ◀ ▶ buttons')}</b>`, pass: (c) => c.steered > 8 },
   { text: () => 'The <b>white ribbon</b> shows where your water will go', pass: (c) => c.secs > 5 },
   { text: () => `Only the <b>gold beach</b> ends the race${key(' · <b>right stick</b> looks around, <b>up</b> for a view ahead', '', '')}`, pass: (c) => c.secs > 8 },
   { text: () => 'Flow into <b>lakes</b> and out over their bank: their water feeds you', pass: (c) => river.lakes > 0 || c.secs > 14 },
@@ -1349,11 +1400,11 @@ const COACH = [
   { text: () => `Slow on the flat? <b>SURGE</b> (${key('RB', 'Q', 'tap')}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
 ];
 const TUTORIAL = [
-  { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Drag <b>left or right</b> to turn')}`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `${key('<b>Stick ↑</b> dives, <b>↓</b> floats', '', 'Drag <b>up</b> to dive, <b>down</b> to float')}`, pass: (c) => c.glided || lowPower || !padSeen },
-  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag ↑ ↓')}</b>: <b>↑</b> descends faster, <b>↓</b> slows the descent, like flaps (clouds sit at different heights)`, pass: (c) => c.fell },
+  { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Turn your falling drop with <b>◀ ▶</b>')}`, pass: (c) => c.steered > 8 },
+  { drop: true, text: () => `${key('<b>Stick ↑</b> dives, <b>↓</b> floats', '', '<b>▲ DIVE</b> to fall faster, <b>▼ FLOAT</b> to stay up')}`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', '▲ ▼')}</b>: <b>↑</b> descends faster, <b>↓</b> slows the descent, like flaps (clouds sit at different heights)`, pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
-  { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
+  { text: () => `Steer with <b>${key('the left stick', '← →', 'the ◀ ▶ buttons')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
   { text: () => 'Follow the <b>gold beacons</b> down the course', pass: (c) => c.stage >= 2 },
   { text: () => `<b>SURGE</b> now: <b>${key('RB', 'Q', 'tap SURGE')}</b>`, pass: (c) => c.surged || c.stage >= 3 },
   { text: () => 'Follow the beacon to the <b>rock ridge</b>', pass: (c) => c.stage >= 3 },
@@ -1596,7 +1647,7 @@ renderer.setAnimationLoop(() => {
   // Fixed-step sim, decoupled from frame rate; render interpolates between ticks.
   acc += frameDt;
   if (mode === 'solo') {
-    if (paused || lesson) { handleActions(); acc = 0; }
+    if (paused || lesson || fb?.isOpen || mustRotate()) { handleActions(); acc = 0; }
     else while (acc >= DT && !lesson) { soloTick(); acc -= DT; }
     if (lesson) acc = 0;
   } else {
@@ -1856,7 +1907,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? 'drag to aim · you land where you cross the start line · fly through clouds for water' : '← → steer · ↑ dive to low clouds · ↓ float: stay up for clouds')
+  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▲ dive to low clouds · ▼ float: stay up for clouds' : '← → steer · ↑ dive to low clouds · ↓ float: stay up for clouds')
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`
@@ -1885,6 +1936,7 @@ renderer.setAnimationLoop(() => {
   const hazeView = river ?? focus;
   hazeFor(hazeView?.dropping && !mapView ? hazeView.alt ?? 0 : 0, frameDt);
   renderer.render(scene, camera);
+  if (river && isRacing(river)) fb?.frame(frameDt);
   dbg.frames++;
   dbg.calls = renderer.info.render.calls;
   if (dbg.frames === 2) dbg.ready = true;
@@ -1895,6 +1947,7 @@ Object.assign(dbg, {
   nameOf: (id) => names[id] ?? id, // display name for a river id (rivals have names in solo)
   riverFingerprint: () => riverFingerprint(world),
   newRun,
+  fb,
 });
 
 // Start: ?seed / ?solo / ?bots go straight to a solo race, ?online joins the server,
@@ -1905,7 +1958,9 @@ const studio = document.getElementById('studio');
 if (params.has('online') || params.has('seed') || params.has('solo') || params.has('bots')) studio.hidden = true;
 let splashLeftAt = -1e9;
 function leaveSplash() {
-  if (splash.hidden) return;
+  // Nothing goes through until the studio card has faded all the way out (owner, 2026-11-11).
+  if (splash.hidden || !studio.hidden) return;
+  goLandscape(); // a press is the gesture fullscreen needs
   splash.hidden = true;
   splashLeftAt = performance.now();
   audio.music();
@@ -1949,8 +2004,12 @@ else {
   useIsland(1 + Math.floor(Math.random() * 1_000_000));
   camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0);
   splash.hidden = false;
-  // The studio card plays over it first (it lets every press through).
-  setTimeout(() => { studio.hidden = true; }, 2900);
+  // The studio card plays over it first; presses wait until it has faded out. It shows from the
+  // HTML (Brain flood#E116), so its fade may already be over by the time this runs.
+  const studioDone = () => { studio.hidden = true; };
+  if (getComputedStyle(studio).visibility === 'hidden') studioDone();
+  studio.addEventListener('animationend', studioDone);
+  setTimeout(studioDone, 3200); // cleanup, if the animation event never comes
   for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, leaveSplash);
 }
 // Live getters (Object.assign would copy today's values, not the getters).

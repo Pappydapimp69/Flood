@@ -73,24 +73,63 @@ await check('keyboard: left and right turn opposite ways', async () => {
   await page.close();
 });
 
+// Phones play in landscape (an upright phone gets the "turn your phone" card), so touch checks use one.
+const PHONE = { viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true };
 await check('touch: holding each half of the screen steers', async () => {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const ctx = await browser.newContext(PHONE);
   const page = await ctx.newPage();
   await page.goto(base);
   // Touch pointer events only (no keyboard), dispatched as a held finger.
   const hold = (x) => page.evaluate((x) => {
     const c = document.querySelector('canvas');
-    c.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 7, pointerType: 'touch', clientX: x, clientY: 600, bubbles: true }));
+    c.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 7, pointerType: 'touch', clientX: x, clientY: 200, bubbles: true }));
   }, x);
   const release = () => page.evaluate(() => {
     document.querySelector('canvas').dispatchEvent(new PointerEvent('pointerup', { pointerId: 7, pointerType: 'touch', bubbles: true }));
   });
   const left = await steerRun(page, () => hold(40));
   await release();
-  const right = await steerRun(page, () => hold(350));
+  const right = await steerRun(page, () => hold(800));
   await release();
   if (!(left > right + 0.3)) throw new Error(`left ${left.toFixed(2)} vs right ${right.toFixed(2)}`);
   if (shotDir) await page.screenshot({ path: `${shotDir}/play-phone.png` });
+  await ctx.close();
+});
+
+await check('touch: ◀ ▶ buttons steer, 20% slower than a key (every fifth tick straight)', async () => {
+  const ctx = await browser.newContext(PHONE);
+  const page = await ctx.newPage();
+  await page.goto(base);
+  await until(page, (s) => s.ready && s.tick > 5, 'ready');
+  if (await page.isHidden('#tpad')) throw new Error('no ◀ ▶ on a phone');
+  const btn = (id, type) => page.evaluate(([id, type]) => document.getElementById(id).dispatchEvent(
+    new PointerEvent(type, { pointerId: 11, pointerType: 'touch', bubbles: true, cancelable: true })), [id, type]);
+  await page.evaluate(() => { __flood.steers.length = 0; });
+  await btn('t-left', 'pointerdown');
+  const t0 = (await state(page)).tick;
+  await until(page, (s) => s.tick > t0 + 40, '40 ticks held');
+  await btn('t-left', 'pointerup');
+  const st = await page.evaluate(() => __flood.steers.slice());
+  const first = st.indexOf(-1), run = st.slice(first, first + 40);
+  if (first < 0 || run.some((v) => v === 1)) throw new Error(`◀ steers: ${st.join(',')}`);
+  const share = run.filter((v) => v === -1).length / run.length;
+  if (Math.abs(share - 0.8) > 0.03) throw new Error(`◀ turned on ${(share * 100).toFixed(0)}% of ticks, want 80%: ${run.join(',')}`);
+  await ctx.close();
+});
+
+await check('phone upright: the rotate card shows and the race waits', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const page = await ctx.newPage();
+  await page.goto(base);
+  await page.waitForFunction(() => window.__flood?.ready);
+  if (!(await page.isVisible('#rotate'))) throw new Error('no rotate card upright');
+  const t0 = (await state(page)).tick;
+  await page.waitForTimeout(1500);
+  const t1 = (await state(page)).tick;
+  if (t1 !== t0) throw new Error(`race ran upright: ${t0} -> ${t1}`);
+  await page.setViewportSize({ width: 844, height: 390 });
+  await until(page, (s) => s.tick > t1 + 5, 'race runs once sideways');
+  if (await page.isVisible('#rotate')) throw new Error('rotate card stayed sideways');
   await ctx.close();
 });
 
@@ -248,35 +287,40 @@ await check('sky drop: fall with a countdown and a landing marker, steer, land o
   await page.close();
 });
 
-await check('touch drop: one drag stick flies it like a plane (left / right turns, up is nose down and fast)', async () => {
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+await check('touch drop: ◀ ▶ turn, ▲ DIVE / ▼ FLOAT fly it, and no drag stick on a phone', async () => {
+  const ctx = await browser.newContext(PHONE);
   const page = await ctx.newPage();
   await page.goto(`${root}?seed=3&nohint&nointro&lite`);
   await until(page, (s) => s.ready && s.tick > 95, 'falling, past the opening shot'); // no steering until TUNE.dropCalm
+  if (await page.isHidden('#tfly')) throw new Error('no ▲ ▼ while falling');
+  const btn = (id, type) => page.evaluate(([id, type]) => document.getElementById(id).dispatchEvent(
+    new PointerEvent(type, { pointerId: 12, pointerType: 'touch', bubbles: true, cancelable: true })), [id, type]);
+  const ticks = async (n, what) => { const t0 = (await state(page)).tick; await until(page, (s) => s.tick > t0 + n, what); };
+  // ▶: the drop turns right (steer +1).
+  await page.evaluate(() => { __flood.steers.length = 0; });
+  await btn('t-right', 'pointerdown');
+  await ticks(10, '10 ticks of turning');
+  await btn('t-right', 'pointerup');
+  const steers = await page.evaluate(() => __flood.steers.slice());
+  if (!steers.includes(1) || steers.includes(-1)) throw new Error(`▶ gave steers ${steers.join('')}`);
+  // ▲ DIVE: full throttle, well over the base 82.5 m/s glide. ▼ FLOAT: none, well under it.
+  await btn('t-dive', 'pointerdown');
+  await ticks(10, '10 ticks diving');
+  const fast = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
+  await btn('t-dive', 'pointerup');
+  await btn('t-float', 'pointerdown');
+  await ticks(10, '10 ticks floating');
+  const slow = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
+  await btn('t-float', 'pointerup');
+  if (fast >= 0 && slow >= 0 && !(fast > 130 && slow < 60)) throw new Error(`dive ${fast.toFixed(0)} m/s, float ${slow.toFixed(0)} m/s`);
+  // A finger dragged on the canvas no longer draws the combined stick.
   const fire = (type, x, y) => page.evaluate(([type, x, y]) => document.querySelector('canvas').dispatchEvent(
     new PointerEvent(type, { pointerId: 9, pointerType: 'touch', clientX: x, clientY: y, bubbles: true })), [type, x, y]);
-  // Drag right: the drop turns right (steer +1), the stick is drawn under the finger.
-  await page.evaluate(() => { __flood.steers.length = 0; });
-  await fire('pointerdown', 195, 600);
-  await fire('pointermove', 265, 600);
-  let t0 = (await state(page)).tick;
-  await until(page, (s) => s.tick > t0 + 10, '10 ticks of turning');
-  const turned = await page.evaluate(() => ({ steers: __flood.steers.slice(), stick: document.getElementById('stick').classList.contains('on') }));
-  if (!turned.stick) throw new Error('no stick drawn under the finger');
-  if (!turned.steers.includes(1)) throw new Error(`drag right gave steers ${turned.steers.join('')}`);
-  // Drag up: nose down, full throttle: the glide is well over the base 82.5 m/s.
-  await fire('pointermove', 195, 520);
-  t0 = (await state(page)).tick;
-  await until(page, (s) => s.tick > t0 + 10, '10 ticks nose down');
-  const fast = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
-  // Drag down: nose up, no throttle: well under it.
-  await fire('pointermove', 195, 680);
-  t0 = (await state(page)).tick;
-  await until(page, (s) => s.tick > t0 + 10, '10 ticks nose up');
-  const slow = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
-  await fire('pointerup', 195, 680);
-  // (the glide is TUNE.glideSpeed 82.5 m/s: full throttle is 1.8x, about 148; dive adds no ground speed)
-  if (fast >= 0 && slow >= 0 && !(fast > 130 && slow < 60)) throw new Error(`nose down ${fast.toFixed(0)} m/s, nose up ${slow.toFixed(0)} m/s`);
+  await fire('pointerdown', 420, 200); await fire('pointermove', 420, 120);
+  await ticks(3, 'a few ticks dragging');
+  const stick = await page.evaluate(() => document.getElementById('stick').classList.contains('on'));
+  await fire('pointerup', 420, 120);
+  if (stick) throw new Error('drag stick drawn on a phone');
   await ctx.close();
 });
 
@@ -294,6 +338,13 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   const page = await ctx.newPage();
   await page.goto(base.replace('?seed=1', '?nohint'));
   await page.waitForFunction(() => window.__flood?.renderer);
+  // While the studio card fades nothing gets through; after it, A leaves the splash.
+  await page.evaluate(() => { __pad.buttons[0].pressed = true; __pad.buttons[0].value = 1; });
+  await page.waitForTimeout(400);
+  await page.evaluate(() => { __pad.buttons[0].pressed = false; __pad.buttons[0].value = 0; });
+  const early = await page.evaluate(() => ({ studio: !document.getElementById('studio').hidden, splash: !document.getElementById('splash').hidden }));
+  if (early.studio && !early.splash) throw new Error('a press during the studio card left the splash');
+  await page.waitForFunction(() => document.getElementById('studio').hidden, null, { timeout: 15000 });
   const button = (i, on) => page.evaluate(([i, on]) => { __pad.buttons[i].pressed = on; __pad.buttons[i].value = on ? 1 : 0; }, [i, on]);
   // Held longer than a slow headless frame, so the per-frame poll sees it.
   const tap = async (i) => { await button(i, true); await page.waitForTimeout(1200); await button(i, false); await page.waitForTimeout(1200); };

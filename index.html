@@ -58,7 +58,8 @@
       background: #0e3442d9; color: #eefaff; padding: 10px 14px; border-radius: 12px; font: 600 14px/1.5 system-ui, sans-serif; text-align: center; pointer-events: none; }
     #hint[hidden] { display: none; }
     @media (max-width: 600px) { #help { display: none; } }
-    body.falling #help { display: none; } /* falling, the hint top right says how to fly */
+    body.falling #help { display: none; }
+    body.touch #help { display: none; } /* phones have the ◀ ▶ buttons and the coach */ /* falling, the hint top right says how to fly */
     #hint .g { color: #8be68b; } #hint .r { color: #ff8d80; }
     #mute { position: fixed; right: calc(14px + env(safe-area-inset-right, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
       font-size: 20px; background: #eaf5fbd9; border: 0; border-radius: 10px; min-width: 40px; height: 40px; padding: 0 8px; cursor: pointer; white-space: nowrap; }
@@ -193,6 +194,51 @@
     #downhill[hidden] { display: none; }
     #fallback { position: fixed; inset: 0; display: grid; place-items: center; font: 16px system-ui; color: #10303d; }
     #fallback[hidden] { display: none; }
+    /* Alpha feedback mode (?alpha): a small pill top centre, away from the thumbs; a scrolling form over the game. */
+    #fb-open { position: fixed; left: 50%; top: calc(8px + env(safe-area-inset-top, 0px)); transform: translateX(-50%); z-index: 12;
+      font: 800 12px system-ui, sans-serif; letter-spacing: 0.05em; padding: 7px 12px; border: 2px solid #ffcf3a; border-radius: 16px;
+      background: #0b2a36d9; color: #ffcf3a; cursor: pointer; }
+    #fb-open[hidden], #fb[hidden] { display: none; }
+    #fb { position: fixed; inset: 0; z-index: 40; background: #05141bcc; display: grid; place-items: center; padding: 16px; box-sizing: border-box; }
+    #fb .fb-card { width: min(560px, 100%); max-height: calc(100dvh - 32px); overflow-y: auto; box-sizing: border-box; background: #0e3442;
+      color: #eefaff; border-radius: 16px; padding: 18px 20px; font: 15px/1.4 system-ui, sans-serif; display: grid; gap: 12px; box-shadow: 0 8px 30px #0009; }
+    #fb h3 { margin: 0; font-size: 22px; color: #ffcf3a; }
+    #fb .fb-sub, #fb small { margin: 0; color: #b9d6e2; font-size: 13px; }
+    #fb .fb-q { display: grid; gap: 6px; font-weight: 700; }
+    #fb textarea, #fb input:not([type]) { font: 15px system-ui, sans-serif; padding: 9px; border-radius: 9px; border: 0; background: #eaf5fb; color: #10303d; resize: vertical; width: 100%; box-sizing: border-box; }
+    #fb .fb-cs { display: flex; flex-wrap: wrap; gap: 6px; }
+    #fb .fb-c input { position: absolute; opacity: 0; }
+    #fb .fb-c span { display: inline-block; min-width: 40px; text-align: center; padding: 8px 12px; border-radius: 9px; background: #1b5a6e; cursor: pointer; font-weight: 700; }
+    #fb .fb-c input:checked + span { background: #ffcf3a; color: #062430; }
+    #fb .fb-c input:focus-visible + span { outline: 3px solid #fff; }
+    #fb pre { white-space: pre-wrap; font: 12px/1.4 ui-monospace, monospace; background: #062430; padding: 10px; border-radius: 9px; user-select: text; -webkit-user-select: text; }
+    #fb summary { cursor: pointer; color: #b9d6e2; }
+    #fb .fb-row { display: flex; flex-wrap: wrap; gap: 8px; }
+    #fb .fb-row button { font: 700 16px system-ui, sans-serif; padding: 11px 16px; border-radius: 10px; border: 0; background: #1b5a6e; color: #eefaff; cursor: pointer; }
+    #fb .fb-row .fb-main { background: #45d2ff; color: #062430; }
+    #fb .fb-link { justify-self: start; background: none; border: 0; color: #9fc4d2; text-decoration: underline; cursor: pointer; font: 13px system-ui, sans-serif; padding: 0; }
+    #fb-said { margin: 0; color: #8be68b; font-weight: 700; min-height: 1em; }
+    #banner .fb-results { background: #ffcf3a; }
+    /* Phone controls: ◀ ▶ under the left thumb; ▲ DIVE / ▼ FLOAT under the right while falling.
+       Kept 24 px plus the safe area off the edges, clear of the system's edge gestures. */
+    #tpad, #tfly { position: fixed; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 14px; z-index: 11; }
+    #tpad { left: calc(24px + env(safe-area-inset-left, 0px)); }
+    #tfly { right: calc(24px + env(safe-area-inset-right, 0px)); flex-direction: column; gap: 10px; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
+    #tpad[hidden], #tfly[hidden] { display: none; }
+    #tpad button, #tfly button { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
+      border: 3px solid #ffffffcc; background: #0b2a36b3; color: #fff; font: 900 26px system-ui, sans-serif; cursor: pointer;
+      box-shadow: 0 4px 14px #0005; display: grid; place-content: center; padding: 0; }
+    #tpad button { width: 78px; height: 78px; border-radius: 50%; }
+    #tfly button { width: 92px; height: 58px; border-radius: 29px; font-size: 18px; line-height: 1; }
+    #tfly small { font: 800 11px system-ui, sans-serif; letter-spacing: 0.06em; }
+    #tpad button.on, #tfly button.on { background: #45d2ffd9; color: #062430; transform: scale(0.94); }
+    /* Landscape only on phones: upright, this card covers everything and a solo race waits. */
+    #rotate { position: fixed; inset: 0; z-index: 60; display: none; place-content: center; gap: 14px; text-align: center; padding: 24px;
+      background: #062430; color: #eefaff; font: 600 18px/1.4 system-ui, sans-serif; }
+    body.rotate #rotate { display: grid; }
+    #rotate .phone { width: 46px; height: 80px; margin: 0 auto; border: 4px solid #45d2ff; border-radius: 10px; animation: turn 1.8s ease-in-out infinite; }
+    @keyframes turn { 0%, 25% { transform: rotate(0); } 60%, 100% { transform: rotate(-90deg); } }
+    @media (prefers-reduced-motion: reduce) { #rotate .phone { animation: none; transform: rotate(-90deg); } }
   </style>
   <script type="importmap">
     { "imports": { "three": "./vendor/three/three.module.min.js", "three/addons/": "./vendor/three/addons/" } }
@@ -254,6 +300,9 @@
     <button id="play-tutorial">Tutorial · learn to play</button>
     <small class="nav">↑ ↓ to choose · A / Enter to start</small>
   </div>
+  <div id="tpad" hidden><button id="t-left" aria-label="Steer left">◀</button><button id="t-right" aria-label="Steer right">▶</button></div>
+  <div id="tfly" hidden><button id="t-dive" aria-label="Dive: fall faster">▲<small>DIVE</small></button><button id="t-float" aria-label="Float: fall slower">▼<small>FLOAT</small></button></div>
+  <div id="rotate" role="alert"><div class="phone"></div><b>Turn your phone sideways</b><span>Flood plays in landscape.</span></div>
   <div id="fallback" hidden></div>
   <script type="module" src="./src/client/main.js"></script>
 </body>
