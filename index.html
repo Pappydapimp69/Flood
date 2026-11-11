@@ -219,7 +219,7 @@
     #fb .fb-link { justify-self: start; background: none; border: 0; color: #9fc4d2; text-decoration: underline; cursor: pointer; font: 13px system-ui, sans-serif; padding: 0; }
     #fb-said { margin: 0; color: #8be68b; font-weight: 700; min-height: 1em; }
     #banner .fb-results { background: #ffcf3a; }
-    /* Phone controls: ◀ ▶ under the left thumb; ▲ DIVE / ▼ FLOAT under the right while falling.
+    /* Phone controls: ◀ ▶ under the left thumb; ▲ FLOAT / ▼ DIVE under the right while falling (arrows point the way you go).
        Kept 24 px plus the safe area off the edges, clear of the system's edge gestures. */
     #tpad, #tfly { position: fixed; bottom: calc(26px + env(safe-area-inset-bottom, 0px)); display: flex; gap: 14px; z-index: 11; }
     #tpad { left: calc(24px + env(safe-area-inset-left, 0px)); }
@@ -301,7 +301,7 @@
     <small class="nav">↑ ↓ to choose · A / Enter to start</small>
   </div>
   <div id="tpad" hidden><button id="t-left" aria-label="Steer left">◀</button><button id="t-right" aria-label="Steer right">▶</button></div>
-  <div id="tfly" hidden><button id="t-dive" aria-label="Dive: fall faster">▲<small>DIVE</small></button><button id="t-float" aria-label="Float: fall slower">▼<small>FLOAT</small></button></div>
+  <div id="tfly" hidden><button id="t-float" aria-label="Float: fall slower">▲<small>FLOAT</small></button><button id="t-dive" aria-label="Dive: fall faster">▼<small>DIVE</small></button></div>
   <div id="rotate" role="alert"><div class="phone"></div><b>Turn your phone sideways</b><span>Flood plays in landscape.</span></div>
   <div id="fallback" hidden></div>
   <script type="module" src="./src/client/main.js"></script>

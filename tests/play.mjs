@@ -292,6 +292,12 @@ await check('touch drop: ◀ ▶ turn, ▲ DIVE / ▼ FLOAT fly it, and no drag 
   await page.goto(`${root}?seed=3&nohint&nointro&lite`);
   await until(page, (s) => s.ready && s.tick > 95, 'falling, past the opening shot'); // no steering until TUNE.dropCalm
   if (await page.isHidden('#tfly')) throw new Error('no ▲ ▼ while falling');
+  // Arrows point the way you go: ▲ FLOAT on top, ▼ DIVE below (owner, 2026-11-11).
+  const order = await page.evaluate(() => {
+    const f = document.getElementById('t-float').getBoundingClientRect(), d = document.getElementById('t-dive').getBoundingClientRect();
+    return { floatAbove: f.bottom <= d.top + 1, dive: document.getElementById('t-dive').textContent, float: document.getElementById('t-float').textContent };
+  });
+  if (!order.floatAbove || !order.dive.startsWith('▼') || !order.float.startsWith('▲')) throw new Error(`drop buttons: ${JSON.stringify(order)}`);
   const btn = (id, type) => page.evaluate(([id, type]) => document.getElementById(id).dispatchEvent(
     new PointerEvent(type, { pointerId: 12, pointerType: 'touch', bubbles: true, cancelable: true })), [id, type]);
   const ticks = async (n, what) => { const t0 = (await state(page)).tick; await until(page, (s) => s.tick > t0 + n, what); };

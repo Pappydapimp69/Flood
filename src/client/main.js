@@ -11,6 +11,7 @@ import { createInput } from './input.js';
 import { connect } from './net.js';
 import { createAudio } from './audio.js';
 import { alphaWanted, createFeedback } from './feedback.js';
+import { groupCrossings } from './crossmarks.js';
 import { buildTrees, buildRocks, clearTrees, clearAround, buildLava, coolLava, pulseLava, treeFade } from './scenery.js';
 
 // Test/debug surface. Tests poll this instead of waiting on wall-clock time.
@@ -781,7 +782,7 @@ function placeTag(el, x, y) {
 let crossMarks = [];
 const crossTagPool = [];
 function placeCrossTags(on) {
-  const marks = on ? crossMarks.slice(0, 4) : [];
+  const marks = on ? crossMarks.slice(0, 4) : []; // one per rival channel ahead, at most four
   while (crossTagPool.length < marks.length) { const el = document.createElement('div'); tagBox.append(el); crossTagPool.push(el); }
   crossTagPool.forEach((el, i) => {
     const m = marks[i];
@@ -944,7 +945,9 @@ function menuActions() {
 }
 const pendingActions = [];
 
-// Phones: steer with ◀ ▶ under the left thumb; while falling, ▲ DIVE / ▼ FLOAT under the right.
+// Phones: steer with ◀ ▶ under the left thumb; while falling, ▲ FLOAT / ▼ DIVE under the right.
+// On a button an arrow reads as the way you go, so phones show ▼ for dive (owner, 2026-11-11);
+// keys and pads keep the plane stick's push-forward-to-dive.
 const touchUI = lowPower;
 document.body.classList.toggle('touch', touchUI);
 const tpad = document.getElementById('tpad'), tfly = document.getElementById('tfly');
@@ -1431,8 +1434,9 @@ const COACH = [
 ];
 const TUTORIAL = [
   { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Turn your falling drop with <b>◀ ▶</b>')}`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `${key('<b>Stick ↑</b> dives, <b>↓</b> floats', '', '<b>▲ DIVE</b> to fall faster, <b>▼ FLOAT</b> to stay up')}`, pass: (c) => c.glided || lowPower || !padSeen },
-  { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', '▲ ▼')}</b>: <b>↑</b> descends faster, <b>↓</b> slows the descent, like flaps (clouds sit at different heights)`, pass: (c) => c.fell },
+  { drop: true, text: () => `${key('<b>Stick ↑</b> dives, <b>↓</b> floats', '', '<b>▼ DIVE</b> to fall faster, <b>▲ FLOAT</b> to stay up')}`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => (lowPower ? '<b>▼ DIVE</b> descends faster, <b>▲ FLOAT</b> slows the descent, like flaps (clouds sit at different heights)'
+    : `<b>${key('Right stick ↑ ↓', 'W / S', '')}</b>: <b>↑</b> descends faster, <b>↓</b> slows the descent, like flaps (clouds sit at different heights)`), pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the ◀ ▶ buttons')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
   { text: () => 'Follow the <b>gold beacons</b> down the course', pass: (c) => c.stage >= 2 },
@@ -1543,15 +1547,8 @@ function showFlow(now) {
   if (!on || now - flowAt < 250) return;
   flowAt = now;
   const path = [{ x: me.x, z: me.z, kind: 'run' }, ...predictPath(world, me, (PREVIEW_PTS - 1) * 4, 4)].slice(0, PREVIEW_PTS);
-  // Where the preview crosses or runs along a rival's live channel: one marker each, deeper or shallower than
-  // your head will be there (owner, 2026-11-09). Along it for 12+ points (about 2.4 s) is a ride, not a cut.
-  crossMarks = [];
-  for (const p of path) {
-    const last = crossMarks[crossMarks.length - 1];
-    if (!p.cross) { if (last) last.open = false; continue; }
-    if (last?.open && last.o === p.cross.o) { last.n++; continue; }
-    crossMarks.push({ x: p.x, z: p.z, ...p.cross, n: 1, open: true });
-  }
+  // Rival channels ahead: one marker per channel, held in place between re-runs (see crossmarks.js).
+  crossMarks = groupCrossings(path, crossMarks);
   const pos = flowLine.geometry.attributes.position, col = flowLine.geometry.attributes.color;
   const half = Math.max(18, widthOf(me) * 0.18);
   for (let i = 0; i < path.length; i++) {
@@ -1953,7 +1950,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▲ dive to low clouds · ▼ float: stay up for clouds' : '← → steer · ↑ dive to low clouds · ↓ float: stay up for clouds')
+  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive to low clouds · ▲ float: stay up for clouds' : '← → steer · ↑ dive to low clouds · ↓ float: stay up for clouds')
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`
@@ -2065,5 +2062,6 @@ Object.defineProperties(dbg, {
   focus: { get: () => focus },
   camYaw: { get: () => camYaw },
   camRise: { get: () => camRise },
+  crossMarks: { get: () => crossMarks },
   cam: { get: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z, tx: camTarget.x, ty: camTarget.y, tz: camTarget.z, fov: camera.fov }) },
 });
