@@ -6,7 +6,7 @@ lakes to grow, cut rivals off, and be the first to reach the sea.
 ## Play
 In the browser: https://pappydapimp69.github.io/Flood/ (solo against bots; online races need `npm run server`, then `?online`).
 
-Steer with ← → (or A D); ↑ ↓ (W S) hurry or slow your fall. On a phone, hold the left or right side of the screen to steer; while falling, drag to aim the drop where you point (drag far to dive faster).
+Steer with ← → (or A D). Falling, every input works the same way: ↑ (W, stick or D-pad up, drag up) dives, ↓ (S, stick or D-pad down, drag down) floats, and leaving it alone cruises. On a phone, hold the left or right side of the screen to steer, and while falling drag left or right to turn. The 4.5 s opening shot can't be skipped.
 
 - **Gouge** (Space / E, pad A or B, or the GOUGE button): your river keeps its momentum and Gouge adds to it: more speed and a bigger head for 3 s, flowing over ground up to 80 m higher than usual. 10 s cooldown; costs water.
 - **Surge** (Q / F, a pad bumper, or the SURGE button): adds a burst of speed on top of what you have, for 2 s. 8 s cooldown; costs water. Unlocks at 1.2M L, or as soon as you fall 3 km behind the leader.

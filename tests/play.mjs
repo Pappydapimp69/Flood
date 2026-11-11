@@ -212,9 +212,10 @@ await check('sky drop: fall with a countdown and a landing marker, steer, land o
   const d0 = await page.evaluate(() => ({ dropping: __flood.river.dropping, alt: __flood.river.alt, hud: document.getElementById('dist').textContent, x: __flood.river.x, z: __flood.river.z, dx: __flood.river.dx, dz: __flood.river.dz }));
   if (!(d0.dropping > 0 && d0.alt > 0)) throw new Error(`not falling at the start: ${JSON.stringify(d0)}`);
   if (!/^falling/i.test(d0.hud)) throw new Error(`HUD: ${d0.hud}`);
+  await until(page, (s) => s.tick > 95, 'past the opening shot'); // no steering until TUNE.dropCalm (90 ticks)
   await page.keyboard.down('ArrowLeft');
   await page.keyboard.down('ArrowUp');
-  await until(page, (s) => s.tick > 60, 'gliding');
+  await until(page, (s) => s.tick > 155, 'gliding');
   await page.keyboard.up('ArrowLeft');
   // Steering turned the drop (it lands wherever it crosses the start line).
   const h1 = await page.evaluate(() => ({ dx: __flood.river.dx, dz: __flood.river.dz }));
@@ -251,7 +252,7 @@ await check('touch drop: one drag stick flies it like a plane (left / right turn
   const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   await page.goto(`${root}?seed=3&nohint&nointro&lite`);
-  await until(page, (s) => s.ready && s.tick > 5, 'falling');
+  await until(page, (s) => s.ready && s.tick > 95, 'falling, past the opening shot'); // no steering until TUNE.dropCalm
   const fire = (type, x, y) => page.evaluate(([type, x, y]) => document.querySelector('canvas').dispatchEvent(
     new PointerEvent(type, { pointerId: 9, pointerType: 'touch', clientX: x, clientY: y, bubbles: true })), [type, x, y]);
   // Drag right: the drop turns right (steer +1), the stick is drawn under the finger.
