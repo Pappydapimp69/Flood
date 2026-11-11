@@ -267,7 +267,7 @@ biggest at 60 s won 0/10 (no snowball).
 
 ## M16 — The drop and the map, like the trailer (done)
 - Every river has its own colour; falling, it is a comet with a tail pointing back along its fall.
-- Opening shot (4.5 s, any key or click skips): from low on the island looking up at the summit as the
+- Opening shot (4.5 s, unskippable since 2026-11-11): from low on the island looking up at the summit as the
   named comets rain in; the HUD and guides stay hidden until it ends.
 - Rival names in the trailer's spirit (riverboi, mizu_chan, LaCascade, torrent99, ...), shown over the
   comets while falling. Landing throws a splash. The map shows each river's course in its colour.

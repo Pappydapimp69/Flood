@@ -223,7 +223,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (falling: left / right turns, up is full throttle, centre half, back none) · right stick up / down: falling, dive / slow the fall; once landed it looks around, up for a raised view · A: gouge (select / race again in menus) · RB: surge · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (falling: left / right turns, up dives, down floats) · right stick up / down: falling, the same; once landed it looks around, up for a raised view · A: gouge (select / race again in menus) · RB: surge · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -586,7 +586,7 @@ function newRun() {
 let everOpen = false;
 function goOnline(name) {
   mode = 'online';
-  input.onChange = (st) => { if (river && isRacing(river)) net?.steer(st, performance.now(), true, river.dropping ? input.forward() : 0, river.dropping ? (input.glide() || 1) : 0); };
+  input.onChange = (st) => { if (river && isRacing(river)) { const p = dropPitch(); net?.steer(st, performance.now(), true, p.f, p.g); } };
   input.onSkill = () => { if (river && isRacing(river) && !river.dropping) net?.skill(input.sample()); };
   input.onSurge = () => { if (river && isRacing(river) && !river.dropping) net?.surge(input.sample()); };
   if (!terrain) { useIsland(1); camera.position.set(W * 0.45, W * 0.6, W * 0.7); camera.lookAt(0, 0, 0); }
@@ -638,11 +638,11 @@ const camLook = new THREE.Vector3();
 const camDir = new THREE.Vector2(0, -1);
 // Right stick: a look offset around the head, eased back behind it once released.
 let camYaw = 0, lookIdle = 0;
-// The opening shot runs until this time (ms); any key, click or steer skips it.
+// The opening shot runs until this time (ms). It can't be skipped (owner, 2026-11-11): the sim
+// takes no steering until it ends (TUNE.dropCalm), so a skip only showed a drop you couldn't fly.
 let introUntil = 0;
 let lastCamMode = ''; // the camera's current view; a change is a cut
 let camRise = 0; // 0..1: how far the right stick has raised the view
-for (const ev of ['keydown', 'pointerdown']) addEventListener(ev, () => { introUntil = 0; });
 // 1: cuts deeper than you (touching it drains you), -1: shallower (you drain
 // it), 0: too close to call — the same deadband the sim uses.
 function threatOf(r) {
@@ -945,17 +945,23 @@ function handleActions() {
   return false;
 }
 
-// This tick's input: steer, plus hurry / slow while falling.
+// Falling, up and down mean the same on every input (owner, 2026-11-11): keys ↑ ↓, either
+// stick or the D-pad up / down, a drag up / down. Up dives: full throttle, falling faster.
+// Down floats: no throttle, falling slower. Neither: cruise at full glide like the bots
+// (players cruised at half and were passed and out-landed by every bot, owner 2026-11-09).
+function dropPitch(aim = null) {
+  if (!river?.dropping) return { f: 0, g: 0 };
+  const p = Math.sign(aim ? aim.f : dbg.forceFwd ?? (input.forward() + input.glide()));
+  return { f: p, g: p === 0 ? 1 : p };
+}
+
+// This tick's input: steer, plus dive / float while falling.
 function sampleSteer() {
   let steer = dbg.forceSteer ?? input.sample();
-  let f = river?.dropping ? (dbg.forceFwd ?? input.forward()) : 0;
-  let g = river?.dropping ? input.glide() : 0;
   // Falling, the drag stick flies the drop (see dragAim).
   const aim = river?.dropping && dbg.forceSteer === undefined ? dragAim() : null;
-  if (aim) { steer = aim.s; f = aim.f; g = aim.g; }
-  // Cruise at full glide like the bots do; pull back (or ↓) to slow. (Players cruised at half
-  // and were passed and out-landed by every bot, owner 2026-11-09.)
-  if (river?.dropping && g === 0) g = 1;
+  if (aim) steer = aim.s;
+  const { f, g } = dropPitch(aim);
   if (coach) { if (f) coach.fell = true; if (g > 0) coach.glided = true; }
   dbg.steers.push(steer);
   watchCoach(steer);
@@ -976,9 +982,8 @@ function showStick() {
   stickEl.classList.toggle('far', len > STICK_FAR);
 }
 
-// The drag stick on a phone works like a plane's one control stick: left / right
-// turns, up pushes the nose down (full throttle and a faster descent), down pulls
-// it up (no throttle, the descent slowed); let go and it cruises at half throttle.
+// The drag stick on a phone: left / right turns, up dives, down floats (see dropPitch),
+// the same as the keys and the pad; let go and it cruises.
 const STICK_MIN = 18, STICK_FAR = 70; // pixels
 function dragAim() {
   const d = input.drag();
@@ -987,7 +992,7 @@ function dragAim() {
   const nx = Math.max(-1, Math.min(1, d.dx / STICK_FAR)), ny = Math.max(-1, Math.min(1, -d.dy / STICK_FAR)); // ny: up is +
   const s = Math.abs(nx) > 0.35 ? Math.sign(nx) : 0; // right turns right (+1), as the keys and the pad do
   const pitch = ny > 0.4 ? 1 : ny < -0.4 ? -1 : 0;
-  return { s, f: pitch, g: pitch };
+  return { s, f: pitch };
 }
 
 function soloTick() {
@@ -1345,7 +1350,7 @@ const COACH = [
 ];
 const TUTORIAL = [
   { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Drag <b>left or right</b> to turn')}`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `${key('<b>Left stick ↑</b> is full throttle, centre half, <b>↓</b> none', '', 'Drag <b>up</b>: nose down, full speed and a faster descent')}`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => `${key('<b>Stick ↑</b> dives, <b>↓</b> floats', '', 'Drag <b>up</b> to dive, <b>down</b> to float')}`, pass: (c) => c.glided || lowPower || !padSeen },
   { drop: true, text: () => `<b>${key('Right stick ↑ ↓', 'W / S', 'Drag ↑ ↓')}</b>: <b>↑</b> descends faster, <b>↓</b> slows the descent, like flaps (clouds sit at different heights)`, pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the left and right of the screen')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
