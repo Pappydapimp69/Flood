@@ -43,7 +43,7 @@ function checkPrints(v, who) {
 let errs = [];
 try {
   const ctxA = await browser.newContext({ viewport: { width: 800, height: 500 } });
-  const ctxB = await browser.newContext({ viewport: { width: 390, height: 700 }, hasTouch: true, isMobile: true });
+  const ctxB = await browser.newContext({ viewport: { width: 700, height: 390 }, hasTouch: true, isMobile: true });
   const a = await ctxA.newPage(), b = await ctxB.newPage();
   errs = [];
   for (const p of [a, b]) p.on('pageerror', (e) => errs.push(e.message));

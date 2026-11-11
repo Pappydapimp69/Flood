@@ -31,16 +31,20 @@ export function createInput(target) {
   const current = () => (held.left === held.right ? 0 : held.left ? -1 : 1);
   const press = (side) => { held[side] = true; pulse[side] = true; onChange?.(side === 'left' ? -1 : 1); };
   const sync = () => {
-    held.left = keys.left || pad.left || [...pointers.values()].includes('left');
-    held.right = keys.right || pad.right || [...pointers.values()].includes('right');
+    held.left = keys.left || pad.left || btn.left || [...pointers.values()].includes('left');
+    held.right = keys.right || pad.right || btn.right || [...pointers.values()].includes('right');
     onChange?.(current());
   };
   const keys = { left: false, right: false, fwd: false, back: false };
+  // On-screen touch buttons (phones): ◀ ▶ steer, ▲ ▼ dive / float while falling. Kept apart
+  // so one thumb steers and the other flies the drop (owner, 2026-11-11).
+  const btn = { left: false, right: false, fwd: false, back: false };
   const pad = { left: false, right: false, down: new Set(), stickY: 0, seen: false, fwd: 0, glide: 0, look: 0, vec: { x: 0, y: 0 } };
   // Forward / back: hurry or slow the fall. Keys or right stick up / down.
   const forward = () => {
     const k = keys.fwd === keys.back ? 0 : keys.fwd ? 1 : -1;
-    return k || pad.fwd;
+    const b = btn.fwd === btn.back ? 0 : btn.fwd ? 1 : -1;
+    return k || b || pad.fwd;
   };
 
   addEventListener('keydown', (e) => {
@@ -68,7 +72,7 @@ export function createInput(target) {
     else if (BACK.has(e.code)) keys.back = false;
     sync();
   });
-  addEventListener('blur', () => { keys.left = keys.right = keys.fwd = keys.back = pad.left = pad.right = false; pad.fwd = pad.look = 0; pointers.clear(); sync(); });
+  addEventListener('blur', () => { keys.left = keys.right = keys.fwd = keys.back = btn.left = btn.right = btn.fwd = btn.back = pad.left = pad.right = false; pad.fwd = pad.look = 0; pointers.clear(); sync(); });
 
   // Touch / mouse: hold the left or right half of the screen.
   // A drag stick too: where the first finger went down and where it is now.
@@ -79,7 +83,8 @@ export function createInput(target) {
     pointers.set(e.pointerId, side);
     press(side);
     actions.push('tap');
-    if (!stick) stick = { id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY };
+    // The drag stick (left / right and up / down in one) is for a mouse; a phone has its own buttons.
+    if (!stick && e.pointerType === 'mouse') stick = { id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY };
   });
   target.addEventListener('pointermove', (e) => {
     if (stick && e.pointerId === stick.id) { stick.x = e.clientX; stick.y = e.clientY; }
@@ -92,7 +97,32 @@ export function createInput(target) {
   target.addEventListener('pointerup', up);
   target.addEventListener('pointercancel', up);
 
+  // Wire an on-screen button to a held control. Pointer capture keeps it held while the
+  // thumb slides a little; the press never reaches the canvas underneath.
+  const bind = (el, what) => {
+    const on = new Set();
+    const set = () => {
+      const was = btn[what];
+      btn[what] = on.size > 0;
+      if (btn[what] && !was && (what === 'left' || what === 'right')) press(what);
+      sync();
+    };
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      on.add(e.pointerId); try { el.setPointerCapture(e.pointerId); } catch { /* a synthetic pointer */ } el.classList.add('on'); set();
+    });
+    const off = (e) => { on.delete(e.pointerId); if (!on.size) el.classList.remove('on'); set(); };
+    el.addEventListener('pointerup', off);
+    el.addEventListener('pointercancel', off);
+    el.addEventListener('lostpointercapture', off);
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  };
+
   return {
+    bind,
+    // True while the steer this tick comes from touch alone (no key or pad held): phones
+    // turn 20% slower (owner, 2026-11-11), so the game drops every fifth turning tick.
+    touchSteer: () => !keys.left && !keys.right && !pad.left && !pad.right && (held.left || held.right),
     // Steer for the next tick: -1 left, 1 right, 0 straight.
     sample() {
       const l = held.left || pulse.left, r = held.right || pulse.right;
