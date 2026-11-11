@@ -627,15 +627,45 @@ function status(text) {
   hud.status.hidden = !text;
 }
 
-// The direction a river has actually been going: from a point ~400 m back
-// along its path to the head. Falls back to its heading at the start.
-function courseOf(r, hx, hz) {
+// The direction a river has been going: from a point `back` metres behind the head, measured
+// ALONG its path, to the head. (A straight-line search found a point from before the turn in a
+// hairpin, so a new shot could open facing the wrong way.) Falls back to its heading at the start.
+function courseOf(r, hx, hz, back = 400) {
   const p = r.path;
+  let run = 0, px = hx, pz = hz;
   for (let i = p.length - 1; i >= 0; i--) {
-    const dx = hx - p[i].x, dz = hz - p[i].z, d = Math.hypot(dx, dz);
-    if (d >= 400) return new THREE.Vector2(dx / d, dz / d);
+    run += Math.hypot(px - p[i].x, pz - p[i].z); px = p[i].x; pz = p[i].z;
+    if (run < back) continue;
+    const dx = hx - px, dz = hz - pz, d = Math.hypot(dx, dz);
+    if (d > 1) return new THREE.Vector2(dx / d, dz / d);
+    break;
   }
   return new THREE.Vector2(r.dx, r.dz);
+}
+
+// Where the watched river's head has been, one sample per sim tick ({ t, x, z, run }, run = metres
+// travelled so far): the chase camera reads the water's actual MOTION from it. The head's heading
+// won't do: water never climbs, so a river steered uphill faces one way and flows another (60-100
+// degrees apart after a turn, measured), and a view behind the heading looks away from where you go.
+const camTrail = [];
+function trackHead(r, tick, reset) {
+  let last = camTrail[camTrail.length - 1];
+  if (reset || (last && tick < last.t)) { camTrail.length = 0; last = undefined; }
+  if (last && tick === last.t) return;
+  camTrail.push({ t: tick, x: r.x, z: r.z, run: last ? last.run + Math.hypot(r.x - last.x, r.z - last.z) : 0 });
+  while (camTrail[0].t < tick - 3 * TICK_HZ) camTrail.shift();
+}
+// The way the head moved over the last `ticks` ticks, or null when that says nothing: under half
+// a second of trail (a new shot), or water going nowhere (it ended up under 60% as far as it
+// travelled, or within 20 m: churning in a hollow, turning round). Null holds the view still.
+function motionOver(ticks) {
+  const n = camTrail.length, last = camTrail[n - 1];
+  if (!last) return null;
+  let i = n - 1;
+  while (i > 0 && last.t - camTrail[i].t < ticks) i--;
+  const q = camTrail[i], dx = last.x - q.x, dz = last.z - q.z, net = Math.hypot(dx, dz);
+  if (last.t - q.t < TICK_HZ / 2 || net < 20 || net < 0.6 * (last.run - q.run)) return null;
+  return new THREE.Vector2(dx / net, dz / net);
 }
 
 const camTarget = new THREE.Vector3();
@@ -1815,10 +1845,11 @@ renderer.setAnimationLoop(() => {
     if (jolt > 0 && settings.shake) { camera.position.x += (Math.random() - 0.5) * 90 * jolt; camera.position.y += (Math.random() - 0.5) * 60 * jolt; }
     if (Math.abs(camera.fov - baseFov) > 0.05) { camera.fov += (baseFov - camera.fov) * k; camera.updateProjectionMatrix(); }
   } else {
-    // Chase camera. It must never fight the player: it follows the river's
-    // course over the last few hundred metres (not the head's tick-to-tick heading,
-    // which gravity tugs constantly), ignores small changes, turns slowly, and
-    // only its height reacts quickly (up fast, down slowly, so it doesn't bob).
+    // Chase camera: behind the water's MOTION, and it must never fight the player (Brain flood#E13).
+    // It follows where the head has actually gone over the last 2 s (not its heading, which the
+    // player and gravity tug every tick, and which the water often isn't flowing along at all),
+    // ignores small changes, turns at a capped rate, and only its height reacts quickly (up fast,
+    // down slowly, so it doesn't bob).
     // Right stick swings the camera round; let go and it eases back behind.
     // Right stick (once landed): sideways looks up to 30 degrees left or right
     // and drifts back to centre when let go; up raises the camera and tilts it
@@ -1827,22 +1858,37 @@ renderer.setAnimationLoop(() => {
     const yawWant = look * 0.52;
     camYaw += (yawWant - camYaw) * (1 - Math.exp(-frameDt * (look ? 5 : 2.5)));
     camRise += (riseIn - camRise) * (1 - Math.exp(-frameDt * (riseIn > camRise ? 4 : 3)));
-    const course = courseOf(focus, fx, fz);
-    if (cut) { camDir.set(course.x, course.y).normalize(); camYaw = 0; } // a new shot starts behind the river
-    const ang = Math.atan2(camDir.x * course.y - camDir.y * course.x, camDir.x * course.x + camDir.y * course.y);
     // Falling, the camera swings with every turn so aiming reads at once.
     const falling = !!focus.dropping;
-    const DEAD = falling ? 0 : 0.21; // ~12 degrees on the ground
-    if (Math.abs(ang) > DEAD) {
-      const turn = (Math.abs(ang) - DEAD) * Math.sign(ang) * (1 - Math.exp(-frameDt * (falling ? 6 : 1.2)));
-      camDir.rotateAround(new THREE.Vector2(0, 0), turn).normalize();
-    }
+    // Reaching the sea, it rises high over the surf, as in the trailer's ending.
+    const done = !!focus.finished;
+    trackHead(focus, world.tick, cut);
+    if (cut) { const course = courseOf(focus, fx, fz, done ? 400 : 150); camDir.set(course.x, course.y).normalize(); camYaw = 0; } // a new shot starts behind the river
+    const off = (v) => (v ? Math.atan2(camDir.x * v.y - camDir.y * v.x, camDir.x * v.x + camDir.y * v.y) : 0);
+    // Two readings of the motion. Over 2 s is the course: a wiggle on the stick (left, right, left)
+    // cancels out inside it, so the view doesn't swing under the player's own corrections (E13's
+    // test: alternate left/right every second; the old instantaneous-heading camera reversed 24
+    // times in 20 s). Over 1 s is where the water is going right now.
+    const ang = off(motionOver(2 * TICK_HZ)), lag = off(motionOver(TICK_HZ));
+    // Never faster than 55 deg/s: under the 60 deg/s where view yaw sickens (Brain MOTION/camera
+    // kernel "budget-the-view-yaw-rate"), and as fast as a phone turns a starting river (0.8 x 69
+    // deg/s; Brain flood#E148: match the camera's turn limit to the thing it follows).
+    const CAP = 0.96 * frameDt;
+    const DEAD = falling ? 0 : 0.14; // ~8 degrees on the ground (was 12, with a 1.2/s ease and no limit: the view sat 76-90 degrees off the motion 4 s after a held turn)
+    const LIMIT = 0.61; // ~35 degrees
+    let turn = 0;
+    // Easing alone lets the subject leave the frame (Brain sandbox-combined-brain-viz-growth#E14),
+    // so it is paired with a limit: more than 35 degrees off the water's present motion, the view
+    // turns back at the full rate, not waiting for the 2 s course to catch up. The limit is against
+    // the motion, never the heading, and is itself rate-capped: the water can swing 120 degrees in
+    // a few ticks when it gives up a climb, and snapping the view after it would be a whip-pan.
+    if (Math.abs(lag) > LIMIT) turn = Math.sign(lag) * Math.min(Math.abs(lag) - LIMIT, CAP);
+    else if (Math.abs(ang) > DEAD) turn = Math.sign(ang) * Math.min((Math.abs(ang) - DEAD) * (1 - Math.exp(-frameDt * (falling ? 6 : 4))), CAP);
+    if (turn) camDir.rotateAround(new THREE.Vector2(0, 0), turn).normalize();
     const view = camDir.clone().rotateAround(new THREE.Vector2(0, 0), camYaw);
     // Low and close behind the surge, like the trailer; it pulls back as the
     // river grows, and sits high while falling.
     const sz = focus.size ?? 1;
-    // Reaching the sea, it rises high over the surf, as in the trailer's ending.
-    const done = !!focus.finished;
     // Pulls back only a little as the river grows, so a big river fills more
     // of the screen and the ground rushes past faster.
     // On the ground it sits low (about 10 degrees down) so the land recedes to the horizon.
