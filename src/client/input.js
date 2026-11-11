@@ -72,13 +72,24 @@ export function createInput(target) {
     else if (BACK.has(e.code)) keys.back = false;
     sync();
   });
+  addEventListener('blur', () => { swipe = null; });
   addEventListener('blur', () => { keys.left = keys.right = keys.fwd = keys.back = btn.left = btn.right = btn.fwd = btn.back = pad.left = pad.right = false; pad.fwd = pad.look = 0; pointers.clear(); sync(); });
 
   // Touch / mouse: hold the left or right half of the screen.
   // A drag stick too: where the first finger went down and where it is now.
   // The game uses it while falling (aim where you drag); halves steer on the ground.
   let stick = null; // { id, x0, y0, x, y }
+  // A phone's finger on open screen (not a button) is the right stick (owner, 2026-11-11):
+  // drag sideways looks left / right, drag up pulls the camera back for a view ahead; let go
+  // and it eases back behind the river. It never steers: the ◀ ▶ buttons do that.
+  let swipe = null; // { id, x0, y0, x, y }
+  const SWIPE = 110; // pixels of drag for a full stick
   target.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'touch') {
+      actions.push('tap');
+      if (!swipe) swipe = { id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY };
+      return;
+    }
     const side = e.clientX < innerWidth / 2 ? 'left' : 'right';
     pointers.set(e.pointerId, side);
     press(side);
@@ -87,9 +98,11 @@ export function createInput(target) {
     if (!stick && e.pointerType === 'mouse') stick = { id: e.pointerId, x0: e.clientX, y0: e.clientY, x: e.clientX, y: e.clientY };
   });
   target.addEventListener('pointermove', (e) => {
+    if (swipe && e.pointerId === swipe.id) { swipe.x = e.clientX; swipe.y = e.clientY; }
     if (stick && e.pointerId === stick.id) { stick.x = e.clientX; stick.y = e.clientY; }
   });
   const up = (e) => {
+    if (swipe && e.pointerId === swipe.id) swipe = null;
     pointers.delete(e.pointerId);
     if (stick && e.pointerId === stick.id) stick = null;
     sync();
@@ -143,8 +156,16 @@ export function createInput(target) {
     pressSurge,
     pressSkill,
     // Right stick sideways, -1..1: look left / right (once landed).
-    look: () => pad.look,
-    rise: () => pad.rise ?? 0,
+    look: () => {
+      if (!swipe) return pad.look;
+      const v = (swipe.x - swipe.x0) / SWIPE;
+      return Math.abs(v) < 0.15 ? 0 : Math.max(-1, Math.min(1, v));
+    },
+    rise: () => {
+      if (!swipe) return pad.rise ?? 0;
+      const v = (swipe.y0 - swipe.y) / SWIPE; // up is +
+      return v < 0.15 ? 0 : Math.min(1, v);
+    },
     takeActions() { return actions.splice(0); },
     // The drag stick: offset from where the finger went down, in screen pixels,
     // with its start point; null while no finger (or mouse button) is down.

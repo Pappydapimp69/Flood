@@ -1394,7 +1394,7 @@ const key = (pad, kb, touch) => (lowPower ? touch : padSeen ? pad : kb);
 const COACH = [
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the ◀ ▶ buttons')}</b>`, pass: (c) => c.steered > 8 },
   { text: () => 'The <b>white ribbon</b> shows where your water will go', pass: (c) => c.secs > 5 },
-  { text: () => `Only the <b>gold beach</b> ends the race${key(' · <b>right stick</b> looks around, <b>up</b> for a view ahead', '', '')}`, pass: (c) => c.secs > 8 },
+  { text: () => `Only the <b>gold beach</b> ends the race${key(' · <b>right stick</b> looks around, <b>up</b> for a view ahead', '', ' · <b>drag the screen</b> to look around, <b>up</b> for a view ahead')}`, pass: (c) => c.secs > 8 },
   { text: () => 'Flow into <b>lakes</b> and out over their bank: their water feeds you', pass: (c) => river.lakes > 0 || c.secs > 14 },
   { text: () => `A rise in the way? <b>GOUGE</b> (${key('A', 'Space', 'tap')}) climbs over it`, pass: (c) => c.gouged || c.secs > 16 },
   { text: () => `Slow on the flat? <b>SURGE</b> (${key('RB', 'Q', 'tap')}) bursts ahead`, pass: (c) => c.surged || c.secs > 16 },
@@ -1960,7 +1960,7 @@ let splashLeftAt = -1e9;
 function leaveSplash() {
   // Nothing goes through until the studio card has faded all the way out (owner, 2026-11-11).
   if (splash.hidden || !studio.hidden) return;
-  goLandscape(); // a press is the gesture fullscreen needs
+  goLandscape(); // a key or mouse press is the gesture fullscreen needs (a finger only on lift: the menu taps retry)
   splash.hidden = true;
   splashLeftAt = performance.now();
   audio.music();
@@ -1993,9 +1993,9 @@ addEventListener('keydown', (e) => {
 });
 const fresh = () => performance.now() - splashLeftAt < 500; // the press that left the splash
 document.getElementById('play-solo').onclick = () => {
-  if (fresh()) return; tutorial = false; hud.menu.hidden = true; newRun(); };
+  if (fresh()) return; goLandscape(); tutorial = false; hud.menu.hidden = true; newRun(); };
 document.getElementById('play-tutorial').onclick = () => {
-  if (fresh()) return; tutorial = true; hud.menu.hidden = true; newTutorial(); };
+  if (fresh()) return; goLandscape(); tutorial = true; hud.menu.hidden = true; newTutorial(); };
 document.getElementById('play-online').onclick = () => { hud.menu.hidden = true; goOnline(pickName()); };
 if (params.has('online')) { hud.menu.hidden = true; goOnline(params.get('name') ?? ''); }
 else if (params.has('seed') || params.has('solo') || params.has('bots')) { hud.menu.hidden = true; newRun(); }
@@ -2018,5 +2018,6 @@ Object.defineProperties(dbg, {
   river: { get: () => river },
   focus: { get: () => focus },
   camYaw: { get: () => camYaw },
+  camRise: { get: () => camRise },
   cam: { get: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z, tx: camTarget.x, ty: camTarget.y, tz: camTarget.z, fov: camera.fov }) },
 });
