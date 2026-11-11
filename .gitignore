@@ -3,3 +3,5 @@
 node_modules/
 *.png
 !docs/**/*.png
+# Brain hooks hold this machine's paths
+.claude/settings.local.json
