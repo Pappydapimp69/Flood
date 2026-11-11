@@ -75,23 +75,22 @@ await check('keyboard: left and right turn opposite ways', async () => {
 
 // Phones play in landscape (an upright phone gets the "turn your phone" card), so touch checks use one.
 const PHONE = { viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true };
-await check('touch: holding each half of the screen steers', async () => {
+await check('touch: dragging the open screen looks around like the right stick, and never steers', async () => {
   const ctx = await browser.newContext(PHONE);
   const page = await ctx.newPage();
   await page.goto(base);
-  // Touch pointer events only (no keyboard), dispatched as a held finger.
-  const hold = (x) => page.evaluate((x) => {
-    const c = document.querySelector('canvas');
-    c.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 7, pointerType: 'touch', clientX: x, clientY: 200, bubbles: true }));
-  }, x);
-  const release = () => page.evaluate(() => {
-    document.querySelector('canvas').dispatchEvent(new PointerEvent('pointerup', { pointerId: 7, pointerType: 'touch', bubbles: true }));
-  });
-  const left = await steerRun(page, () => hold(40));
-  await release();
-  const right = await steerRun(page, () => hold(800));
-  await release();
-  if (!(left > right + 0.3)) throw new Error(`left ${left.toFixed(2)} vs right ${right.toFixed(2)}`);
+  await until(page, (s) => s.ready && s.tick > 5, 'ready');
+  const fire = (type, x, y) => page.evaluate(([type, x, y]) => document.querySelector('canvas').dispatchEvent(
+    new PointerEvent(type, { pointerId: 7, pointerType: 'touch', clientX: x, clientY: y, bubbles: true })), [type, x, y]);
+  await page.evaluate(() => { __flood.steers.length = 0; });
+  await fire('pointerdown', 300, 200); await fire('pointermove', 440, 200); // drag right: look right
+  await page.waitForFunction(() => __flood.camYaw > 0.3, null, { timeout: 20000 });
+  await fire('pointermove', 440, 60); // and up: pull back for a view ahead
+  await page.waitForFunction(() => __flood.camRise > 0.5, null, { timeout: 20000 });
+  const steered = await page.evaluate(() => __flood.steers.filter((v) => v !== 0).length);
+  if (steered) throw new Error(`a drag steered the river on ${steered} ticks`);
+  await fire('pointerup', 440, 60); // let go: back behind the river
+  await page.waitForFunction(() => Math.abs(__flood.camYaw) < 0.1 && __flood.camRise < 0.15, null, { timeout: 20000 });
   if (shotDir) await page.screenshot({ path: `${shotDir}/play-phone.png` });
   await ctx.close();
 });
