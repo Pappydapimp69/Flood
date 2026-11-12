@@ -362,3 +362,13 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
 - Tests: the forest test checks the tree rule itself (a small river made fast by a slope breaks through,
   by design); the online test decodes frames (a falling steer travels with the glide throttle).
 - Open: the river leading 60 s after landing wins 12-13 of 16 races. That is speed parity, not the map.
+
+## Skill gap benchmark (2026-11-12)
+- `npm run gap` (`tools/skill-gap.mjs`): one steered river among eleven unsteered, same island and seat,
+  steered three ways. 10 islands x 2 seats, no drop: unsteered mean place 5.9 (finished 6 of 20); the bot
+  2.2 (finished 20, won 5); the look-ahead planner (`src/shared/lookahead.js`, steering only) 1.5 (won 11).
+  Steering decides the race; the bot gives away about 10% of the time to the planner.
+- Among 11 bots with the drop (6 islands) the planner placed 1, 2, 2, 3, 3 and once did not finish:
+  a strong rival, not an unbeatable one. `?rival=look` puts it in a solo race as LOOKAHEAD (worker).
+- Open: an unsteered river won 3 of 20 from its seat alone, and beat the planner in 9 of 20.
+- Open: the gamepad play check fails on main ("A did not leave the splash"), before this change.

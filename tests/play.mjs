@@ -433,6 +433,19 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   await ctx.close();
 });
 
+await check('?rival=look: one rival is steered by the look-ahead planner in a worker, and the race runs on', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
+  await page.goto(`${base}&rival=look`);
+  await until(page, (s) => s.ready, 'ready');
+  const a = await until(page, (s) => s.tick > 20, 'tick 20');
+  for (let i = 0; i < 600 && !(await page.evaluate(() => __flood.planner?.replies >= 2)); i++) await page.waitForTimeout(100);
+  const p = await page.evaluate(() => ({ replies: __flood.planner?.replies, steer: __flood.planner?.steer, error: __flood.error }));
+  if (!(p.replies >= 2) || ![-1, 0, 1].includes(p.steer) || p.error) throw new Error(`planner never answered: ${JSON.stringify(p)}`);
+  const b = await state(page);
+  if (!(b.tick > a.tick)) throw new Error('the race stopped while it thought');
+  await page.close();
+});
+
 await browser.close();
 server.close();
 if (fails.length) { console.error(`${fails.length} play check(s) failed`); process.exit(1); }

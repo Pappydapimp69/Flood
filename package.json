@@ -11,7 +11,8 @@
     "smoke": "node tests/smoke.mjs",
     "play": "node tests/play.mjs",
     "online": "node tests/online.mjs",
-    "alpha": "node tests/alpha.mjs"
+    "alpha": "node tests/alpha.mjs",
+    "gap": "node tools/skill-gap.mjs 4 5 8 11 43 99 126 314 780 2024"
   },
   "dependencies": {
     "ws": "8.22.0"

@@ -587,6 +587,39 @@ function newRun() {
   const { seed, world: rolled } = rollIsland(want, all.length);
   beginRace(seed, all, PLAYER, rolled);
   bots = world.rivers.filter((r) => r !== river).map((r) => createBot(world, r));
+  startPlanner();
+}
+
+// ?rival=look: one rival is steered by the look-ahead planner (tools/skill-gap.mjs's
+// strong agent), thinking in a worker once a second from a copy of the world. Its bot
+// still flies the drop and presses the skills; only the steering is the planner's.
+let planner = null, raceNo = 0;
+function startPlanner() {
+  raceNo++;
+  if (planner) planner.worker.terminate();
+  planner = null;
+  if (params.get('rival') !== 'look' || !bots.length) return;
+  const worker = new Worker(new URL('./lookWorker.js', import.meta.url), { type: 'module' });
+  const p = planner = { river: bots[0].river, worker, busy: false, next: 0, steer: 0, until: 0, replies: 0 };
+  names[p.river.id] = 'LOOKAHEAD';
+  worker.onmessage = (e) => {
+    p.busy = false;
+    if (e.data.race !== raceNo || planner !== p) return;
+    p.steer = e.data.steer; p.until = world.tick + TICK_HZ; p.replies++;
+  };
+  worker.onerror = () => { if (planner === p) planner = null; }; // no worker here: it stays an ordinary bot
+  dbg.planner = p;
+}
+
+function planRival(inputs) {
+  const p = planner, r = p.river;
+  if (!isRacing(r) || r.dropping) return;
+  if (!p.busy && world.tick >= p.next) {
+    p.busy = true; p.next = world.tick + TICK_HZ;
+    try { p.worker.postMessage({ world, id: r.id, race: raceNo }); } catch { planner = null; return; }
+  }
+  const b = inputs.get(r.id), s = world.tick < p.until ? p.steer : 0;
+  inputs.set(r.id, b && typeof b === 'object' ? { ...b, s } : s);
 }
 
 let everOpen = false;
@@ -1073,6 +1106,7 @@ function soloTick() {
   // Bots decide from the same start-of-tick state, then everyone steps together.
   const inputs = new Map([[PLAYER, sampleSteer()]]);
   for (const b of bots) inputs.set(b.river.id, dbg.botsOff ? 0 : botSteer(world, b));
+  if (planner) planRival(inputs);
   advance(inputs);
   if (raceIsOver(world)) raceOver = true;
 }
