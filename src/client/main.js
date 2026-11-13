@@ -228,7 +228,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (falling: left / right turns, up dives, down floats) · right stick up / down: falling, the same; once landed it looks around, up for a raised view · A: gouge (select / race again in menus) · RB: surge · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (falling: left / right turns, up dives, down dashes) · right stick up / down: falling, the same; once landed it looks around, up for a raised view · A: gouge (select / race again in menus) · RB: surge · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -978,7 +978,7 @@ function menuActions() {
 }
 const pendingActions = [];
 
-// Phones: steer with ◀ ▶ under the left thumb; while falling, ▲ FLOAT / ▼ DIVE under the right.
+// Phones: steer with ◀ ▶ under the left thumb; while falling, ▲ DASH / ▼ DIVE under the right.
 // On a button an arrow reads as the way you go, so phones show ▼ for dive (owner, 2026-11-11);
 // keys and pads keep the plane stick's push-forward-to-dive.
 const touchUI = lowPower;
@@ -1048,15 +1048,15 @@ function handleActions() {
 
 // Falling, up and down mean the same on every input (owner, 2026-11-11): keys ↑ ↓, either
 // stick or the D-pad up / down, a drag up / down. Up dives: full throttle, falling faster.
-// Down floats: no throttle, falling slower. Neither: cruise at full glide like the bots
+// Down dashes: a burst across the ground, then a recharge. Neither: cruise at full glide like the bots
 // (players cruised at half and were passed and out-landed by every bot, owner 2026-11-09).
 function dropPitch(aim = null) {
   if (!river?.dropping) return { f: 0, g: 0 };
   const p = Math.sign(aim ? aim.f : dbg.forceFwd ?? (input.forward() + input.glide()));
-  return { f: p, g: p === 0 ? 1 : p };
+  return { f: p, g: 1 }; // always full glide: down no longer slows it (float is gone)
 }
 
-// This tick's input: steer, plus dive / float while falling.
+// This tick's input: steer, plus dive / dash while falling.
 let touchTurn = 0;
 function sampleSteer() {
   let steer = dbg.forceSteer ?? input.sample();
@@ -1088,7 +1088,7 @@ function showStick() {
   stickEl.classList.toggle('far', len > STICK_FAR);
 }
 
-// The drag stick on a phone: left / right turns, up dives, down floats (see dropPitch),
+// The drag stick on a phone: left / right turns, up dives, down dashes (see dropPitch),
 // the same as the keys and the pad; let go and it cruises.
 const STICK_MIN = 18, STICK_FAR = 70; // pixels
 function dragAim() {
@@ -1468,9 +1468,9 @@ const COACH = [
 ];
 const TUTORIAL = [
   { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Turn your falling drop with <b>◀ ▶</b>')}`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `${key('<b>Stick ↑</b> dives, <b>↓</b> floats', '', '<b>▼ DIVE</b> to fall faster, <b>▲ FLOAT</b> to stay up')}`, pass: (c) => c.glided || lowPower || !padSeen },
-  { drop: true, text: () => (lowPower ? '<b>▼ DIVE</b> descends faster, <b>▲ FLOAT</b> slows the descent, like flaps (clouds sit at different heights)'
-    : `<b>${key('Right stick ↑ ↓', 'W / S', '')}</b>: <b>↑</b> descends faster, <b>↓</b> slows the descent, like flaps (clouds sit at different heights)`), pass: (c) => c.fell },
+  { drop: true, text: () => `${key('<b>Stick ↑</b> dives, <b>↓</b> dashes', '', '<b>▼ DIVE</b> to fall faster, <b>▲ DASH</b> for a burst of speed')}`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => (lowPower ? '<b>▼ DIVE</b> descends faster to low clouds, <b>▲ DASH</b> bursts ahead, then recharges'
+    : `<b>${key('Right stick ↑ ↓', 'W / S', '')}</b>: <b>↑</b> descends faster to low clouds, <b>↓</b> dashes: a burst ahead, then a recharge`), pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the ◀ ▶ buttons')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
   { text: () => 'Follow the <b>gold beacons</b> down the course', pass: (c) => c.stage >= 2 },
@@ -1984,7 +1984,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive to low clouds · ▲ float: stay up for clouds' : '← → steer · ↑ dive to low clouds · ↓ float: stay up for clouds')
+  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive to low clouds · ▲ dash' : '← → steer · ↑ dive to low clouds · ↓ dash') + (me.dashT > 0 ? ' · DASHING' : world.tick >= (me.dashAt ?? 0) ? ' · dash ready' : ` · dash in ${Math.ceil((me.dashAt - world.tick) / TICK_HZ)} s`)
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`

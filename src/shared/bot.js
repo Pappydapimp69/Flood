@@ -306,14 +306,15 @@ function botGlide(world, bot) {
   }
   // Diving onto it from above closes the gap (a dive is faster): a drop flying straight ahead is still catchable.
   // Under it: float up to its height first (out of bump height, a chase never lands).
-  if (prey) return { s: turnTo(r, prey.x, prey.z), f: r.alt > prey.alt + 40 ? 1 : r.alt < prey.alt - TUNE.bumpDepth * 0.6 ? -1 : 0, g: 1 };
+  // (Down is Dash now: it dives onto a drop below it, and dashes after one that is getting away.)
+  if (prey) return { s: turnTo(r, prey.x, prey.z), f: r.alt > prey.alt + 40 ? 1 : (prey.x - r.x) ** 2 + (prey.z - r.z) ** 2 > 500 * 500 ? -1 : 0, g: 1 };
   // A drop it just let go of, still close by: peel away from it (backing off means leaving, not tailgating).
   for (const o of world.rivers) {
     const until = spared.get(o.id) ?? -1; // peel for the first peelTicks of the spare
     if (o === r || !o.dropping || !(now < until && now < until - TUNE_BOT.spare + TUNE_BOT.peelTicks) || Math.abs(o.alt - r.alt) > TUNE.bumpDepth * 2) continue;
     if ((o.x - r.x) ** 2 + (o.z - r.z) ** 2 > TUNE_BOT.peel ** 2) continue;
     const away = turnTo(r, 2 * r.x - o.x, 2 * r.z - o.z);
-    return { s: away, f: r.alt >= o.alt ? -1 : 1, g: 1 }; // and open the height gap too
+    return { s: away, f: r.alt >= o.alt ? -1 : 1, g: 1 }; // dash clear of it, or dive under it
   }
   // A rain cloud ahead it can still reach: go for it (crowds and all: that's where the fight is).
   let cloud = null, cd = Infinity, fast = false;
@@ -330,14 +331,16 @@ function botGlide(world, bot) {
   }
   if (cloud) {
     // Height too: dive or float toward the cloud's.
-    const f = r.alt > cloud.alt + TUNE.cloudDepth * 0.5 ? 1 : r.alt < cloud.alt - TUNE.cloudDepth * 0.5 ? -1 : 0;
+    const f = r.alt > cloud.alt + TUNE.cloudDepth * 0.5 ? 1 : fast && cd > 1500 ? -1 : 0; // dive to its height; dash for a far one
     return { s: turnTo(r, cloud.x, cloud.z), f, g: fast ? 1 : 0 };
   }
   // Nothing to chase: fly for its own place across the line, fanning out as the cone widens,
   // stick all the way (as fast as a player can: a bot left at the base glide falls behind the pack).
   const lane = descentLane(world), u = r.x * ax + r.z * az + 1500;
   const want = lane.c + bot.slot * laneHalf(lane, lane.uLine - u);
-  return { s: turnTo(r, ax * u - az * want, az * u + ax * want), f: 0, g: 1 };
+  // Cruising, it lets the dash sit ready for one more cooldown before using it (half as often as it
+  // could): a player who dashes keeps up, one who never does is not left far behind.
+  return { s: turnTo(r, ax * u - az * want, az * u + ax * want), f: now >= (r.dashAt ?? 0) + TUNE.dashCool ? -1 : 0, g: 1 };
 }
 const turnTo = (r, x, z) => {
   const d = Math.hypot(x - r.x, z - r.z) || 1, cross = r.dx * (z - r.z) - r.dz * (x - r.x);

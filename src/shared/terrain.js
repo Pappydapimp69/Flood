@@ -68,6 +68,20 @@ function sectionsOf(seed) {
   return kinds.map((kind, i) => ({ kind, t0: SECTION.from + i * SECTION.len }));
 }
 export const sectionsOfExport = (seed) => sectionsOf(seed);
+// Spines (owner, 2026-11-12: ridges and canyons must shape the course): a wall of rock running down
+// the slope through the switchback and the terraces, taller than any head or Gouge passes, so the
+// course forks round its prow into two valleys and a river commits to one for the whole stretch.
+// It stands off-centre and slants: one side is a narrow canyon, the other a wide valley.
+function spinesOf(seed) {
+  if (!ISLAND.spines) return [];
+  const r = stream(seed, 'spines'), out = [];
+  for (const sec of sectionsOf(seed)) {
+    if (sec.kind !== 'switchback' && sec.kind !== 'terraces') continue; // the slalom's gates and the gorge are squeezes already
+    const side = r() < 0.5 ? -1 : 1, v = side * (SPINE.off[0] + (SPINE.off[1] - SPINE.off[0]) * r()), slant = (r() * 2 - 1) * SPINE.slant;
+    if (out.length < ISLAND.spines) out.push({ t0: sec.t0 + 0.01, len: SECTION.len - 0.02, v, slant });
+  }
+  return out;
+}
 const slalomT = (seed, i) => { const sl = sectionsOf(seed).find((x) => x.kind === 'slalom'); return sl.t0 + SECTION.len * (i + 0.5) / GATES(); };
 const fract = (x) => x - Math.floor(x);
 const windowAt = (t, t0) => { const u = clamp01((t - t0) / SECTION.len); return 16 * u * u * (1 - u) * (1 - u); }; // 0 at the ends, 1 mid
@@ -99,6 +113,7 @@ function shapeOf(seed) {
     // at the gap early keeps its speed, and everyone squeezes through the
     // same notch.
     sections: sectionsOf(seed),
+    spines: spinesOf(seed),
     gates: Array.from({ length: GATES() }, (_, i) => ({
       t: ISLAND.mixed ? slalomT(seed, i) : 0.4 + (0.5 * (i + 0.3 + 0.4 * r())) / GATES(),
       v: (i % 2 ? 1 : -1) * (0.4 + 0.25 * r()), // a slalom: gaps 0.4-0.65 out to alternate sides (was 0.2-0.5; 0.5-0.7 left a river facing a cliff on one island; owner 2026-11-09)
@@ -208,6 +223,19 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
     const q = (du * du + dv * dv) / (L.rad * L.rad);
     if (q < 1) h -= (40 + 2200 * L.rad) * (1 - q) * (1 - q);
   }
+  // Spines: on top of everything (a lake bowl under one never notches it), steep-sided,
+  // rising to full height over the first and last share of their run (the prow and the stern).
+  for (const P of S.spines ?? []) {
+    const q = (t - P.t0) / P.len;
+    if (q <= 0 || q >= 1) continue;
+    const c = P.v + P.slant * (q - 0.5), d = (sv - c) / SPINE.thick;
+    // The wide valley is dammed part-way down, from the spine to the corridor wall: the water behind
+    // it is a long lake (grow there, and cut your way out), while the canyon on the other side runs clear.
+    const dq = (q - SPINE.damAt) * P.len * (2 * S.long) / SPINE.damThick;
+    if (SPINE.dam && dq > -1 && dq < 1 && (sv - c) * Math.sign(P.v) < 0) h += SPINE.dam * (1 - dq * dq) * (0.9 + 0.2 * peaks);
+    if (d <= -1 || d >= 1) continue;
+    h += SPINE.height * (1 - d * d * d * d) * Math.min(1, q / SPINE.prow, (1 - q) / SPINE.prow) * (0.85 + 0.3 * peaks);
+  }
   return h;
 }
 
@@ -216,13 +244,19 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
 // Island shape settings (exported so tuning passes can try others; defaults keep every island as it was).
 // 2026-11-02 map pass: more lakes and a wider, winding corridor. wide 1.5 or warp 2 put
 // a fifth of the start cells nearer another summit than their own; 1.3 / 1.5 keeps all of them.
-export const ISLAND = { mixed: true, lakes: 20, gates: 5, // mixed: the four-section course (4 test races: finishes 8.3 -> 10.8, knockouts 3.25 -> 1.25)
+export const ISLAND = { mixed: true, lakes: 20, gates: 5, spines: 2, // spines: wall ridges that fork the course (0: none); mixed: the four-section course (4 test races: finishes 8.3 -> 10.8, knockouts 3.25 -> 1.25)
   wide: 1.3, taper: 2, warp: 1.5, trough: 200 };
 // trough: metres the floor rises toward the walls (was 60). 200 pulls routes toward the centre line so rivals
 // cross each other's channels more: contacts +17% on two fresh sets of islands (12 and 16 races), finishes held.
 const LAKES = () => ISLAND.lakes; // lake basins down the slope
 const GATES = () => ISLAND.gates; // rock gates across the lower slope
 const GATE = { height: 45, thick: 0.007, gap: 0.12, spread: 0.06 };
+// height: metres (the tallest boulder is 220, a Gouge lifts a head 80). thick: half-width, as a share of the
+// corridor's. off: how far off the centre line it stands. slant: how far it drifts across over its run. prow: share of its run it rises over.
+// dam: metres (under a Gouge's 80, over any plain head), damAt: how far down the spine's run, damThick: half-width down the slope.
+const SPINE = { height: 300, thick: 0.05, off: [0.12, 0.3], slant: 0.2, prow: 0.1, dam: 0, damAt: 0.65, damThick: 0.006 };
+// dam is off: at 60 it floods the wide valley into one lake of 2,000 to 3,000 cells (10M L), and rivers skate across it,
+// so unsteered rivers finished as often and as fast as without it (61 of 120, median 254 s vs 262 s; 2026-11-12).
 
 const SUMMIT = { top: 1.2, grade: 7500, at: 0.1, room: 0.06 };
 // The land behind the start line (scenery): how far back it runs (in slope lengths) and how much wider it spreads.

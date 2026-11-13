@@ -372,3 +372,19 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
   a strong rival, not an unbeatable one. `?rival=look` puts it in a solo race as LOOKAHEAD (worker).
 - Open: an unsteered river won 3 of 20 from its seat alone, and beat the planner in 9 of 20.
 - Open: the gamepad play check fails on main ("A did not leave the splash"), before this change.
+
+## Dash, and wall ridges (2026-11-12, owner: float becomes dash; ridges and canyons must shape the course)
+- Descent: down is Dash, not float. Twice the glide speed for 1 s, ready again 5 s after it fired; nothing slows
+  the fall any more. Rain clouds sit at or under a steady fall (nobody can stay up for a higher one). Bots dash
+  after a drop that is getting away, clear of one they let go, for a far cloud, and half as often as they could when cruising.
+- Terrain: two spines per island (`ISLAND.spines`), walls 300 m tall and about 5 km long through the switchback
+  and the terraces, off-centre and slanted, so the course forks into a narrow canyon and a wide valley.
+- Measured (`npm run gap` on 6 islands x 2 seats, and 120 unsteered rivers on 10 islands): the spines changed no
+  result. Unsteered rivers finished 61 of 120 (58 before), median 262 s (258); the planner and the bot kept their
+  places and times. A dam across the wide valley (`SPINE.dam`, off) changed nothing either: its lake is skated across.
+- Why: the rules make every obstacle soft. Blocked water is walked round along the fill route (unsteered rivers
+  spend 36% of their racing time on it), lakes cost no time, and Gouge lifts a head 80 m. A wall along the flow
+  with the same valley either side is not a decision.
+- Open: steering is worth a factor of two in time (planner about 135 s, unsteered about 260 s) yet feels optional.
+  Next to try: hitting rock stops the head dead and the route out only starts after a wait, so a wall costs
+  seconds unless it is steered round.

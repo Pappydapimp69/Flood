@@ -180,8 +180,8 @@ test('drop: a drop lands right where it crosses the start line: no jump, steerin
     const reach = w.toBeach[cellIndex(w.terrain, at[r.id].x, at[r.id].z)];
     assert.ok(Math.abs(reach - line.L) <= line.L * 0.01, `${r.id} landed ${(reach - line.L) | 0} m off the line's distance`);
   }
-  // Diving trades height for speed: floating (b) lands later than steady (c). Steering moves the landing.
-  assert.ok(at.b.tick > at.c.tick + 20 * 5, `floating ${at.b.tick} vs steady ${at.c.tick}`);
+  // Down is Dash (it was float): dashing (b) lands sooner than steady (c). Steering moves the landing.
+  assert.ok(at.b.tick < at.c.tick - 10, `dashing ${at.b.tick} vs steady ${at.c.tick}`);
   assert.ok(Math.hypot(at.a.x - at.c.x, at.a.z - at.c.z) > 1000, 'steering barely moved the landing');
 });
 
