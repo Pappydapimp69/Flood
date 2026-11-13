@@ -130,9 +130,27 @@ export function createInput(target) {
     el.addEventListener('lostpointercapture', off);
     el.addEventListener('contextmenu', (e) => e.preventDefault());
   };
+  // Wire an on-screen button to a toggle: each tap turns the control on or off (owner, 2026-11-13:
+  // holding DIVE tied up the right thumb that also needs DASH).
+  const toggles = new Map();
+  const bindToggle = (el, what) => {
+    toggles.set(what, el);
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      btn[what] = !btn[what]; el.classList.toggle('on', btn[what]); sync();
+    });
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  };
+  // Turn a toggle off (the drop has landed, a new race).
+  const untoggle = (what) => {
+    if (!btn[what]) return;
+    btn[what] = false; toggles.get(what)?.classList.remove('on'); sync();
+  };
 
   return {
     bind,
+    bindToggle,
+    untoggle,
     // True while the steer this tick comes from touch alone (no key or pad held): phones
     // turn 20% slower (owner, 2026-11-11), so the game drops every fifth turning tick.
     touchSteer: () => !keys.left && !keys.right && !pad.left && !pad.right && (held.left || held.right),
@@ -183,8 +201,10 @@ export function createInput(target) {
       for (const gp of pads) {
         if (!gp) continue;
         const x = gp.axes[0] ?? 0;
-        y = gp.axes[1] ?? 0;
-        ry = gp.axes[3] ?? 0; // right stick up / down: the fall while dropping, the raised view once landed
+        // The strongest push over every listed controller: browsers often list more than one (an idle
+        // duplicate or a phone's own), and taking the last one's zeros lost the real stick.
+        if (Math.abs(gp.axes[1] ?? 0) > Math.abs(y)) y = gp.axes[1];
+        if (Math.abs(gp.axes[3] ?? 0) > Math.abs(ry)) ry = gp.axes[3]; // right stick up / down: the fall while dropping, the raised view once landed
         const rx = gp.axes[2] ?? 0;
         if (Math.abs(rx) > 0.2 && Math.abs(rx) > Math.abs(look)) look = rx; // right stick sideways: look left / right once landed
         // The left stick (or D-pad) as a screen direction, for the top-down drop.

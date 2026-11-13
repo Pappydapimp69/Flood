@@ -663,7 +663,8 @@ function glide(world, r, steer, fwd, g = 0) {
   // Dive and float build up and fade (owner, 2026-11-09): about 1.2 s to full, 0.6 s to let go.
   // Down is Dash (it was float): nothing slows the fall any more.
   const want = fwd > 0 && !r.onFloor ? fwd : 0;
-  r.diveK = (r.diveK ?? 0) + Math.max(-TUNE.boostFade, Math.min(TUNE.boostBuild, want - (r.diveK ?? 0)));
+  // The dive comes in at once (owner, 2026-11-13: no delay); letting go still eases off over about 0.6 s.
+  r.diveK = want > (r.diveK ?? 0) ? want : (r.diveK ?? 0) + Math.max(-TUNE.boostFade, want - (r.diveK ?? 0));
   const dive = r.diveK;
   if (fwd < 0 && !(r.dashT > 0) && world.tick >= (r.dashAt ?? 0)) {
     r.dashT = TUNE.dashTicks; r.dashAt = world.tick + TUNE.dashCool;

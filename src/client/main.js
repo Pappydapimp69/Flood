@@ -1014,7 +1014,7 @@ const tpad = document.getElementById('tpad'), tfly = document.getElementById('tf
 const padFly = document.getElementById('padfly'), padDive = document.getElementById('pf-dive'), padDash = document.getElementById('pf-dash');
 input.bind(document.getElementById('t-left'), 'left');
 input.bind(document.getElementById('t-right'), 'right');
-input.bind(document.getElementById('t-dive'), 'fwd');
+input.bindToggle(document.getElementById('t-dive'), 'fwd'); // a tap turns diving on or off: the thumb stays free for DASH
 input.bind(document.getElementById('t-float'), 'back');
 const calmNow = () => performance.now() < introUntil; // the opening shot: nobody steers yet
 
@@ -1335,6 +1335,7 @@ function updateSkill() {
   if (touchUI) {
     tpad.hidden = !river || !isRacing(river) || mapView || calmNow();
     tfly.hidden = !river?.dropping || mapView || calmNow();
+    if (!river?.dropping) input.untoggle('fwd'); // landed (or a new race): diving is off again
   }
   // A pad while falling: the two descent controls on screen, the dash with its recharge.
   padFly.hidden = touchUI || !padSeen || !river?.dropping || !isRacing(river) || mapView || calmNow();
@@ -1507,7 +1508,7 @@ const COACH = [
 ];
 const TUTORIAL = [
   { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Turn your falling drop with <b>◀ ▶</b>')}`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `${key('<b>Right stick ↑</b> descends faster, <b>RB</b> dashes', '', '<b>▼ DIVE</b> to fall faster, <b>▲ DASH</b> for a burst of speed')}`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => `${key('<b>Right stick ↑</b> descends faster, <b>RB</b> dashes', '', 'Tap <b>▼ DIVE</b> to fall faster (tap again to stop), <b>▲ DASH</b> for a burst of speed')}`, pass: (c) => c.glided || lowPower || !padSeen },
   { drop: true, text: () => (lowPower ? '<b>▼ DIVE</b> descends faster to low clouds, <b>▲ DASH</b> bursts ahead, then recharges'
     : (padSeen ? '<b>Right stick ↑</b> descends faster to low clouds, <b>RB</b> dashes: a burst ahead, then a recharge' : '<b>W / S</b>: <b>↑</b> descends faster to low clouds, <b>↓</b> dashes: a burst ahead, then a recharge')), pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
@@ -1905,9 +1906,10 @@ renderer.setAnimationLoop(() => {
     }
     const ax = camDir.x, az = camDir.y, back = 800, up = 280; // close behind: the ground and the clouds rush past
     const k = cut ? 1 : 1 - Math.exp(-frameDt * 4);
-    // The left stick's up / down tilts the view (owner, 2026-11-13): up toward the horizon and the
-    // clouds ahead, down at the ground below; let go and it eases back.
-    const tiltIn = cut ? 0 : input.tilt();
+    // Descending tilts the view down at the ground (owner, 2026-11-13), on every device: it follows the
+    // sim's own dive, so keys, sticks and the phone's DIVE button all do it. The left stick's up / down
+    // tilts it by hand on a pad, over that. Let go and it eases back.
+    const stickTilt = input.tilt(), tiltIn = cut ? 0 : stickTilt || -0.85 * Math.min(1, focus.diveK ?? 0);
     camTilt += (tiltIn - camTilt) * (1 - Math.exp(-frameDt * (tiltIn ? 4 : 2.5)));
     camera.position.lerp(new THREE.Vector3(fx - ax * back, fy + up, fz - az * back), k);
     camTarget.lerp(new THREE.Vector3(fx + ax * 900, fy - 220 + camTilt * (camTilt > 0 ? 700 : 900), fz + az * 900), k);
@@ -2140,6 +2142,7 @@ Object.defineProperties(dbg, {
   camYaw: { get: () => camYaw },
   camRise: { get: () => camRise },
   camTilt: { get: () => camTilt },
+  padTilt: { get: () => input.tilt() },
   crossMarks: { get: () => crossMarks },
   cam: { get: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z, tx: camTarget.x, ty: camTarget.y, tz: camTarget.z, fov: camera.fov }) },
 });
