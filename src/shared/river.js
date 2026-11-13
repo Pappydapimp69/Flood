@@ -144,7 +144,7 @@ export const TUNE = {
   // The drop: every river falls for 30 s from high above the island, steering
   // (turn, and faster or slower) to choose where it lands. It lands on the
   // nearest cell of the start contour: every start is at the same elevation.
-  dropTicks: 1600, // a fall at the steady rate lasts this long (80 s)...
+  dropTicks: 2400, // a fall at the steady rate lasts this long (120 s; was 1600 = 80 s, owner 2026-11-13: the descent lasts longer)...
   dropAlt: 6000, // metres above the start line's height at the start
   // The drop comes in like a comet: it starts this share of a steady glide's
   // run behind its start spot, so flying straight lands it there on time.
