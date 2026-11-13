@@ -156,7 +156,7 @@ export const TUNE = {
   lineTol: 0.004, // share of that distance either side drawn as the line
   ceilSlope: 1.3, // highest a drop can be: this many metres up per metre still to go to the line
   floorGap: 60, // lowest: this far over the ground, easing to 0 in the last 1.5 km
-  dropCloudShare: 0.156, // descent clouds hold this share of cloudWater (they gave far too much; 0.25 x 10/16 clouds)
+  dropCloudShare: 0.104, // (0.156 x 16/24 clouds) descent clouds hold this share of cloudWater (they gave far too much; 0.25 x 10/16 clouds)
   cloudSpread: 4500, // metres either side of the comet path the first clouds sit; they close in toward the start line
   diveRate: 1.6,
   diveSpeed: 0, floatSpeed: 0.3, // diving only loses height, no ground speed (was 0.5: bots dived half the descent and outran players, owner 2026-11-09); // diving glides this much faster, floating this much slower // ...diving falls up to this much faster (about 12 s)...
@@ -165,7 +165,7 @@ export const TUNE = {
   dashBoost: 1, dashTicks: 20, dashCool: 100, // twice the glide for 1 s; ready again 5 s after it fired
   // Rain clouds hang in the sky over the summits: fall through one and its
   // water is yours, a bigger start; each can only be taken once.
-  skyClouds: 16, // rain clouds along the comet path in, closer together near the start line (was 10:
+  skyClouds: 24, // rain clouds along the comet path in (16 until the descent grew from 80 s to 120 s: as many per second, same total water) (was 10:
   // an engaged drop's longest quiet stretch 18 s, worst 29 s; now 13 s, worst 16 s, same total water)...
   cloudsRandom: true, // anywhere in the lane, any reachable height (owner); off: cloudsOnPath placement
   cloudsOnPath: true, // ...each at the height a steady fall passes it, so steering to one can reach it
@@ -765,7 +765,9 @@ export function skyClouds(world) {
     // so the descent opens with a choice instead of empty sky (Brain: time to first event, not median gap).
     const early = id < 2 && !TUNE.cloudsRandom;
     // Random clouds (owner, 2026-11-09): anywhere along the run and across the lane, at any reachable height.
-    const p = TUNE.cloudsRandom ? 0.04 + 0.92 * rng() : early ? 0.05 + 0.05 * id + 0.02 * rng() : 0.12 + 0.8 * Math.pow((id - 2 + 0.3 + 0.4 * rng()) / (TUNE.skyClouds - 2), 0.6); // then denser toward the line
+    // Along the run each cloud keeps to its own stretch (random inside it): fully random, the longest empty
+    // stretch of a 120 s descent averaged 20 s and reached 28 s; across the lane and in height they stay random.
+    const p = TUNE.cloudsRandom ? 0.04 + 0.92 * (id + rng()) / TUNE.skyClouds : early ? 0.05 + 0.05 * id + 0.02 * rng() : 0.12 + 0.8 * Math.pow((id - 2 + 0.3 + 0.4 * rng()) / (TUNE.skyClouds - 2), 0.6); // then denser toward the line
     const lane = descentLane(world);
     const side = TUNE.cloudsRandom ? lane.c - (-sx * az + sz * ax) + (rng() * 2 - 1) * laneHalf(lane, run * (1 - p)) * 0.95 : early ? (id ? 1 : -1) * (600 + rng() * 1200) : (rng() * 2 - 1) * (TUNE.cloudSpread * Math.pow(1 - p, 0.8) + 250);
     const back = run * (1 - p);
