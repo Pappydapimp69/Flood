@@ -40,10 +40,11 @@ export function createInput(target) {
   // so one thumb steers and the other flies the drop (owner, 2026-11-11).
   const btn = { left: false, right: false, fwd: false, back: false };
   const pad = { left: false, right: false, down: new Set(), stickY: 0, seen: false, fwd: 0, glide: 0, look: 0, vec: { x: 0, y: 0 } };
-  // Forward / back: hurry or slow the fall. Keys or right stick up / down.
+  // Forward / back: hurry (dive) or dash (back) the fall. Keys or right stick up / down.
+  // Back wins over forward: a sticky DIVE toggle must never cancel a held DASH (both on = dash).
   const forward = () => {
-    const k = keys.fwd === keys.back ? 0 : keys.fwd ? 1 : -1;
-    const b = btn.fwd === btn.back ? 0 : btn.fwd ? 1 : -1;
+    const k = keys.back ? -1 : keys.fwd ? 1 : 0;
+    const b = btn.back ? -1 : btn.fwd ? 1 : 0;
     return k || b || pad.fwd;
   };
 

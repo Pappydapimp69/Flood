@@ -318,12 +318,17 @@ await check('touch drop: ◀ ▶ turn, ▼ DIVE / ▲ DASH fly it, and no drag s
   await ticks(30, '30 ticks after a second tap');
   const stopped = await diveK();
   if (stopped >= 0 && !(stopped < 0.2)) throw new Error(`a second tap did not stop the dive (${stopped.toFixed(2)})`);
-  const fast = 999; // (the dive no longer changes the glide speed)
+  // DASH with DIVE switched on must still fire: a sticky dive once cancelled a held dash on a phone.
+  await ticks(110, 'the dash recharges');
+  await btn('t-dive', 'pointerdown'); await btn('t-dive', 'pointerup');
+  await ticks(10, '10 ticks of diving');
+  const dashBefore = await page.evaluate(() => __flood.river.dashAt ?? 0);
   await btn('t-float', 'pointerdown');
-  await ticks(6, '6 ticks dashing');
-  const slow = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
+  await ticks(6, '6 ticks dashing with DIVE on');
+  const dashAfter = await page.evaluate(() => __flood.river.dashAt ?? 0);
   await btn('t-float', 'pointerup');
-  if (fast >= 0 && slow >= 0 && !(fast > 130 && slow > 250)) throw new Error(`dive ${fast.toFixed(0)} m/s, dash ${slow.toFixed(0)} m/s`);
+  await btn('t-dive', 'pointerdown'); await btn('t-dive', 'pointerup');
+  if (dashAfter === dashBefore) throw new Error('DASH with DIVE on did not fire');
   // A finger dragged on the canvas no longer draws the combined stick.
   const fire = (type, x, y) => page.evaluate(([type, x, y]) => document.querySelector('canvas').dispatchEvent(
     new PointerEvent(type, { pointerId: 9, pointerType: 'touch', clientX: x, clientY: y, bubbles: true })), [type, x, y]);
