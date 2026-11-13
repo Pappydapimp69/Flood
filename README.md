@@ -20,9 +20,12 @@ Steer with ← → (or A D). Falling: ↑ (W; the right stick up on a controller
   pick your landing. Every start sits at the same height.
 - Flow downhill to the gold beach where the slope meets the sea; first one there wins. Reaching any other coast, the sea's current carries you along the shore to the beach. The game never steers.
 - Every lake is full. Your river's water stands over the brim where it runs, so you skate across
-  without losing momentum and leave over the bank you reach. Join one and your mass jumps at
-  once, then it keeps feeding you through the outlet you cut, which erodes deeper the more it
-  carries.
+  without losing momentum and leave over the bank you reach. Leaving, you cut an outlet in its
+  pebble bank, and the lake feeds you through it: the first river out drains the fullest lake,
+  and every river with an outlet shares the same water. Pebble wears slowly, so an outlet deepens
+  over the race; rivers flowing in from above and storms refill the lake.
+- Gouge and Surge build up: the bigger your river, the longer the speed takes to come in, and the
+  cooldown starts when the boost ends. A bigger river also holds its speed longer on flats and lakes.
 - Water is one network. Cut through a rival's live channel deeper than it runs and its water
   keeps flowing into you until that channel goes dry; if they cut yours, yours flows into them.
 - Every start is the same height and the same route length from the sea.

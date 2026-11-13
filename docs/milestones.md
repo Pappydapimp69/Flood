@@ -436,3 +436,15 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
 - Also correct: an earlier note here that speed "tops out" was wrong. Measured, large rivers run about 50% faster
   than small ones on plain ground (carried pulse momentum); the missing piece is that carried speed on flats and
   lakes fades at one rate for every size.
+
+## Rules: skills with weight, momentum by size, pebble lake banks (2026-11-13)
+- Gouge and Surge build up (`buildTicks`): 1 s at 1.5M L, by (size ratio)^1.5, eased in; then the full boost
+  runs; the cooldown starts when it ends. Gouge's extra height comes at once.
+- On flats and lakes carried speed fades by 1% a tick divided by size: twice the size, half the fade.
+- Lake banks are pebble: an outlet is first cut to a quarter of the head's depth and wears at a quarter of the
+  old rate, down at most to 1 m over the lake's bed. The hidden 4 m stop is gone.
+- Rock spines are off (`ISLAND.spines = 0`): they changed no result and, on seed 43, a bot could not finish
+  with them (it finished second without). The chute code stays for when they return in another form.
+- Tested lightly: unit tests pass (four updated to the new rules, one added for the build curve); render smoke
+  passes; one benchmark pass (6 islands x 2 seats). Not tuned or felt by hand; the benchmark was not rerun
+  after the spines went off, beyond the one race that had failed.
