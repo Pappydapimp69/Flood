@@ -150,6 +150,8 @@ export function createInput(target) {
     glide: () => pad.glide || (keys.fwd === keys.back ? 0 : keys.fwd ? 1 : 0),
     // Left stick / D-pad as a screen vector (x right, y down), length 0..1; null with no pad.
     stick: () => (pad.seen ? pad.vec : null),
+    // Left stick up (+) / down (-), -1..1: tilts the camera while falling.
+    tilt: () => (pad.seen ? pad.tilt ?? 0 : 0),
     // 1 once for each skill press (key, pad B or the on-screen button), then 0.
     takeSkill() { const k = skillPulse; skillPulse = 0; return k; },
     takeSurge() { const u = surgePulse; surgePulse = 0; return u; },
@@ -194,6 +196,7 @@ export function createInput(target) {
       }
       if (!pads.some(Boolean)) return;
       pad.look = look;
+      pad.tilt = Math.abs(y) > DEADZONE ? -y : 0; // left stick up / down: falling, tilts the view (it never dives)
       pad.rise = ry < -0.2 ? Math.min(1, (-ry - 0.2) / 0.7) : 0; // right stick up: 0..1
       const vl = Math.hypot(vx, vy);
       pad.vec = vl > 1 ? { x: vx / vl, y: vy / vl } : { x: vx, y: vy };

@@ -252,7 +252,7 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
 // Island shape settings (exported so tuning passes can try others; defaults keep every island as it was).
 // 2026-11-02 map pass: more lakes and a wider, winding corridor. wide 1.5 or warp 2 put
 // a fifth of the start cells nearer another summit than their own; 1.3 / 1.5 keeps all of them.
-export const ISLAND = { mixed: true, lakes: 20, gates: 5, spines: 2, // spines: wall ridges that fork the course (0: none); mixed: the four-section course (4 test races: finishes 8.3 -> 10.8, knockouts 3.25 -> 1.25)
+export const ISLAND = { mixed: true, lakes: 20, gates: 5, spines: 0, // spines: wall ridges that fork the course (0: none). Off 2026-11-13: they changed no race result and left a bot unable to finish (seed 43); mixed: the four-section course (4 test races: finishes 8.3 -> 10.8, knockouts 3.25 -> 1.25)
   wide: 1.3, taper: 2, warp: 1.5, trough: 200 };
 // trough: metres the floor rises toward the walls (was 60). 200 pulls routes toward the centre line so rivals
 // cross each other's channels more: contacts +17% on two fresh sets of islands (12 and 16 races), finishes held.
@@ -262,7 +262,8 @@ const GATE = { height: 45, thick: 0.007, gap: 0.12, spread: 0.06 };
 // height: metres (the tallest boulder is 220, a Gouge lifts a head 80). thick: half-width, as a share of the
 // corridor's. off: how far off the centre line it stands. slant: how far it drifts across over its run. prow: share of its run it rises over.
 // dam: metres (under a Gouge's 80, over any plain head), damAt: how far down the spine's run, damThick: half-width down the slope.
-const SPINE = { height: 300, thick: 0.05, off: [0.3, 0.42], slant: 0.08, prow: 0.1, chute: 0.06, dam: 0, damAt: 0.65, damThick: 0.006 };
+const SPINE = { height: 300, thick: 0.05, off: [0.12, 0.3], slant: 0.2, // (0.3-0.42 out and 0.08 slant left one bot run in 12 unable to finish: back as first measured)
+  prow: 0.1, chute: 0.06, dam: 0, damAt: 0.65, damThick: 0.006 };
 // dam is off: at 60 it floods the wide valley into one lake of 2,000 to 3,000 cells (10M L), and rivers skate across it,
 // so unsteered rivers finished as often and as fast as without it (61 of 120, median 254 s vs 262 s; 2026-11-12).
 

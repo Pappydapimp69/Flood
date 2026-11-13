@@ -59,13 +59,18 @@ export const TUNE = {
   outletK: 3000, // litres per tick an outlet carries at 1 m of water over its lip, starting width
   erodeK: 0.002, // metres an outlet erodes per tick, per metre of water over its lip, times the river's size
   outletMax: 40, // metres: most water over a lip that counts
-  outletDrain: 4, // metres below its starting level an outlet can ever drain a lake: lakes stay lakes
+  outletDrain: 4, // (no longer used: pebble banks replaced this hard stop, 2026-11-13)
+  // Lake banks are pebble (owner, 2026-11-13): an outlet is first cut to pebbleCut of the head's depth,
+  // and wears down at pebbleWear of the rate turf would, so a drain deepens slowly instead of stopping
+  // dead 4 m down. It can wear down to pebbleBed above the lake's bed, never into a hole.
+  pebbleCut: 0.25, pebbleWear: 0.25, pebbleBed: 1,
   spillK: 4000, // litres per tick a lake spills at 1 m over its rim
   spillDepth: 2, // metres a spill cuts its channel (it never erodes)
   spillWidth: 50, // metres
   spillCells: 160, // longest spill channel, cells
   shallowWater: 0.3, // metres of standing water that count as under water (no digging)
-  levelGlide: 0.99, // on level water or flats, carried speed fades this much per tick: halves in about 3.5 s (owner: it carried too long)
+  levelGlide: 0.99, // on level water or flats, carried speed fades this much per tick at starting size: halves in about 3.5 s (owner: it carried too long);
+  // a bigger river fades slower, by its size (owner, 2026-11-13: more water, more momentum)
   joinShare: 0, // nothing taken at once on joining: only what flows out is added
   fullAt: 0.999, // a lake this full is level ground you flow across
   maxPoolTicks: 200, // guaranteed exit: after 10 s pooled, the basin tops up and spills
@@ -115,6 +120,10 @@ export const TUNE = {
   // Skills unlock as a river grows (litres; once unlocked, kept), and share one
   // cooldown: using either restarts it for both, at the length of the one used.
   surgeUnlock: 1_200_000,
+  // Skills build up with weight (owner, 2026-11-13): the speed builds over skillBuild seconds for a river of
+  // skillBuildAt litres, longer as it grows, by (size / that size)^1.5 (computed as q * sqrt q: no pow).
+  // The full boost then runs its whole length, and the cooldown starts only once it ends.
+  skillBuild: 1, skillBuildAt: 1_500_000,
   gougeUnlock: 1_500_000,
   // Comeback experiments (off by default).
   stormAim: 'pack', // 'pack': storms blow in just ahead of the middle of the field; 'tail': over its back
@@ -274,6 +283,13 @@ export const TUNE = {
 // Size is the cube root of relative volume, as for real water: eight times the
 // water is twice the size. Newton's method from sqrt, a fixed number of steps,
 // so every machine gets the same bits (no cbrt/pow).
+// Ticks a skill's speed takes to build, for this river (see TUNE.skillBuild).
+export function buildTicks(r) {
+  const q = sizeOf(r.volume) / sizeOf(TUNE.skillBuildAt);
+  return Math.max(1, Math.round(TICK_HZ * TUNE.skillBuild * q * Math.sqrt(q)));
+}
+const easeIn = (u) => u * u * (3 - 2 * u); // smooth start and finish
+
 export function sizeOf(volume) {
   const v = Math.max(1e-9, volume / TUNE.startVolume);
   let x = v > 1 ? Math.sqrt(v) : 1;
@@ -951,12 +967,12 @@ function startGouge(world, r) {
   // Every gouge also deepens the river's whole channel by 5%, applied with the digs (phase 4), so the
   // order rivers move in can't change what the others feel this tick.
   (world.deepen ??= []).push(r);
-  const cool = coolOf(r, TUNE.gougeCool);
-  r.gougeAt = r.surgeAt = world.tick + cool; r.coolLen = cool; // one cooldown for both skills
-  r.boost = TUNE.gougeBoost;
+  const cool = coolOf(r, TUNE.gougeCool), build = buildTicks(r);
+  // The speed builds over `build` ticks, then the full boost runs; the cooldown starts after both.
+  r.boost = build + TUNE.gougeBoost; r.boostLen = r.boost; r.boostBuild = build; r.boostFrom = r.speed;
+  r.gougeAt = r.surgeAt = world.tick + r.boost + cool; r.coolLen = cool; // one cooldown for both skills
   r.boostSpeed = Math.max(TUNE.gougeFloor, r.speed + TUNE.baseSpeed * TUNE.gougeAdd * Math.max(1, r.mass ?? 1));
-  r.speed = r.boostSpeed;
-  r.size = sizeOf(r.volume) + TUNE.gougeGrow;
+  r.size = sizeOf(r.volume) + TUNE.gougeGrow; // the extra height comes at once: only the speed builds
   r.depth = depthOf(r);
   // A fresh start from here: no route, exit, cut or stall held over from before.
   r.route = null; r.exit = -1; r.exitPath = null; r.stuck = false; r.filling = false;
@@ -1027,13 +1043,14 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   if (surge && surgeReady(world, r)) {
     const cost = Math.max(TUNE.gougeMinCost, r.volume * TUNE.surgeShare);
     // Like Gouge, it never stops the head: the speed it has is kept and Surge adds to it.
-    grow(r, -cost); r.surgeT = 0; const cool = coolOf(r, TUNE.surgeCool); r.surgeAt = r.gougeAt = world.tick + cool; r.coolLen = cool;
+    grow(r, -cost); r.surgeT = 0; const cool = coolOf(r, TUNE.surgeCool), build = buildTicks(r);
+    r.surgeBuild = build; r.surgeFrom = r.speed; r.surgeLen = build + TUNE.surgeTicks;
+    r.surgeAt = r.gougeAt = world.tick + r.surgeLen + cool; r.coolLen = cool; // the cooldown starts when the surge ends
     r.surgeSpeed = Math.max(TUNE.surgeFloor, r.speed + TUNE.baseSpeed * TUNE.surgeAdd * Math.max(1, r.mass ?? 1));
-    r.speed = r.surgeSpeed;
     world.events.push({ type: 'surge-wind', river: r.idx, cost, tick: world.tick });
     world.events.push({ type: 'surge', river: r.idx, tick: world.tick });
   }
-  if (r.surgeT >= 0 && ++r.surgeT > TUNE.surgeTicks) r.surgeT = -1;
+  if (r.surgeT >= 0 && ++r.surgeT > (r.surgeLen ?? TUNE.surgeTicks)) r.surgeT = -1;
   // In the sea off the wrong coast: only the one beach ends the race, so the
   // current carries the river along the coast to it (no steering out at sea).
   const kSea = cellIndex(world.terrain, r.x, r.z);
@@ -1144,7 +1161,8 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   // pasture's): a river too small to knock the trees down is slowed right
   // down among them, but never walled in; a big one flattens them.
   const drag = (world.trees?.[cHere] && !breaksTrees(r) ? TUNE.forestDrag : 1) * (tt.fast?.[cHere] && !onLake ? TUNE.canyonBoost : 1);
-  const target = (level ? Math.max(TUNE.baseSpeed * mass, Math.min(TUNE.maxSpeed * mass, r.speed * TUNE.levelGlide))
+  const glideKeep = 1 - (1 - TUNE.levelGlide) / Math.max(1, r.size); // more water, more momentum: twice the size fades half as fast
+  const target = (level ? Math.max(TUNE.baseSpeed * mass, Math.min(TUNE.maxSpeed * mass, r.speed * glideKeep))
     : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + (along >= 0 ? TUNE.satSpeed * (1 - Math.exp(-along / TUNE.satSlope)) : TUNE.slopeSpeed * along)) * mass))) * drag;
   // Momentum: more water surges up to speed just as fast, but holds it
   // longer, slowing down only slowly.
@@ -1156,8 +1174,15 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
     if (r.boostSpeed) r.boostSpeed = Math.max(TUNE.gougeFloor, r.boostSpeed * keep); // a skill's floor holds on a climb
     if (r.surgeSpeed) r.surgeSpeed = Math.max(TUNE.surgeFloor, r.surgeSpeed * keep);
   }
-  if (r.boost > 0) r.speed = Math.max(r.speed, r.boostSpeed); // boosted: the speed it had plus the boost (less what climbs cost)
-  if (r.surgeT >= 0) r.speed = Math.max(r.speed, r.surgeSpeed); // surging: its speed plus the surge
+  // Boosted: the speed it had plus the boost (less what climbs cost), built up over the build ticks.
+  if (r.boost > 0) {
+    const u = r.boostBuild ? Math.min(1, (r.boostLen - r.boost + 1) / r.boostBuild) : 1;
+    r.speed = Math.max(r.speed, r.boostFrom + (r.boostSpeed - r.boostFrom) * easeIn(u));
+  }
+  if (r.surgeT >= 0) {
+    const u = r.surgeBuild ? Math.min(1, (r.surgeT + 1) / r.surgeBuild) : 1;
+    r.speed = Math.max(r.speed, r.surgeFrom + (r.surgeSpeed - r.surgeFrom) * easeIn(u));
+  }
   r.depth = depthOf(r);
 
   // More water stands taller at the head: rises that would stop a small river
@@ -1748,7 +1773,7 @@ function hydrology(world) {
     }
     // Erosion follows the water over the lip and the river's volume: a high
     // lake and a big river cut fast; as the lake drops to the lip it slows.
-    o.e = Math.min(t.filled[o.cell] - SEA_LEVEL - 0.5, outletFloor(world, lake, o.cell), o.e + TUNE.erodeK * h * r.size);
+    o.e = Math.min(t.filled[o.cell] - SEA_LEVEL - 0.5, outletFloor(world, lake, o.cell), o.e + TUNE.erodeK * TUNE.pebbleWear * h * r.size); // pebble wears slowly
   }
   // Over the rim: spill.
   for (let lake = 0; lake < L; lake++) {
@@ -2185,8 +2210,7 @@ function drainsBack(world, cell, lake) {
 // The deepest an outlet may be cut: its lip never more than outletDrain below
 // the level the lake starts at, so outlets bleed a lake's top off (and feed
 // rivers from the start) but never empty it into a pit.
-export const outletLipFloor = (world, lake) =>
-  world.lakeBed[lake] + Math.max(0.5, world.lakeBrim[lake] - world.lakeBed[lake]) * TUNE.lakeStart - TUNE.outletDrain;
+export const outletLipFloor = (world, lake) => world.lakeBed[lake] + TUNE.pebbleBed;
 function outletFloor(world, lake, cell) {
   return Math.max(0, world.terrain.filled[cell] - outletLipFloor(world, lake));
 }
@@ -2198,7 +2222,7 @@ function joinLake(world, r, lake, cell) {
   // lower outlet. As wide as the head; from then on only the water through it
   // deepens it.
   const ground = world.terrain.filled[cell];
-  const lip = Math.max(SEA_LEVEL + 0.5, Math.min(ground, lakeLevel(world, lake)) - r.depth);
+  const lip = Math.max(SEA_LEVEL + 0.5, Math.min(ground, lakeLevel(world, lake)) - r.depth * TUNE.pebbleCut); // pebble: a quarter of the head's depth
   r.via.set(lake, { cell, e: Math.max(0, Math.min(ground - lip, outletFloor(world, lake, cell))), w: widthOf(r), born: world.tick, at: Math.max(0, r.path.length - 1) });
   r.lakes++;
   // Joining a lake adds its water to yours at once, then keeps flowing.

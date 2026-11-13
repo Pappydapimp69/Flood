@@ -429,7 +429,7 @@ await check('gamepad descent: left stick only steers, right stick up descends, R
   const page = await ctx.newPage();
   await page.goto(`${root}?seed=1&lite&nointro&nohint`);
   await until(page, (s) => s.ready && s.dropping > 0 && s.tick > 100, 'falling, past the calm opening');
-  const pad = (f) => page.evaluate(f);
+  const pad = (f, a) => page.evaluate(f, a);
   const button = (i, on) => page.evaluate(([i, on]) => { __pad.buttons[i].pressed = on; __pad.buttons[i].value = on ? 1 : 0; }, [i, on]);
   const diveK = () => page.evaluate(() => __flood.river.dropping ? __flood.river.diveK ?? 0 : -1);
   // Left stick (and D-pad) up: no dive.
@@ -439,6 +439,10 @@ await check('gamepad descent: left stick only steers, right stick up descends, R
   const left = await diveK();
   await pad(() => { __pad.axes[1] = 0; __pad.buttons[12].pressed = false; });
   if (left > 0.05) throw new Error(`left stick up dived (${left.toFixed(2)})`);
+  // ...it tilts the view instead: up looks higher than down.
+  const lookY = async (y) => { await pad((y) => { __pad.axes[1] = y; }, y); await page.waitForTimeout(1500); const c = await page.evaluate(() => __flood.cam); await pad(() => { __pad.axes[1] = 0; }); return c.ty - c.y; };
+  const tUp = await lookY(-1), tDown = await lookY(1);
+  if (!(tUp > tDown + 100)) throw new Error(`left stick does not tilt the view: up ${tUp.toFixed(0)}, down ${tDown.toFixed(0)}`);
   // The prompts are on screen.
   const shown = await page.evaluate(() => !document.getElementById('padfly').hidden);
   if (!shown) throw new Error('no descent controls on screen with a pad');

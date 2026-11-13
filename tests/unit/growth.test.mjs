@@ -47,7 +47,7 @@ test('a head in a lake raises it and keeps its own volume', () => {
   assert.ok(poured > 0, 'no inflow from the river in it'); // in pulses, not every tick
 });
 
-test('leaving a lake: mass jumps at once, an outlet opens, water keeps coming and erodes it', async () => {
+test('leaving a lake: an outlet opens in the pebble bank, water keeps coming and erodes it', async () => {
   const w = createWorld(t42);
   const { lake, inside, outCell, pos } = bigLake(w);
   const r = addRiver(w, 'a', inside);
@@ -59,14 +59,14 @@ test('leaving a lake: mass jumps at once, an outlet opens, water keeps coming an
   assert.ok(join, 'no join event');
   const o = r.via.get(lake.id);
   assert.ok(o, 'no outlet');
-  // Cut down from the water the head floated on (or the bank, if lower).
+  // Cut down from the water the head floated on (or the bank, if lower), a quarter of the head's depth: pebble.
   const lip = t42.filled[outCell] - o.e;
-  assert.ok(Math.abs(lip - (Math.min(t42.filled[outCell], level) - r.depth)) < r.depth * 0.5, `lip ${lip} vs level ${level}`);
+  assert.ok(Math.abs(lip - (Math.min(t42.filled[outCell], level) - r.depth * TUNE.pebbleCut)) < r.depth * 0.2, `lip ${lip} vs level ${level}`);
   const e0 = o.e;
   let fed = 0;
   for (let k = 0; k < 40; k++) { step(w, new Map()); fed = Math.max(fed, r.inflow); }
   assert.ok(fed > 0, 'no water flowing out to the river');
-  // It erodes, down to the floor an outlet may reach (TUNE.outletDrain under the lake's start level).
+  // It erodes, slowly, down at most to just above the lake's bed.
   const { outletLipFloor } = await import('../../src/shared/river.js');
   assert.ok(o.e > e0 || t42.filled[outCell] - o.e <= outletLipFloor(w, lake.id) + 1e-6, 'the outlet did not erode');
 });
