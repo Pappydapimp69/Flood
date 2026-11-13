@@ -183,8 +183,10 @@ export function createInput(target) {
       for (const gp of pads) {
         if (!gp) continue;
         const x = gp.axes[0] ?? 0;
-        y = gp.axes[1] ?? 0;
-        ry = gp.axes[3] ?? 0; // right stick up / down: the fall while dropping, the raised view once landed
+        // The strongest push over every listed controller: browsers often list more than one (an idle
+        // duplicate or a phone's own), and taking the last one's zeros lost the real stick.
+        if (Math.abs(gp.axes[1] ?? 0) > Math.abs(y)) y = gp.axes[1];
+        if (Math.abs(gp.axes[3] ?? 0) > Math.abs(ry)) ry = gp.axes[3]; // right stick up / down: the fall while dropping, the raised view once landed
         const rx = gp.axes[2] ?? 0;
         if (Math.abs(rx) > 0.2 && Math.abs(rx) > Math.abs(look)) look = rx; // right stick sideways: look left / right once landed
         // The left stick (or D-pad) as a screen direction, for the top-down drop.

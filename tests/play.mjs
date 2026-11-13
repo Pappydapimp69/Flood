@@ -439,10 +439,6 @@ await check('gamepad descent: left stick only steers, right stick up descends, R
   const left = await diveK();
   await pad(() => { __pad.axes[1] = 0; __pad.buttons[12].pressed = false; });
   if (left > 0.05) throw new Error(`left stick up dived (${left.toFixed(2)})`);
-  // ...it tilts the view instead: up looks higher than down.
-  const lookY = async (y) => { await pad((y) => { __pad.axes[1] = y; }, y); await page.waitForTimeout(1500); const c = await page.evaluate(() => __flood.cam); await pad(() => { __pad.axes[1] = 0; }); return c.ty - c.y; };
-  const tUp = await lookY(-1), tDown = await lookY(1);
-  if (!(tUp > tDown + 100)) throw new Error(`left stick does not tilt the view: up ${tUp.toFixed(0)}, down ${tDown.toFixed(0)}`);
   // The prompts are on screen.
   const shown = await page.evaluate(() => !document.getElementById('padfly').hidden);
   if (!shown) throw new Error('no descent controls on screen with a pad');
@@ -451,8 +447,11 @@ await check('gamepad descent: left stick only steers, right stick up descends, R
   const t1 = (await state(page)).tick;
   await until(page, (s) => s.tick > t1 + 30, '30 ticks with the right stick up');
   const right = await diveK();
+  await page.waitForTimeout(1200); // the view eases over about a second
+  const descTilt = await page.evaluate(() => __flood.camTilt);
   await pad(() => { __pad.axes[3] = 0; });
   if (!(right > 0.3)) throw new Error(`right stick up did not descend (${right.toFixed(2)})`);
+  if (!(descTilt < -0.3)) throw new Error(`descending did not tilt the view down (${descTilt.toFixed(2)})`);
   // RB: dash, about twice the cruising glide.
   let v = 0;
   for (let t = 0; t < 3 && !(v > 250); t++) {
@@ -460,6 +459,15 @@ await check('gamepad descent: left stick only steers, right stick up descends, R
     for (let i = 0; i < 20 && !(v > 250); i++) { await page.waitForTimeout(100); v = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : 999); }
   }
   if (!(v > 250)) throw new Error(`RB did not dash: ${v.toFixed(0)} m/s`);
+  // The left stick's up / down tilts the view, also with an idle second controller listed after the real one
+  // (browsers often list one; taking the last controller's zeros used to lose the real stick).
+  await page.evaluate(() => { const real = __pad, idle = { ...real, index: 1, axes: [0, 0, 0, 0], buttons: real.buttons.map(() => ({ pressed: false, value: 0 })) }; navigator.getGamepads = () => [real, idle]; });
+  for (const [y, ok, what] of [[-1, 'p > 0.5 && c > 0.3', 'up'], [1, 'p < -0.5 && c < -0.3', 'down']]) {
+    await pad((y) => { __pad.axes[1] = y; }, y);
+    try { await page.waitForFunction((ok) => { const p = __flood.padTilt, c = __flood.camTilt; return !__flood.river.dropping || eval(ok); }, ok, { timeout: 20000 }); }
+    catch { throw new Error(`left stick ${what} did not tilt the view: stick ${await page.evaluate(() => __flood.padTilt)}, view ${await page.evaluate(() => __flood.camTilt)}`); }
+    await pad(() => { __pad.axes[1] = 0; });
+  }
   await ctx.close();
 });
 

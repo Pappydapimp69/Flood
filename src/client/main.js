@@ -1905,9 +1905,10 @@ renderer.setAnimationLoop(() => {
     }
     const ax = camDir.x, az = camDir.y, back = 800, up = 280; // close behind: the ground and the clouds rush past
     const k = cut ? 1 : 1 - Math.exp(-frameDt * 4);
-    // The left stick's up / down tilts the view (owner, 2026-11-13): up toward the horizon and the
-    // clouds ahead, down at the ground below; let go and it eases back.
-    const tiltIn = cut ? 0 : input.tilt();
+    // Descending tilts the view down at the ground (owner, 2026-11-13), on every device: it follows the
+    // sim's own dive, so keys, sticks and the phone's DIVE button all do it. The left stick's up / down
+    // tilts it by hand on a pad, over that. Let go and it eases back.
+    const stickTilt = input.tilt(), tiltIn = cut ? 0 : stickTilt || -0.85 * Math.min(1, focus.diveK ?? 0);
     camTilt += (tiltIn - camTilt) * (1 - Math.exp(-frameDt * (tiltIn ? 4 : 2.5)));
     camera.position.lerp(new THREE.Vector3(fx - ax * back, fy + up, fz - az * back), k);
     camTarget.lerp(new THREE.Vector3(fx + ax * 900, fy - 220 + camTilt * (camTilt > 0 ? 700 : 900), fz + az * 900), k);
@@ -2140,6 +2141,7 @@ Object.defineProperties(dbg, {
   camYaw: { get: () => camYaw },
   camRise: { get: () => camRise },
   camTilt: { get: () => camTilt },
+  padTilt: { get: () => input.tilt() },
   crossMarks: { get: () => crossMarks },
   cam: { get: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z, tx: camTarget.x, ty: camTarget.y, tz: camTarget.z, fov: camera.fov }) },
 });
