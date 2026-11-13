@@ -10,6 +10,7 @@ export const DT = 1 / TICK_HZ;
 
 export const TUNE = {
   turnStep: 0.06, // radians per tick at full steer, at starting size
+  turnEase: 0.3, // share of the way a landed river's turn moves to the stick each tick (about 7 ticks to near full)
   minSpeed: 18, // m/s, water always creeps
   landCarry: 0.8, // share of the drop's glide speed the river keeps on landing (was none: landing was a hard brake)
   baseSpeed: 55, // m/s on level ground at starting size
@@ -1022,11 +1023,14 @@ export const surgeReady = (world, r) => TUNE.surgeOn && !!r.surgeOn && isRacing(
 function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: surge }) {
   // The opening shot (owner): nobody steers, players or bots; everyone glides straight at full throttle.
   if (r.dropping) return calm(r) ? glide(world, r, 0, 0, 1) : glide(world, r, steer, fwd, glideIn);
-  if (steer) {
+  // The turn eases in toward the stick and out again after it lets go (r.turnIn: -1..1, a float that
+  // every client computes the same way), so a press swings the head over a few ticks, not at once.
+  r.turnIn = (r.turnIn ?? 0) + (steer - (r.turnIn ?? 0)) * TUNE.turnEase;
+  if (Math.abs(r.turnIn) > 1e-3) {
     // Turn by adding a sideways component, then renormalising (angle = atan(a)).
     // A bigger river answers the stick as well as a small one: more water is
     // more control, not less. Left of heading (dx, dz) is (dz, -dx).
-    const a = TUNE.turnStep * -steer;
+    const a = TUNE.turnStep * -r.turnIn;
     const dx = r.dx + r.dz * a, dz = r.dz - r.dx * a;
     r.dx = dx; r.dz = dz;
     normalize(r);

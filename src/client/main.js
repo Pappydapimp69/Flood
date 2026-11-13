@@ -253,7 +253,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (and the D-pad) steers; falling, its up / down tilts the view · right stick: falling, up descends faster; once landed it looks around, up for a raised view · RB: dash while falling · A: gouge (select / race again in menus) · RB: surge · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (and the D-pad); falling, up hurries the fall · right stick is the camera: sideways looks round, up / down tilts while falling, up raises the view once landed · RB: dash while falling · A: gouge (select / race again in menus) · RB: surge · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -1930,7 +1930,7 @@ renderer.setAnimationLoop(() => {
     // Right stick (once landed): sideways looks up to 30 degrees left or right
     // and drifts back to centre when let go; up raises the camera and tilts it
     // down for a look far ahead.
-    const look = input.look(), riseIn = focus.dropping ? 0 : input.rise(); // falling, the right stick's up is the descent, not the view
+    const look = input.look(), riseIn = input.rise(); // the right stick raises the view, falling or landed
     const yawWant = look * 0.52;
     camYaw += (yawWant - camYaw) * (1 - Math.exp(-frameDt * (look ? 5 : 2.5)));
     camRise += (riseIn - camRise) * (1 - Math.exp(-frameDt * (riseIn > camRise ? 4 : 3)));

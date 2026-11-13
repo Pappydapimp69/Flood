@@ -216,14 +216,15 @@ export function createInput(target) {
       }
       if (!pads.some(Boolean)) return;
       pad.look = look;
-      pad.tilt = Math.abs(y) > DEADZONE ? -y : 0; // left stick up / down: falling, tilts the view (it never dives)
+      // The right stick is the camera: up / down tilts the view while falling, up raises it once landed.
+      pad.tilt = Math.abs(ry) > DEADZONE ? -ry : 0;
       pad.rise = ry < -0.2 ? Math.min(1, (-ry - 0.2) / 0.7) : 0; // right stick up: 0..1
       const vl = Math.hypot(vx, vy);
       pad.vec = vl > 1 ? { x: vx / vl, y: vy / vl } : { x: vx, y: vy };
-      // The left stick and D-pad only steer (owner, 2026-11-13). Falling, the right stick's up
-      // descends faster; dash is the Surge button (a bumper), not a stick.
+      // Falling, the left stick's up hurries the fall (the camera moved to the right stick); dash is
+      // the Surge button (a bumper). The left stick's sideways steers, as before.
       const g = 0;
-      const f = ry < -DEADZONE ? 1 : 0;
+      const f = y < -DEADZONE ? 1 : 0;
       if (f !== pad.fwd || g !== pad.glide) { pad.fwd = f; pad.glide = g; onChange?.(current()); }
       if (!pad.seen) { pad.seen = true; onPad?.(); }
       for (const i of now) {
