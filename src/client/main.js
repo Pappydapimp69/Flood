@@ -4,7 +4,7 @@ import { generateIsland, stats, fingerprint, findLakes, TUTORIAL as COURSE } fro
 import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, startLine, pastLine, descentLane, laneHalf, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
-import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, castTrees, SUN, VERT } from './terrainMesh.js';
+import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, castTrees, VERT } from './terrainMesh.js';
 import { buildSea, buildLakes, makeSurge, makeSpray, updateSpray, burstSpray, tickWater } from './water.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
@@ -114,7 +114,7 @@ scene.add(sun);
 // seam) to a deeper blue overhead, with a warm glow round the sun. Drawn at the far plane, behind everything.
 const skyDome = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), new THREE.ShaderMaterial({
   side: THREE.BackSide, depthWrite: false, fog: false,
-  uniforms: { uHaze: { value: SKY }, uZenith: { value: new THREE.Color('#4f86c4') }, uSun: { value: new THREE.Vector3(...SUN) }, uGlow: { value: new THREE.Color('#ffe9c8') } },
+  uniforms: { uHaze: { value: SKY }, uZenith: { value: new THREE.Color('#4f86c4') }, uSun: { value: new THREE.Vector3(0, 1, 0) }, uGlow: { value: new THREE.Color('#ffe9c8') } },
   vertexShader: 'varying vec3 vDir; void main() { vDir = position; vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0); gl_Position = p.xyww; }',
   fragmentShader: `uniform vec3 uHaze, uZenith, uGlow, uSun; varying vec3 vDir;
     void main() {
@@ -143,7 +143,9 @@ function useIsland(seed, made) {
   sea = buildSea(terrain);
   lakesMesh = buildLakes(terrain, findLakes(terrain).label);
   scene.add(terrainMesh, seabed, sea, lakesMesh);
-  sun.position.set(W * SUN[0], W * SUN[1], W * SUN[2]);
+  const sd = terrainMesh.userData.sun; // per island: from the side of its course
+  sun.position.set(W * sd[0], W * sd[1], W * sd[2]);
+  skyDome.material.uniforms.uSun.value.set(sd[0], sd[1], sd[2]);
   Object.assign(dbg, { seed, fingerprint: fingerprint(terrain), stats: stats(terrain) });
 }
 

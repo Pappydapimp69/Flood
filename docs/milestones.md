@@ -411,3 +411,13 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
 - Sun lower (27 degrees) and warmer, sky fill weaker and cooler; trees darken toward the ground so they stand on it.
 - Sky: a dome from the haze colour at the horizon to deeper blue overhead, with a glow round the sun.
 - Checked by eye on before / after screenshots (seed 4, ground and falling views), not on a phone.
+
+## Ground cover that follows the land (2026-11-13)
+- The baked light moved out of the vertex colours into its own attribute (`shade`): the shader tells grass, rock
+  and lake bed apart by colour, and a cool shadow tint in the colour made shaded grass read as a lake bed.
+- The sun is aimed per island, from the side of its course (`sunOf`): with a fixed compass sun some islands had
+  the whole start in the summits' shadow.
+- Cover (`damp` attribute: hollows and lake shores damp, crests dry): lush green where water gathers, straw on the
+  crests, rust bracken on drier slopes, pale tussock, bare stone on spurs, tufts close up; turf and lichen break
+  up the stone of the high ground. A brighter meadow green under it all.
+- Checked by eye on one island's opening view (seed 4); the lower course and phones are unchecked.
