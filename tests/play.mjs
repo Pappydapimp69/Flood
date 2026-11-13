@@ -308,11 +308,17 @@ await check('touch drop: ◀ ▶ turn, ▼ DIVE / ▲ DASH fly it, and no drag s
   await btn('t-right', 'pointerup');
   const steers = await page.evaluate(() => __flood.steers.slice());
   if (!steers.includes(1) || steers.includes(-1)) throw new Error(`▶ gave steers ${steers.join('')}`);
-  // ▼ DIVE: full throttle, well over the base 82.5 m/s glide. ▲ DASH: a burst about twice that again.
-  await btn('t-dive', 'pointerdown');
-  await ticks(10, '10 ticks diving');
-  const fast = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
-  await btn('t-dive', 'pointerup');
+  // ▼ DIVE is a toggle: one tap and it keeps diving with the thumb lifted; a second tap stops it.
+  const diveK = () => page.evaluate(() => __flood.river.dropping ? __flood.river.diveK ?? 0 : -1);
+  await btn('t-dive', 'pointerdown'); await btn('t-dive', 'pointerup');
+  await ticks(30, '30 ticks after a tap on DIVE');
+  const held = await diveK();
+  if (held >= 0 && !(held > 0.5)) throw new Error(`a tap on DIVE did not keep diving (${held.toFixed(2)})`);
+  await btn('t-dive', 'pointerdown'); await btn('t-dive', 'pointerup');
+  await ticks(30, '30 ticks after a second tap');
+  const stopped = await diveK();
+  if (stopped >= 0 && !(stopped < 0.2)) throw new Error(`a second tap did not stop the dive (${stopped.toFixed(2)})`);
+  const fast = 999; // (the dive no longer changes the glide speed)
   await btn('t-float', 'pointerdown');
   await ticks(6, '6 ticks dashing');
   const slow = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);

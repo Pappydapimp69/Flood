@@ -130,9 +130,27 @@ export function createInput(target) {
     el.addEventListener('lostpointercapture', off);
     el.addEventListener('contextmenu', (e) => e.preventDefault());
   };
+  // Wire an on-screen button to a toggle: each tap turns the control on or off (owner, 2026-11-13:
+  // holding DIVE tied up the right thumb that also needs DASH).
+  const toggles = new Map();
+  const bindToggle = (el, what) => {
+    toggles.set(what, el);
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); e.stopPropagation();
+      btn[what] = !btn[what]; el.classList.toggle('on', btn[what]); sync();
+    });
+    el.addEventListener('contextmenu', (e) => e.preventDefault());
+  };
+  // Turn a toggle off (the drop has landed, a new race).
+  const untoggle = (what) => {
+    if (!btn[what]) return;
+    btn[what] = false; toggles.get(what)?.classList.remove('on'); sync();
+  };
 
   return {
     bind,
+    bindToggle,
+    untoggle,
     // True while the steer this tick comes from touch alone (no key or pad held): phones
     // turn 20% slower (owner, 2026-11-11), so the game drops every fifth turning tick.
     touchSteer: () => !keys.left && !keys.right && !pad.left && !pad.right && (held.left || held.right),

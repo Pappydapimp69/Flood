@@ -1014,7 +1014,7 @@ const tpad = document.getElementById('tpad'), tfly = document.getElementById('tf
 const padFly = document.getElementById('padfly'), padDive = document.getElementById('pf-dive'), padDash = document.getElementById('pf-dash');
 input.bind(document.getElementById('t-left'), 'left');
 input.bind(document.getElementById('t-right'), 'right');
-input.bind(document.getElementById('t-dive'), 'fwd');
+input.bindToggle(document.getElementById('t-dive'), 'fwd'); // a tap turns diving on or off: the thumb stays free for DASH
 input.bind(document.getElementById('t-float'), 'back');
 const calmNow = () => performance.now() < introUntil; // the opening shot: nobody steers yet
 
@@ -1335,6 +1335,7 @@ function updateSkill() {
   if (touchUI) {
     tpad.hidden = !river || !isRacing(river) || mapView || calmNow();
     tfly.hidden = !river?.dropping || mapView || calmNow();
+    if (!river?.dropping) input.untoggle('fwd'); // landed (or a new race): diving is off again
   }
   // A pad while falling: the two descent controls on screen, the dash with its recharge.
   padFly.hidden = touchUI || !padSeen || !river?.dropping || !isRacing(river) || mapView || calmNow();
@@ -1507,7 +1508,7 @@ const COACH = [
 ];
 const TUTORIAL = [
   { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Turn your falling drop with <b>◀ ▶</b>')}`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `${key('<b>Right stick ↑</b> descends faster, <b>RB</b> dashes', '', '<b>▼ DIVE</b> to fall faster, <b>▲ DASH</b> for a burst of speed')}`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => `${key('<b>Right stick ↑</b> descends faster, <b>RB</b> dashes', '', 'Tap <b>▼ DIVE</b> to fall faster (tap again to stop), <b>▲ DASH</b> for a burst of speed')}`, pass: (c) => c.glided || lowPower || !padSeen },
   { drop: true, text: () => (lowPower ? '<b>▼ DIVE</b> descends faster to low clouds, <b>▲ DASH</b> bursts ahead, then recharges'
     : (padSeen ? '<b>Right stick ↑</b> descends faster to low clouds, <b>RB</b> dashes: a burst ahead, then a recharge' : '<b>W / S</b>: <b>↑</b> descends faster to low clouds, <b>↓</b> dashes: a burst ahead, then a recharge')), pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
