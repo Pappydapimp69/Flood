@@ -253,7 +253,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (and the D-pad); falling, up hurries the fall · right stick is the camera: sideways looks round, up / down tilts while falling, up raises the view once landed · RB: dash while falling · A: gouge (select / race again in menus) · RB: surge · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (and the D-pad); falling, its up / down tilts the view · right stick: falling, up descends faster; once landed it looks around, up for a raised view · RB: dash while falling · A: gouge (select / race again in menus) · RB: surge · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
