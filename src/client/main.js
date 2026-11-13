@@ -253,7 +253,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (and the D-pad) steers · right stick: falling, up descends faster; once landed it looks around, up for a raised view · RB: dash while falling · A: gouge (select / race again in menus) · RB: surge · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (and the D-pad) steers; falling, its up / down tilts the view · right stick: falling, up descends faster; once landed it looks around, up for a raised view · RB: dash while falling · A: gouge (select / race again in menus) · RB: surge · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -738,6 +738,7 @@ let camYaw = 0, lookIdle = 0;
 let introUntil = 0;
 let lastCamMode = ''; // the camera's current view; a change is a cut
 let camRise = 0; // 0..1: how far the right stick has raised the view
+let camTilt = 0; // -1..1: falling, how far the left stick has tilted the view up (+) or down (-)
 // 1: cuts deeper than you (touching it drains you), -1: shallower (you drain
 // it), 0: too close to call — the same deadband the sim uses.
 function threatOf(r) {
@@ -1904,8 +1905,12 @@ renderer.setAnimationLoop(() => {
     }
     const ax = camDir.x, az = camDir.y, back = 800, up = 280; // close behind: the ground and the clouds rush past
     const k = cut ? 1 : 1 - Math.exp(-frameDt * 4);
+    // The left stick's up / down tilts the view (owner, 2026-11-13): up toward the horizon and the
+    // clouds ahead, down at the ground below; let go and it eases back.
+    const tiltIn = cut ? 0 : input.tilt();
+    camTilt += (tiltIn - camTilt) * (1 - Math.exp(-frameDt * (tiltIn ? 4 : 2.5)));
     camera.position.lerp(new THREE.Vector3(fx - ax * back, fy + up, fz - az * back), k);
-    camTarget.lerp(new THREE.Vector3(fx + ax * 900, fy - 220, fz + az * 900), k);
+    camTarget.lerp(new THREE.Vector3(fx + ax * 900, fy - 220 + camTilt * (camTilt > 0 ? 700 : 900), fz + az * 900), k);
     camera.lookAt(camLook.copy(camTarget));
     camYaw = 0;
     showAltimeter();
@@ -2022,7 +2027,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive to low clouds · ▲ dash' : padSeen ? 'left stick steers · right stick ↑ descends · RB dash' : '← → steer · ↑ dive to low clouds · ↓ dash') + (me.dashT > 0 ? ' · DASHING' : world.tick >= (me.dashAt ?? 0) ? ' · dash ready' : ` · dash in ${Math.ceil((me.dashAt - world.tick) / TICK_HZ)} s`)
+  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive to low clouds · ▲ dash' : padSeen ? 'left stick steers and tilts the view · right stick ↑ descends · RB dash' : '← → steer · ↑ dive to low clouds · ↓ dash') + (me.dashT > 0 ? ' · DASHING' : world.tick >= (me.dashAt ?? 0) ? ' · dash ready' : ` · dash in ${Math.ceil((me.dashAt - world.tick) / TICK_HZ)} s`)
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`
@@ -2134,6 +2139,7 @@ Object.defineProperties(dbg, {
   focus: { get: () => focus },
   camYaw: { get: () => camYaw },
   camRise: { get: () => camRise },
+  camTilt: { get: () => camTilt },
   crossMarks: { get: () => crossMarks },
   cam: { get: () => ({ x: camera.position.x, y: camera.position.y, z: camera.position.z, tx: camTarget.x, ty: camTarget.y, tz: camTarget.z, fov: camera.fov }) },
 });
