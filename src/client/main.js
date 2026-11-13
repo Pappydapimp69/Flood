@@ -1930,7 +1930,7 @@ renderer.setAnimationLoop(() => {
     // Right stick (once landed): sideways looks up to 30 degrees left or right
     // and drifts back to centre when let go; up raises the camera and tilts it
     // down for a look far ahead.
-    const look = input.look(), riseIn = input.rise(); // the right stick raises the view, falling or landed
+    const look = input.look(), riseIn = focus.dropping ? 0 : input.rise(); // landed only: falling, the right stick tilts the view instead (no raise on top)
     const yawWant = look * 0.52;
     camYaw += (yawWant - camYaw) * (1 - Math.exp(-frameDt * (look ? 5 : 2.5)));
     camRise += (riseIn - camRise) * (1 - Math.exp(-frameDt * (riseIn > camRise ? 4 : 3)));
