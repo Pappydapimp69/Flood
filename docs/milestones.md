@@ -401,3 +401,13 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
 - Regression to settle before merging: with the spines this far out one bot run in 12 never finished (none
   did with the spines nearer the centre), and unsteered finishes fell from 5 of 12 to 3.
 - Open: whether a player feels it. Agents cannot say; it needs hands on it.
+
+## Light with depth (2026-11-13, owner: it is visually flat)
+- Cause: nothing cast a shadow, the sky fill was half the sun's strength, and the sky was one flat colour.
+- Baked light (`src/client/terrainMesh.js`): once per island, march from every ground cell toward the sun over the
+  displayed heights and darken what is hidden (cool, soft-edged), and darken hollows by how much sky they see.
+  Trees throw shadows the same way (`castTrees`) and take the shade of the hill they stand behind. No shadow maps,
+  nothing per frame. The grid is 100 m a cell: hills, walls and stands cast shadows; a lone boulder does not.
+- Sun lower (27 degrees) and warmer, sky fill weaker and cooler; trees darken toward the ground so they stand on it.
+- Sky: a dome from the haze colour at the horizon to deeper blue overhead, with a glow round the sun.
+- Checked by eye on before / after screenshots (seed 4, ground and falling views), not on a phone.

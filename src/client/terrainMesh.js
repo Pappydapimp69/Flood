@@ -36,6 +36,84 @@ function colorAt(h, slope, lakeDepth, out) {
 
 const BED = new THREE.Color('#7a6a55');
 
+// ---- Baked light. The sun never moves and the ground is a height grid, so cast shadows and
+// the shade in hollows are worked out once per island and multiplied into the vertex colours:
+// no shadow maps, nothing per frame (the game already drops resolution on phones).
+// SUN: unit vector toward the sun, low enough (about 27 degrees) that shadows rake across the slope.
+export const SUN = (() => { const v = [-0.6, 0.34, -0.3], l = Math.hypot(...v); return v.map((c) => c / l); })();
+const SHADOW = [0.4, 0.48, 0.66]; // a fully shadowed colour keeps this much: cool, lit only by the sky
+const TREE_SHADOW = 240; // metres (displayed) a tree stands over its cell, for the shadow it throws
+
+// 1 where the sun reaches the ground, 0 in full shadow, soft at the edge. H: displayed heights.
+// extra: metres added to cells that hold something tall (trees); it shades others, never itself.
+function sunLit(n, cell, H, extra = null) {
+  const hz = Math.hypot(SUN[0], SUN[2]), dx = SUN[0] / hz, dy = SUN[2] / hz, rise = (cell * SUN[1]) / hz;
+  let top = -Infinity;
+  for (let i = 0; i < n * n; i++) top = Math.max(top, H[i] + (extra ? extra[i] : 0));
+  const out = new Float32Array(n * n).fill(1);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const i = y * n + x, h0 = H[i] + 3;
+    if (H[i] < -20) continue; // deep seabed: under the sea surface anyway
+    let lit = 1;
+    for (let s = 1; s < 140; s++) {
+      const ray = h0 + rise * s;
+      if (ray > top) break;
+      const px = x + dx * s, py = y + dy * s;
+      if (px < 0 || py < 0 || px > n - 1 || py > n - 1) break;
+      const x0 = Math.floor(px), y0 = Math.floor(py), x1 = Math.min(n - 1, x0 + 1), y1 = Math.min(n - 1, y0 + 1), fx = px - x0, fy = py - y0;
+      let g = (H[y0 * n + x0] * (1 - fx) + H[y0 * n + x1] * fx) * (1 - fy) + (H[y1 * n + x0] * (1 - fx) + H[y1 * n + x1] * fx) * fy;
+      if (extra) g += extra[Math.round(py) * n + Math.round(px)];
+      const clear = (ray - g) / (s * cell * 0.09); // a near miss is half shade: the penumbra widens with distance
+      if (clear < lit) { lit = clear; if (lit <= 0) { lit = 0; break; } }
+    }
+    out[i] = lit;
+  }
+  return out;
+}
+
+// How open the sky is over each cell: 1 on a ridge or a plain, lower in gullies and at the foot of walls.
+function skyOpen(n, cell, H) {
+  const out = new Float32Array(n * n), dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const i = y * n + x;
+    let sum = 0;
+    for (const [ax, ay] of dirs) {
+      let m = 0;
+      for (const d of [1, 2, 4, 7]) {
+        const px = Math.min(n - 1, Math.max(0, x + ax * d)), py = Math.min(n - 1, Math.max(0, y + ay * d));
+        m = Math.max(m, (H[py * n + px] - H[i]) / (d * cell * Math.hypot(ax, ay)));
+      }
+      sum += m / (1 + m); // slope to the horizon that way, squashed to 0..1
+    }
+    out[i] = 1 - 0.75 * (sum / 8);
+  }
+  return out;
+}
+
+const litTint = (lit, c) => SHADOW[c] + (1 - SHADOW[c]) * lit;
+
+// Trees throw shadows too (a pine stands about 250 m over its 100 m cell): darken the ground
+// they shade. cells: the cells that hold a drawn tree. Once per island.
+export function castTrees(mesh, cells) {
+  const ud = mesh.userData, n = ud.t.size;
+  if (ud.treesCast) return;
+  ud.treesCast = true;
+  const extra = new Float32Array(n * n);
+  let any = false;
+  for (const k of cells) { extra[k] = TREE_SHADOW; any = true; }
+  if (!any) return;
+  const lit = sunLit(n, ud.t.cell, ud.shown, extra), col = mesh.geometry.attributes.color;
+  for (let i = 0; i < n * n; i++) {
+    if (lit[i] >= ud.lit[i] - 0.01) continue;
+    for (let c = 0; c < 3; c++) {
+      const k = litTint(ud.lit[i] + (lit[i] - ud.lit[i]) * 0.8, c) / litTint(ud.lit[i], c); // a little light gets through the branches
+      ud.pristineColors[i * 3 + c] *= k; ud.baseColors[i * 3 + c] *= k; col.array[i * 3 + c] *= k;
+    }
+  }
+  col.clearUpdateRanges();
+  col.needsUpdate = true;
+}
+
 export function buildTerrainMesh(t) {
   const n = t.size, W = t.worldSize;
   const geo = new THREE.PlaneGeometry(W, W, n - 1, n - 1);
@@ -59,11 +137,14 @@ export function buildTerrainMesh(t) {
       tmp.toArray(colors, i * 3);
     }
   }
+  // Bake the light in: cast shadows go cool and dark, hollows lose some sky.
+  const shown = Float32Array.from(base, (h) => h * VERT), lit = sunLit(n, t.cell, shown), open = skyOpen(n, t.cell, shown);
+  for (let i = 0; i < n * n; i++) for (let c = 0; c < 3; c++) colors[i * 3 + c] *= litTint(lit[i], c) * open[i];
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   const mat = terrainMaterial();
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'terrain';
-  mesh.userData = { t, base, pristineBase: base.slice(), baseColors: colors.slice(), pristineColors: colors.slice() };
+  mesh.userData = { t, base, pristineBase: base.slice(), baseColors: colors.slice(), pristineColors: colors.slice(), shown, lit, open };
   for (let i = 0; i < n * n; i++) setNormal(mesh, i);
   return mesh;
 }

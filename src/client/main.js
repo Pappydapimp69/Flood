@@ -4,7 +4,7 @@ import { generateIsland, stats, fingerprint, findLakes, TUTORIAL as COURSE } fro
 import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, startLine, pastLine, descentLane, laneHalf, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
-import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, VERT } from './terrainMesh.js';
+import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, castTrees, SUN, VERT } from './terrainMesh.js';
 import { buildSea, buildLakes, makeSurge, makeSpray, updateSpray, burstSpray, tickWater } from './water.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
@@ -104,9 +104,32 @@ function hazeFor(alt, dt) {
   hazeK += (want - hazeK) * Math.min(1, dt * 2);
   if (scene.fog) scene.fog.density = fogBase * hazeK;
 }
-scene.add(new THREE.HemisphereLight('#dbeaf5', '#5b5040', 1.1));
-const sun = new THREE.DirectionalLight('#fff3dc', 2.2);
+// A warm, strong sun against a weaker, cool sky fill: the lit side and the shaded side of
+// everything read apart (the fill used to be half the sun's strength, which flattened every form).
+scene.add(new THREE.HemisphereLight('#cfe2f7', '#4d4638', 0.62));
+const sun = new THREE.DirectionalLight('#ffe8c2', 3.9); // strong: at 27 degrees flat ground only catches 45% of it
 scene.add(sun);
+
+// The sky: a dome that goes from the haze colour at the horizon (so the fog meets it without a
+// seam) to a deeper blue overhead, with a warm glow round the sun. Drawn at the far plane, behind everything.
+const skyDome = new THREE.Mesh(new THREE.SphereGeometry(1, 24, 12), new THREE.ShaderMaterial({
+  side: THREE.BackSide, depthWrite: false, fog: false,
+  uniforms: { uHaze: { value: SKY }, uZenith: { value: new THREE.Color('#4f86c4') }, uSun: { value: new THREE.Vector3(...SUN) }, uGlow: { value: new THREE.Color('#ffe9c8') } },
+  vertexShader: 'varying vec3 vDir; void main() { vDir = position; vec4 p = projectionMatrix * vec4(mat3(viewMatrix) * position, 1.0); gl_Position = p.xyww; }',
+  fragmentShader: `uniform vec3 uHaze, uZenith, uGlow, uSun; varying vec3 vDir;
+    void main() {
+      vec3 d = normalize(vDir);
+      float up = clamp(d.y, 0.0, 1.0);
+      vec3 col = mix(uHaze, uZenith, pow(up, 0.55));
+      float s = max(dot(d, uSun), 0.0);
+      col += uGlow * (0.22 * pow(s, 6.0) + 0.9 * pow(s, 220.0));
+      gl_FragColor = vec4(col, 1.0);
+      #include <colorspace_fragment>
+    }`,
+}));
+skyDome.frustumCulled = false;
+skyDome.renderOrder = -10;
+scene.add(skyDome);
 
 // The island changes per race online, so its meshes are rebuilt on demand.
 let terrain, terrainMesh, seabed, sea, lakesMesh, W;
@@ -120,7 +143,7 @@ function useIsland(seed, made) {
   sea = buildSea(terrain);
   lakesMesh = buildLakes(terrain, findLakes(terrain).label);
   scene.add(terrainMesh, seabed, sea, lakesMesh);
-  sun.position.set(-W * 0.6, W * 0.5, -W * 0.3);
+  sun.position.set(W * SUN[0], W * SUN[1], W * SUN[2]);
   Object.assign(dbg, { seed, fingerprint: fingerprint(terrain), stats: stats(terrain) });
 }
 
@@ -555,8 +578,9 @@ function beginRace(seed, raceIds, me, rolled) {
     scene.remove(m);
     m.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); o.dispose?.(); });
   }
-  trees = buildTrees(world, lite ? 0 : lowPower ? 6000 : 12000);
-  rocks = buildRocks(world, lite ? 0 : lowPower ? 1200 : 3500);
+  trees = buildTrees(world, lite ? 0 : lowPower ? 6000 : 12000, terrainMesh.userData.lit);
+  rocks = buildRocks(world, lite ? 0 : lowPower ? 1200 : 3500, terrainMesh.userData.lit);
+  castTrees(terrainMesh, trees.userData.cells);
   scene.add(rocks);
   lava = buildLava(world);
   scene.add(trees, lava);
