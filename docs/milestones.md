@@ -421,3 +421,6 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
   crests, rust bracken on drier slopes, pale tussock, bare stone on spurs, tufts close up; turf and lichen break
   up the stone of the high ground. A brighter meadow green under it all.
 - Checked by eye on one island's opening view (seed 4); the lower course and phones are unchecked.
+- Edges (same day): cover patches no longer fade across hundreds of metres. Each wins where its measure, pushed by
+  fine detail noise, crosses a threshold in a narrow band (height-blend style); the band widens with distance so
+  far edges do not shimmer. Checked by eye on seed 4's opening view.

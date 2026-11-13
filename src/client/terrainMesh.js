@@ -209,18 +209,24 @@ function terrainMaterial() {
           float n2 = tn(vWPos.xz * 0.0031 + 17.0), n3 = tn(vWPos.xz * 0.011 + 41.0);
           float dampK = clamp(vDamp * 1.1 + (0.5 - macro) * 1.2, -1.0, 1.0);
           g = mix(g, vec3(0.33, 0.41, 0.15), land * 0.65); // a brighter meadow green under it all (the old base read as mud once lit)
-          g = mix(g, vec3(0.27, 0.47, 0.15), land * smoothstep(0.05, 0.7, dampK) * 0.8);
-          g = mix(g, vec3(0.71, 0.63, 0.32), land * smoothstep(0.05, 0.7, -dampK) * 0.7);
-          g = mix(g, vec3(0.50, 0.33, 0.18), land * smoothstep(0.6, 0.78, n2) * (1.0 - smoothstep(0.0, 0.5, dampK)) * 0.6);
-          g = mix(g, vec3(0.62, 0.66, 0.36), land * smoothstep(0.62, 0.85, n3) * 0.35);
+          // Hard, broken edges (height-blend style): each cover wins where its measure, pushed about by
+          // fine detail noise, crosses a threshold, in a narrow band, instead of fading across hundreds
+          // of metres. The band widens with distance so the edges never shimmer.
+          float grit = tn(vWPos.xz * 0.06) * 0.5 + tn(vWPos.xz * 0.17) * 0.5;
+          float brk = (tn(vWPos.xz * 0.019 + 7.0) - 0.5) * 0.6 + (grit - 0.5) * 0.5;
+          float e = mix(0.22, 0.035, near);
+          #define EDGE(v, t) smoothstep(-e, e, (v) - (t) + brk * 0.55)
+          g = mix(g, vec3(0.27, 0.47, 0.15), land * EDGE(dampK, 0.3) * 0.8);
+          g = mix(g, vec3(0.71, 0.63, 0.32), land * EDGE(-dampK, 0.3) * 0.7);
+          g = mix(g, vec3(0.50, 0.33, 0.18), land * EDGE(n2, 0.68) * (1.0 - EDGE(dampK, 0.2)) * 0.65);
+          g = mix(g, vec3(0.62, 0.66, 0.36), land * EDGE(n3, 0.74) * 0.4);
           // High ground is stone by its vertex colour: break it with alpine turf where it is damp or sheltered, and pale lichen.
           float upland = (1.0 - land) * (1.0 - wet) * smoothstep(${(1500 * VERT).toFixed(1)}, ${(1900 * VERT).toFixed(1)}, vWPos.y) * (1.0 - smoothstep(${(2500 * VERT).toFixed(1)}, ${(2750 * VERT).toFixed(1)}, vWPos.y));
-          g = mix(g, vec3(0.36, 0.42, 0.17), upland * smoothstep(0.38, 0.62, macro * 0.7 + n2 * 0.3 + vDamp * 0.35) * 0.75);
-          g = mix(g, vec3(0.60, 0.58, 0.47), upland * smoothstep(0.66, 0.86, n3) * 0.4);
-          float rockMix = max(smoothstep(0.32, 0.62, slope + (macro - 0.5) * 0.25), land * smoothstep(0.55, 1.0, -vDamp) * smoothstep(0.45, 0.7, n3) * 0.7) * (1.0 - wet);
+          g = mix(g, vec3(0.36, 0.42, 0.17), upland * EDGE(macro * 0.7 + n2 * 0.3 + vDamp * 0.35, 0.5) * 0.8);
+          g = mix(g, vec3(0.60, 0.58, 0.47), upland * EDGE(n3, 0.76) * 0.45);
+          float rockMix = max(smoothstep(0.32, 0.62, slope + (macro - 0.5) * 0.25), land * smoothstep(0.55, 1.0, -vDamp) * EDGE(n3, 0.58) * 0.7) * (1.0 - wet);
           vec3 col = mix(g, rock, rockMix);
           // Close-up grit and scree, and tufts in the grass nearer still.
-          float grit = tn(vWPos.xz * 0.06) * 0.5 + tn(vWPos.xz * 0.17) * 0.5;
           col *= mix(1.0, 0.74 + 0.5 * grit, near);
           col *= mix(1.0, 0.8 + 0.4 * tn(vWPos.xz * 0.45), land * (1.0 - rockMix) * (1.0 - smoothstep(300.0, 1800.0, dist)));
           // Contour lines every 10 m of height (every 50 m a little stronger),
