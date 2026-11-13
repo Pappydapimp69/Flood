@@ -257,7 +257,7 @@ input.onPad = () => {
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
-const showMute = () => { muteBtn.textContent = audio.muted ? '🔇' : audio.blocked ? '🔈 click for sound' : '🔊'; };
+const showMute = () => { muteBtn.textContent = audio.muted ? '🔇' : audio.blocked ? `🔈 ${lowPower ? 'tap' : 'click'} for sound` : '🔊'; };
 // A gamepad press can't start sound in a browser: say so until a click or key wakes it.
 setInterval(showMute, 1000);
 muteBtn.onclick = () => { audio.toggle(); showMute(); };
@@ -913,7 +913,7 @@ const STATIONS = [
   { key: 'lake', at: COURSE.lake, trig: COURSE.lake - 0.07, title: 'Station 1 · The lake',
     html: () => 'Straight ahead is a <b>lake</b>. Flow into it: your water pours in and raises it until it spills over the far bank. Cut the outlet and <b>everything that drains through it feeds you</b>. Lakes are the biggest source of water.' },
   { key: 'unlock:surge', at: COURSE.surge, trig: COURSE.surge - 0.04, unlock: 'surge', title: 'Station 2 · Surge',
-    html: () => `On the flat, water slows down. <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}) adds a 2 s burst of speed on top of what you have. It costs a little water. Out on the real course it unlocks once you hold ${(TUNE.surgeUnlock / 1e6).toFixed(1)}M L, or as soon as you fall far behind the leader; here it's yours now. <b>Use it now.</b>` },
+    html: () => `On the flat, water slows down. <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}) builds up for a moment (longer the bigger you are), then gives a 2 s burst of speed on top of what you have. It costs a little water. Out on the real course it unlocks once you hold ${(TUNE.surgeUnlock / 1e6).toFixed(1)}M L, or as soon as you fall far behind the leader; here it's yours now. <b>Use it now.</b>` },
   { key: 'unlock:gouge', at: COURSE.ridge, trig: COURSE.ridge - 0.05, unlock: 'gouge', title: 'Station 3 · Gouge',
     html: () => `A <b>rock ridge</b> blocks the run. Its only gap is far off by the left wall. <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}) lets you climb over rises for 3 s. Press it <b>as you reach the ridge</b>. Using either skill puts <b>both</b> on cooldown, so time it. (Real course: it unlocks at ${(TUNE.gougeUnlock / 1e6).toFixed(1)}M L.)` },
   { key: 'storm', at: COURSE.storm, trig: COURSE.storm - 0.06, storm: true, title: 'Station 4 · A storm',
@@ -1097,7 +1097,6 @@ function sampleSteer() {
   else touchTurn = 0;
   const { f, g } = dropPitch(aim);
   input.takeDash(); // this tick has read the latched dash tap
-  if (coach) { if (f) coach.fell = true; if (g > 0) coach.glided = true; }
   dbg.steers.push(steer);
   watchCoach(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
@@ -1283,7 +1282,7 @@ function advance(inputs) {
         teach('bump', 'Bumping', 'Drops that collide knock each other off course. Whoever hits with more momentum (more water, more speed into the other) <b>wins</b>: the loser spills water and the winner soaks most of it up. Ram lighter drops; dodge heavier ones.', e.x, e.z);
       }
     } else if (e.type === 'unlock') {
-      if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `${e.why === 'behind' ? "You're far behind the leader, so you get" : "You're big enough for"} <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
+      if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `${e.why === 'behind' ? "You're far behind the leader, so you get" : "You're big enough for"} <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): it builds up for a moment (longer the bigger you are), then gives a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
       if (river && e.river === river.idx) { showPop(e.skill === 'gouge' ? 'GOUGE unlocked — A / SPACE to boost over a rise' : 'SURGE unlocked — RB / Q for a speed burst'); audio.splash(1); }
     } else if (e.type === 'cloud') {
       // A cloud drains a little every tick: add it up, say it twice a second.
@@ -1509,9 +1508,13 @@ const COACH = [
 ];
 const TUTORIAL = [
   { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Turn your falling drop with <b>◀ ▶</b>')}`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `${key('<b>Right stick ↑</b> descends faster, <b>RB</b> dashes', '', 'Tap <b>▼ DIVE</b> to fall faster (tap again to stop), <b>▲ DASH</b> for a burst of speed')}`, pass: (c) => c.glided || lowPower || !padSeen },
-  { drop: true, text: () => (lowPower ? '<b>▼ DIVE</b> descends faster to low clouds, <b>▲ DASH</b> bursts ahead, then recharges'
-    : (padSeen ? '<b>Right stick ↑</b> descends faster to low clouds, <b>RB</b> dashes: a burst ahead, then a recharge' : '<b>W / S</b>: <b>↑</b> descends faster to low clouds, <b>↓</b> dashes: a burst ahead, then a recharge')), pass: (c) => c.fell },
+  // Dive and dash are taught one at a time, each passed by doing it (the one combined step passed on either,
+  // and its first half passed by itself, so nobody was ever asked to dash). Each also passes after a while:
+  // a step nobody completes must not hide the ones after it for the whole fall.
+  { drop: true, text: () => key('<b>Right stick ↑</b> dives: you fall faster, to reach low clouds', 'Hold <b>↑</b> (or W) to dive: you fall faster, to reach low clouds', 'Tap <b>▼ DIVE</b> to fall faster and reach low clouds · tap it again to stop'),
+    pass: (c) => (river.diveK ?? 0) > 0.5 || c.secs > 20 },
+  { drop: true, text: () => `${key('<b>RB</b> dashes', 'Press <b>↓</b> (or S) to dash', 'Tap <b>▲ DASH</b>')}: a burst ahead, then a ${Math.round(TUNE.dashCool / TICK_HZ)} s recharge`,
+    pass: (c) => (river.dashAt ?? 0) - TUNE.dashCool >= c.since || c.secs > 25 },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the ◀ ▶ buttons')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
   { text: () => 'Follow the <b>gold beacons</b> down the course', pass: (c) => c.stage >= 2 },
@@ -1523,13 +1526,13 @@ const TUTORIAL = [
 ];
 let padSeen = false, tutorial = false, coachSteps = COACH;
 const coachEl = document.getElementById('coach');
-let coach = null; // { step, since (tick), steered, mapped, gouged, surged, glided, fell, clouded }
+let coach = null; // { step, since (tick), steered, mapped, gouged, surged, clouded }
 function startCoach() {
   let done = params.has('nocoach') && !tutorial;
   try { done ||= !tutorial && localStorage.getItem('flood.coached') === '1'; } catch { /* no storage */ }
   coachSteps = tutorial ? TUTORIAL : COACH;
   taught.clear(); lessonQueue.length = 0; lesson = null; lessonEl.hidden = true;
-  coach = done ? null : { stage: 0, step: 0, since: 0, steered: 0, mapped: false, gouged: false, surged: false, glided: false, fell: false, clouded: false };
+  coach = done ? null : { stage: 0, step: 0, since: 0, steered: 0, mapped: false, gouged: false, surged: false, clouded: false };
   coachEl.hidden = true;
 }
 function watchCoach(steer) {
