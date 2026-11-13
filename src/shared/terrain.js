@@ -71,7 +71,9 @@ export const sectionsOfExport = (seed) => sectionsOf(seed);
 // Spines (owner, 2026-11-12: ridges and canyons must shape the course): a wall of rock running down
 // the slope through the switchback and the terraces, taller than any head or Gouge passes, so the
 // course forks round its prow into two valleys and a river commits to one for the whole stretch.
-// It stands off-centre and slants: one side is a narrow canyon, the other a wide valley.
+// It stands well off the centre line: the far side is a narrow canyon where water runs fast
+// (the speed rule saturates on any slope, so without that every route ran at one pace and the
+// walls changed no result); the near side is the wide valley the trough leads into unsteered.
 function spinesOf(seed) {
   if (!ISLAND.spines) return [];
   const r = stream(seed, 'spines'), out = [];
@@ -140,6 +142,7 @@ function tutorialShape() {
 function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   // x, y in [-1, 1]; u runs down the slope, v across it.
   const u = x * S.ax + y * S.ay, v = -x * S.ay + y * S.ax;
+  lastFast = 0;
   const wu = u + S.warp * (fbm(x * 2.2, y * 2.2, seed + 11, 4) - 0.5);
   let wv = v + S.warp * (fbm(x * 2.2 + 5, y * 2.2 - 3, seed + 23, 4) - 0.5);
   const t = (wu + S.long) / (2 * S.long); // 0 at the summit end, 1 at the sea end
@@ -233,6 +236,11 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
     // it is a long lake (grow there, and cut your way out), while the canyon on the other side runs clear.
     const dq = (q - SPINE.damAt) * P.len * (2 * S.long) / SPINE.damThick;
     if (SPINE.dam && dq > -1 && dq < 1 && (sv - c) * Math.sign(P.v) < 0) h += SPINE.dam * (1 - dq * dq) * (0.9 + 0.2 * peaks);
+    // The chute: a thin strip along the foot of the spine on its canyon side, where the water runs fast
+    // (TUNE.canyonBoost). Thin on purpose: with the whole canyon fast, unsteered rivers fell into it by
+    // their seat and won 6 of 12 test races; a strip has to be steered onto and held.
+    const off = (sv - c) * Math.sign(P.v);
+    if (off >= SPINE.thick * 0.8 && off < SPINE.thick + SPINE.chute) { lastFast = S.spines.indexOf(P) + 1; lastQ = q; }
     if (d <= -1 || d >= 1) continue;
     h += SPINE.height * (1 - d * d * d * d) * Math.min(1, q / SPINE.prow, (1 - q) / SPINE.prow) * (0.85 + 0.3 * peaks);
   }
@@ -254,14 +262,14 @@ const GATE = { height: 45, thick: 0.007, gap: 0.12, spread: 0.06 };
 // height: metres (the tallest boulder is 220, a Gouge lifts a head 80). thick: half-width, as a share of the
 // corridor's. off: how far off the centre line it stands. slant: how far it drifts across over its run. prow: share of its run it rises over.
 // dam: metres (under a Gouge's 80, over any plain head), damAt: how far down the spine's run, damThick: half-width down the slope.
-const SPINE = { height: 300, thick: 0.05, off: [0.12, 0.3], slant: 0.2, prow: 0.1, dam: 0, damAt: 0.65, damThick: 0.006 };
+const SPINE = { height: 300, thick: 0.05, off: [0.3, 0.42], slant: 0.08, prow: 0.1, chute: 0.06, dam: 0, damAt: 0.65, damThick: 0.006 };
 // dam is off: at 60 it floods the wide valley into one lake of 2,000 to 3,000 cells (10M L), and rivers skate across it,
 // so unsteered rivers finished as often and as fast as without it (61 of 120, median 254 s vs 262 s; 2026-11-12).
 
 const SUMMIT = { top: 1.2, grade: 7500, at: 0.1, room: 0.06 };
 // The land behind the start line (scenery): how far back it runs (in slope lengths) and how much wider it spreads.
 const BACK = { len: 0.2, spread: 0.8 };
-let inCourse = true, lastT = 0, lastSide = 0; // set by rawHeight for the cell it just made
+let inCourse = true, lastT = 0, lastSide = 0, lastFast = 0, lastQ = 0; // set by rawHeight for the cell it just made
 // Boulder outcrops down the course: rock no river passes over, Gouge or not
 // (taller than any boosted head reaches). Baked into the ground before the
 // fill, so water's routes, the map's distances and the bots all go round them.
@@ -347,6 +355,7 @@ export function generateIsland(seed = 1, opts = {}) {
   const { size: n, worldSize, maxHeight, seaDepth, course } = { ...DEFAULTS, ...opts };
   const height = new Float32Array(n * n), mask = new Uint8Array(n * n); // mask: 1 on the race slope, 0 on scenery and sea
   const along = new Float32Array(n * n), across = new Float32Array(n * n);
+  const fast = new Uint8Array(n * n), mouths = []; // fast: canyon floor (which spine's, from 1); mouths: where each canyon opens
   const shape = opts.course === 'tutorial' ? tutorialShape() : shapeOf(seed);
   for (let y = 0; y < n; y++) {
     const v = (y / (n - 1)) * 2 - 1;
@@ -355,11 +364,17 @@ export function generateIsland(seed = 1, opts = {}) {
       height[y * n + x] = rawHeight(u, v, seed, maxHeight, seaDepth, shape);
       mask[y * n + x] = inCourse ? 1 : 0;
       along[y * n + x] = lastT; across[y * n + x] = lastSide;
+      if (inCourse && lastFast && height[y * n + x] > SEA_LEVEL) {
+        fast[y * n + x] = lastFast;
+        if (lastQ > 0.08 && lastQ < 0.2) { const m = (mouths[lastFast - 1] ??= { x: 0, y: 0, n: 0 }); m.x += x; m.y += y; m.n++; }
+      }
     }
   }
   const boulders = opts.course === 'tutorial' || opts.boulders === false ? [] : placeBoulders(seed, n, worldSize / (n - 1), height, mask, along, across);
   const filled = fillDepressions(height, n);
-  return { seed, course, mask, boulders, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
+  // Where each canyon opens, in world metres (bots and the map aim for it from far off, as a player's eye does).
+  const canyons = mouths.filter(Boolean).map((m) => ({ x: (m.x / m.n / (n - 1) - 0.5) * worldSize, z: (m.y / m.n / (n - 1) - 0.5) * worldSize }));
+  return { seed, course, mask, boulders, fast, canyons, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
     summits: summitCells(height, n, shape), axis: { x: shape.ax, y: shape.ay }, long: shape.long };
 }
 

@@ -388,3 +388,16 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
 - Open: steering is worth a factor of two in time (planner about 135 s, unsteered about 260 s) yet feels optional.
   Next to try: hitting rock stops the head dead and the route out only starts after a wait, so a wall costs
   seconds unless it is steered round.
+
+## Second try: fast water along the walls (2026-11-13)
+- Found in the speed rule: the slope bonus saturates at about a 4.5% grade and the course averages 5%, so every
+  route down runs at one pace and only distance counts. That, more than the autopilot, is why terrain did not matter.
+- Built: a chute, a strip about 500 m wide along the foot of each spine on its far side, where water runs 35%
+  faster (`TUNE.canyonBoost`, `terrain.fast`, shown as dark wet rock). The spines moved out to 0.30-0.42 of the
+  half-width, so reaching a chute means leaving the centre line and holding a line beside the wall.
+- Measured (6 islands x 2 seats): not proven. The planner's times and places did not improve (it looks 8 s ahead,
+  the chute is a 30 s commitment). With the whole canyon fast, unsteered rivers fell in by their seat and won;
+  hence the thin strip. A bot pull toward the chute ran bots into the walls, so it is off (`TUNE_BOT.canyon`).
+- Regression to settle before merging: with the spines this far out one bot run in 12 never finished (none
+  did with the spines nearer the centre), and unsteered finishes fell from 5 of 12 to 3.
+- Open: whether a player feels it. Agents cannot say; it needs hands on it.

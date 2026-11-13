@@ -26,6 +26,7 @@ export const TUNE_BOT = { margin: 0.2, sight: 2500, step: 120, steps: 10, route:
   // a quarter less through trees and half as far past a ridge. No map, no view of the finish.
   view: 1200, viewTrees: 0.75, viewRidge: 0.5, eye: 8, course: 0.6,
   // In the descent: chase one drop for at most chase ticks (x0.5 to x1.5 by aggression) or chaseHits hits, then leave it be for spare ticks.
+  canyon: 0, canyonLook: 5000, // pull toward a chute mouth ahead (times skill), from this far. Off: at 0.6 and 1.2 bots ran into the walls (2 of 12 never finished)
   chase: 240, chaseHits: 2, spare: 600, peel: 500, peelTicks: 160 };
 
 // The shortest water route to the beach from (x, z), as the map shows it: step
@@ -208,6 +209,12 @@ export function botSteer(world, bot) {
     score += TUNE_BOT.course * (hx * t.axis.x + hz * t.axis.y);
     if (sight.lake >= 0) score += P.lake * 0.5 * Math.max(-1, Math.min(1, (sight.full - 0.6) * 3)) * (1 - sight.lake / TUNE_BOT.view); // a full lake in sight pays, a low one costs
     if (end.blocked) score -= 0.6;
+    // A canyon mouth ahead and within reach: its water runs fast (it shows on the map and from far off).
+    for (const c of t.canyons ?? []) {
+      const gx = c.x - r.x, gz = c.z - r.z, gl = Math.hypot(gx, gz) || 1;
+      if (gl < TUNE_BOT.canyonLook && gx * t.axis.x + gz * t.axis.y > 0.5 * gl) score += TUNE_BOT.canyon * bot.skill * (hx * gx + hz * gz) / gl;
+    }
+    if (t.fast?.[cellIndex(t, r.x, r.z)]) score += TUNE_BOT.canyon * (hx * t.axis.x + hz * t.axis.y); // in one: stay in it, down the course
     if (goal) { const gx = goal.x - r.x, gz = goal.z - r.z, gl = Math.hypot(gx, gz) || 1; score += TUNE_BOT.aim * (hx * gx + hz * gz) / gl; } // heading along the mapped route
     const dx = (end.x - r.x) / (end.d || 1), dz = (end.z - r.z) / (end.d || 1);
     for (const p of path) {

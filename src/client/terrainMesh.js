@@ -19,6 +19,7 @@ const C = {
 };
 
 const tmp = new THREE.Color();
+const CANYON = new THREE.Color(0x3a5560);
 const ss = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -53,7 +54,9 @@ export function buildTerrainMesh(t) {
       const hx = t.height[y * n + Math.min(n - 1, x + 1)] - t.height[y * n + Math.max(0, x - 1)];
       const hy = t.height[Math.min(n - 1, y + 1) * n + x] - t.height[Math.max(0, y - 1) * n + x];
       const slope = Math.hypot(hx, hy) / (2 * t.cell);
-      colorAt(h, slope, lakeDepth, tmp).toArray(colors, i * 3);
+      colorAt(h, slope, lakeDepth, tmp);
+      if (t.fast?.[i] && lakeDepth <= LAKE_MIN_DEPTH) tmp.multiplyScalar(0.72).lerp(CANYON, 0.28); // canyon floor: dark wet rock, so the fast lane reads from afar
+      tmp.toArray(colors, i * 3);
     }
   }
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));

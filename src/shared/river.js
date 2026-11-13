@@ -216,6 +216,7 @@ export const TUNE = {
   treeBreak: 1.3,
   treeHeight: 14, // (no longer a rise: see forestDrag)
   forestDrag: 0.35, // a small river among trees runs at this share of its speed
+  canyonBoost: 1.35, // water confined in a canyon (terrain.fast) runs this much faster: the lane worth steering for
   treeCost: 0.03, // share of its speed a head of size 1 loses per tick ploughing through forest its full width; divided by size
   // A head breaks trees by force: size x speed / base speed >= treeBreak (a small fast head smashes through, a slow one is held up).
   // The heat front: from heatStart ticks (counted from the start of the drop)
@@ -1142,7 +1143,7 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   // Forest is rough ground (Manning's n for a wooded floodplain runs 3-4x
   // pasture's): a river too small to knock the trees down is slowed right
   // down among them, but never walled in; a big one flattens them.
-  const drag = world.trees?.[cHere] && !breaksTrees(r) ? TUNE.forestDrag : 1;
+  const drag = (world.trees?.[cHere] && !breaksTrees(r) ? TUNE.forestDrag : 1) * (tt.fast?.[cHere] && !onLake ? TUNE.canyonBoost : 1);
   const target = (level ? Math.max(TUNE.baseSpeed * mass, Math.min(TUNE.maxSpeed * mass, r.speed * TUNE.levelGlide))
     : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + (along >= 0 ? TUNE.satSpeed * (1 - Math.exp(-along / TUNE.satSlope)) : TUNE.slopeSpeed * along)) * mass))) * drag;
   // Momentum: more water surges up to speed just as fast, but holds it
