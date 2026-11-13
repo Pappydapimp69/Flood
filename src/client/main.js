@@ -253,7 +253,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (falling: left / right turns, up dives, down dashes) · right stick up / down: falling, the same; once landed it looks around, up for a raised view · A: gouge (select / race again in menus) · RB: surge · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (and the D-pad) steers · right stick: falling, up descends faster; once landed it looks around, up for a raised view · RB: dash while falling · A: gouge (select / race again in menus) · RB: surge · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -1010,6 +1010,7 @@ const pendingActions = [];
 const touchUI = lowPower;
 document.body.classList.toggle('touch', touchUI);
 const tpad = document.getElementById('tpad'), tfly = document.getElementById('tfly');
+const padFly = document.getElementById('padfly'), padDive = document.getElementById('pf-dive'), padDash = document.getElementById('pf-dash');
 input.bind(document.getElementById('t-left'), 'left');
 input.bind(document.getElementById('t-right'), 'right');
 input.bind(document.getElementById('t-dive'), 'fwd');
@@ -1099,6 +1100,8 @@ function sampleSteer() {
   watchCoach(steer);
   if (dbg.steers.length > 200) dbg.steers.shift();
   const k = dbg.forceSkill ? 1 : input.takeSkill(), u = k ? 0 : input.takeSurge();
+  // Falling, the Surge button (a bumper, Q) is the dash: the sim's dash input is down (f < 0).
+  if (u && river?.dropping) return { s: steer, f: -1, g, k: 0, u: 0 };
   return f || g || k || u ? { s: steer, f, g, k, u } : steer;
 }
 
@@ -1332,6 +1335,15 @@ function updateSkill() {
     tpad.hidden = !river || !isRacing(river) || mapView || calmNow();
     tfly.hidden = !river?.dropping || mapView || calmNow();
   }
+  // A pad while falling: the two descent controls on screen, the dash with its recharge.
+  padFly.hidden = touchUI || !padSeen || !river?.dropping || !isRacing(river) || mapView || calmNow();
+  if (!padFly.hidden) {
+    const wait = Math.max(0, (river.dashAt ?? 0) - world.tick), dashing = river.dashT > 0;
+    padDash.dataset.state = dashing ? 'on' : wait ? 'cool' : 'ready';
+    padDash.style.setProperty('--cool', dashing || !wait ? 0 : Math.min(1, wait / TUNE.dashCool).toFixed(3));
+    padDash.lastElementChild.textContent = dashing ? 'DASHING' : wait ? `${Math.ceil(wait / TICK_HZ)} s` : 'DASH';
+    padDive.classList.toggle('on', (river.diveK ?? 0) > 0.05);
+  }
   hud.skill.hidden = !show;
   hud.surge.hidden = !show || !TUNE.surgeOn;
   if (!show) return;
@@ -1494,9 +1506,9 @@ const COACH = [
 ];
 const TUTORIAL = [
   { drop: true, text: () => `${key('Turn with the <b>left stick ← →</b>', 'Turn your falling drop with <b>← →</b>', 'Turn your falling drop with <b>◀ ▶</b>')}`, pass: (c) => c.steered > 8 },
-  { drop: true, text: () => `${key('<b>Stick ↑</b> dives, <b>↓</b> dashes', '', '<b>▼ DIVE</b> to fall faster, <b>▲ DASH</b> for a burst of speed')}`, pass: (c) => c.glided || lowPower || !padSeen },
+  { drop: true, text: () => `${key('<b>Right stick ↑</b> descends faster, <b>RB</b> dashes', '', '<b>▼ DIVE</b> to fall faster, <b>▲ DASH</b> for a burst of speed')}`, pass: (c) => c.glided || lowPower || !padSeen },
   { drop: true, text: () => (lowPower ? '<b>▼ DIVE</b> descends faster to low clouds, <b>▲ DASH</b> bursts ahead, then recharges'
-    : `<b>${key('Right stick ↑ ↓', 'W / S', '')}</b>: <b>↑</b> descends faster to low clouds, <b>↓</b> dashes: a burst ahead, then a recharge`), pass: (c) => c.fell },
+    : (padSeen ? '<b>Right stick ↑</b> descends faster to low clouds, <b>RB</b> dashes: a burst ahead, then a recharge' : '<b>W / S</b>: <b>↑</b> descends faster to low clouds, <b>↓</b> dashes: a burst ahead, then a recharge')), pass: (c) => c.fell },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the ◀ ▶ buttons')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
   { text: () => 'Follow the <b>gold beacons</b> down the course', pass: (c) => c.stage >= 2 },
@@ -1911,7 +1923,7 @@ renderer.setAnimationLoop(() => {
     // Right stick (once landed): sideways looks up to 30 degrees left or right
     // and drifts back to centre when let go; up raises the camera and tilts it
     // down for a look far ahead.
-    const look = input.look(), riseIn = input.rise();
+    const look = input.look(), riseIn = focus.dropping ? 0 : input.rise(); // falling, the right stick's up is the descent, not the view
     const yawWant = look * 0.52;
     camYaw += (yawWant - camYaw) * (1 - Math.exp(-frameDt * (look ? 5 : 2.5)));
     camRise += (riseIn - camRise) * (1 - Math.exp(-frameDt * (riseIn > camRise ? 4 : 3)));
@@ -2010,7 +2022,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive to low clouds · ▲ dash' : '← → steer · ↑ dive to low clouds · ↓ dash') + (me.dashT > 0 ? ' · DASHING' : world.tick >= (me.dashAt ?? 0) ? ' · dash ready' : ` · dash in ${Math.ceil((me.dashAt - world.tick) / TICK_HZ)} s`)
+  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive to low clouds · ▲ dash' : padSeen ? 'left stick steers · right stick ↑ descends · RB dash' : '← → steer · ↑ dive to low clouds · ↓ dash') + (me.dashT > 0 ? ' · DASHING' : world.tick >= (me.dashAt ?? 0) ? ' · dash ready' : ` · dash in ${Math.ceil((me.dashAt - world.tick) / TICK_HZ)} s`)
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`

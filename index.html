@@ -225,6 +225,16 @@
     #tpad { left: calc(24px + env(safe-area-inset-left, 0px)); }
     #tfly { right: calc(24px + env(safe-area-inset-right, 0px)); flex-direction: column; gap: 10px; bottom: calc(64px + env(safe-area-inset-bottom, 0px)); }
     #tpad[hidden], #tfly[hidden] { display: none; }
+    /* A gamepad while falling: the descent controls, bottom right where the skill button sits once landed. */
+    #padfly { position: fixed; right: calc(24px + env(safe-area-inset-right, 0px)); bottom: calc(84px + env(safe-area-inset-bottom, 0px)); /* clear of the sound prompt */ display: flex; gap: 12px; z-index: 11; pointer-events: none; }
+    #padfly[hidden] { display: none; }
+    #padfly div { min-width: 118px; padding: 9px 14px; border-radius: 16px; background: #0b2230cc; border: 2px solid #ffffff55; color: #fff; text-align: center;
+      font: 800 18px system-ui, sans-serif; text-shadow: 0 1px 3px #000a; position: relative; overflow: hidden; }
+    #padfly b { display: block; font-size: 13px; letter-spacing: 0.06em; color: #9fe6ff; margin-bottom: 3px; }
+    #padfly div.on, #padfly div[data-state=on] { background: #45d2ffd9; color: #062430; border-color: #fff; }
+    #padfly div.on b, #padfly div[data-state=on] b { color: #062430; }
+    #padfly div[data-state=cool] { color: #ffffff99; }
+    #padfly div[data-state=cool]::after { content: ''; position: absolute; left: 0; bottom: 0; height: 4px; width: calc(var(--cool, 0) * 100%); background: #9fe6ff; }
     #tpad button, #tfly button { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
       border: 3px solid #ffffffcc; background: #0b2a36b3; color: #fff; font: 900 26px system-ui, sans-serif; cursor: pointer;
       box-shadow: 0 4px 14px #0005; display: grid; place-content: center; padding: 0; }
@@ -300,6 +310,7 @@
     <button id="play-tutorial">Tutorial · learn to play</button>
     <small class="nav">↑ ↓ to choose · A / Enter to start</small>
   </div>
+  <div id="padfly" hidden><div id="pf-dive"><b>RIGHT STICK ↑</b><span>DESCEND</span></div><div id="pf-dash" data-state="ready"><b>RB</b><span>DASH</span></div></div>
   <div id="tpad" hidden><button id="t-left" aria-label="Steer left">◀</button><button id="t-right" aria-label="Steer right">▶</button></div>
   <div id="tfly" hidden><button id="t-float" aria-label="Dash: a burst of speed">▲<small>DASH</small></button><button id="t-dive" aria-label="Dive: fall faster">▼<small>DIVE</small></button></div>
   <div id="rotate" role="alert"><div class="phone"></div><b>Turn your phone sideways</b><span>Flood plays in landscape.</span></div>

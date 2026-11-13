@@ -197,9 +197,10 @@ export function createInput(target) {
       pad.rise = ry < -0.2 ? Math.min(1, (-ry - 0.2) / 0.7) : 0; // right stick up: 0..1
       const vl = Math.hypot(vx, vy);
       pad.vec = vl > 1 ? { x: vx / vl, y: vy / vl } : { x: vx, y: vy };
-      // Falling: left stick up / down (or D-pad) glides faster / slower; right stick up / down falls faster / slower.
-      const g = y < -DEADZONE || now.has(PAD.UP) ? 1 : y > DEADZONE || now.has(PAD.DOWN) ? -1 : 0;
-      const f = ry < -DEADZONE ? 1 : ry > DEADZONE ? -1 : 0;
+      // The left stick and D-pad only steer (owner, 2026-11-13). Falling, the right stick's up
+      // descends faster; dash is the Surge button (a bumper), not a stick.
+      const g = 0;
+      const f = ry < -DEADZONE ? 1 : 0;
       if (f !== pad.fwd || g !== pad.glide) { pad.fwd = f; pad.glide = g; onChange?.(current()); }
       if (!pad.seen) { pad.seen = true; onPad?.(); }
       for (const i of now) {
