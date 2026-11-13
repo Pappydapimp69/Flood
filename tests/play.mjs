@@ -329,6 +329,16 @@ await check('touch drop: ◀ ▶ turn, ▼ DIVE / ▲ DASH fly it, and no drag s
   await btn('t-float', 'pointerup');
   await btn('t-dive', 'pointerdown'); await btn('t-dive', 'pointerup');
   if (dashAfter === dashBefore) throw new Error('DASH with DIVE on did not fire');
+  // A tap that starts and ends between two ticks still dashes (it is latched, like a steer tap).
+  await ticks(110, 'the dash recharges again');
+  const tapBefore = await page.evaluate(() => {
+    const el = document.getElementById('t-float'), ev = (type) => el.dispatchEvent(new PointerEvent(type, { pointerId: 13, pointerType: 'touch', bubbles: true, cancelable: true }));
+    const at = __flood.river.dashAt ?? 0;
+    ev('pointerdown'); ev('pointerup'); // down and up in one task: no tick can run in between
+    return at;
+  });
+  await ticks(6, '6 ticks after an instant tap on DASH');
+  if ((await page.evaluate(() => __flood.river.dashAt ?? 0)) === tapBefore) throw new Error('an instant tap on DASH did not fire');
   // A finger dragged on the canvas no longer draws the combined stick.
   const fire = (type, x, y) => page.evaluate(([type, x, y]) => document.querySelector('canvas').dispatchEvent(
     new PointerEvent(type, { pointerId: 9, pointerType: 'touch', clientX: x, clientY: y, bubbles: true })), [type, x, y]);

@@ -27,6 +27,9 @@ export function createInput(target) {
   const pressSkill = () => { skillPulse = 1; onSkill?.(); };
   let onSurge = null, surgePulse = 0;
   const pressSurge = () => { surgePulse = 1; onSurge?.(); };
+  // A dash press not yet read by a tick: a tap can start and end between two ticks (or inside one
+  // slow frame), and read only as a held level it was lost. Latched like a steer tap or a skill.
+  let dashPulse = false;
   let onPad = null; // fired once, when a gamepad is first seen
   const current = () => (held.left === held.right ? 0 : held.left ? -1 : 1);
   const press = (side) => { held[side] = true; pulse[side] = true; onChange?.(side === 'left' ? -1 : 1); };
@@ -43,6 +46,7 @@ export function createInput(target) {
   // Forward / back: hurry (dive) or dash (back) the fall. Keys or right stick up / down.
   // Back wins over forward: a sticky DIVE toggle must never cancel a held DASH (both on = dash).
   const forward = () => {
+    if (dashPulse) return -1;
     const k = keys.back ? -1 : keys.fwd ? 1 : 0;
     const b = btn.back ? -1 : btn.fwd ? 1 : 0;
     return k || b || pad.fwd;
@@ -55,6 +59,7 @@ export function createInput(target) {
     else if (FWD.has(e.code) || BACK.has(e.code)) {
       const was = forward();
       keys[FWD.has(e.code) ? 'fwd' : 'back'] = true;
+      if (BACK.has(e.code) && !e.repeat) dashPulse = true;
       if (forward() !== was) onChange?.(current());
       e.preventDefault();
     } else if (SKILL.has(e.code)) {
@@ -118,6 +123,7 @@ export function createInput(target) {
     const set = () => {
       const was = btn[what];
       btn[what] = on.size > 0;
+      if (what === 'back' && btn.back && !was) dashPulse = true;
       if (btn[what] && !was && (what === 'left' || what === 'right')) press(what);
       sync();
     };
@@ -172,6 +178,8 @@ export function createInput(target) {
     // Left stick up (+) / down (-), -1..1: tilts the camera while falling.
     tilt: () => (pad.seen ? pad.tilt ?? 0 : 0),
     // 1 once for each skill press (key, pad B or the on-screen button), then 0.
+    // Call once per tick, after reading forward(): the latched dash press has been played.
+    takeDash() { dashPulse = false; },
     takeSkill() { const k = skillPulse; skillPulse = 0; return k; },
     takeSurge() { const u = surgePulse; surgePulse = 0; return u; },
     pressSurge,

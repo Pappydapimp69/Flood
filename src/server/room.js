@@ -69,6 +69,7 @@ export class Room {
     seat.fwd = f;
     seat.glide = g;
     if (s) seat.pulse = s; // a tap shorter than a tick still turns once
+    if (f < 0) seat.dash = 1; // and a dash tap shorter than a tick still dashes
     if (msg.k === 1) seat.skill = 1; // a press, played on the next tick
     if (msg.u === 1) seat.surge = 1;
   }
@@ -122,8 +123,10 @@ export class Room {
       const seat = this.byId.get(id);
       if (!seat) continue;
       const st = seat.held || seat.pulse;
-      steers.set(id, seat.fwd || seat.glide || seat.skill || seat.surge ? { s: st, f: seat.fwd ?? 0, g: seat.glide ?? 0, k: seat.skill ?? 0, u: seat.skill ? 0 : seat.surge ?? 0 } : st);
+      const fw = seat.dash ? -1 : seat.fwd ?? 0;
+      steers.set(id, fw || seat.glide || seat.skill || seat.surge ? { s: st, f: fw, g: seat.glide ?? 0, k: seat.skill ?? 0, u: seat.skill ? 0 : seat.surge ?? 0 } : st);
       seat.pulse = 0;
+      seat.dash = 0;
       seat.skill = 0;
       seat.surge = 0;
     }

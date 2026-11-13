@@ -1096,6 +1096,7 @@ function sampleSteer() {
   if (steer && !aim && dbg.forceSteer === undefined && input.touchSteer()) { if (++touchTurn % 5 === 0) steer = 0; }
   else touchTurn = 0;
   const { f, g } = dropPitch(aim);
+  input.takeDash(); // this tick has read the latched dash tap
   if (coach) { if (f) coach.fell = true; if (g > 0) coach.glided = true; }
   dbg.steers.push(steer);
   watchCoach(steer);
