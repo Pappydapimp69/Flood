@@ -448,3 +448,21 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
 - Tested lightly: unit tests pass (four updated to the new rules, one added for the build curve); render smoke
   passes; one benchmark pass (6 islands x 2 seats). Not tuned or felt by hand; the benchmark was not rerun
   after the spines went off, beyond the one race that had failed.
+
+## Controls and the descent, tightened (2026-11-13, owner)
+- A landed river's turn eases toward the stick and out again (`TUNE.turnEase` 0.3, about 7 ticks), not a full
+  step at once. Bots turn the same way, so skill-gap numbers from before this date are not comparable.
+- Dash on a phone: it never fired while the DIVE toggle was on (the two were summed to zero; dash now wins), and
+  a quick tap could start and end between two ticks and be lost (dash is latched now, on the client and the
+  server, like a steer tap). The touch play check holds DASH with DIVE on, and taps it down and up in one task.
+- Tried and reverted the same day: the falling tilt on the right stick with the descent on the left. It broke
+  the rule that the left stick only steers; the gamepad descent play check caught it.
+- The descent lasts half as long again (`dropTicks` 2400: a straight drop measured 108-115 s on three islands,
+  was 68-75 s). Measured first: a quarter of the fall height or of the glide speed changes the time hardly at
+  all (the start point moves with the glide speed, and the drop lands at the line either way).
+- Descent clouds: 24 (was 16), same total water, each at random inside its own slice of the run. With 16 fully
+  random clouds over 120 s the longest empty stretch averaged 20 s (worst 28 s); now 11 s on average.
+- The "bot that never finishes" (seed 8, seat 8, without the drop) is not stuck: it flows the whole time and is
+  5.7 km from the beach when the 3 minutes after the first finisher run out. Its seat starts 46 km from the sea
+  by water, behind a lake. The skill-gap tool seats rivers on the summit ring; the game itself starts everyone
+  on the fair line after the drop, so this is the benchmark's seat, not a race bug.

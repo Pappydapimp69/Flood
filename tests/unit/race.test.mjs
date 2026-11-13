@@ -207,9 +207,11 @@ test('drop: with bots, every drop reaches the line within the course and nobody 
   const bots = w.rivers.map((r) => createBot(w, r));
   let worst = 0;
   for (let k = 0; k < TUNE.dropTicks * 3 && w.rivers.some((r) => r.dropping); k++) {
-    const before = w.rivers.map((r) => ({ x: r.x, z: r.z, dropping: r.dropping, k: Math.hypot(r.kx ?? 0, r.kz ?? 0) }));
+    const before = w.rivers.map((r) => ({ x: r.x, z: r.z, dropping: r.dropping, k: Math.hypot(r.kx ?? 0, r.kz ?? 0), dash: r.dashT > 0 }));
     step(w, new Map(bots.map((b, i) => [b.river.id, i % 3 ? botSteer(w, b) : { s: 1, f: 1 }])));
-    w.rivers.forEach((r, i) => { if (before[i].dropping) worst = Math.max(worst, Math.hypot(r.x - before[i].x, r.z - before[i].z) - before[i].k / 20); });
+    // A dash doubles the glide on top of everything else (it sits outside the 2.2x cap), so a dashing drop's move
+    // is measured against twice the limit: a dash inside a bump's burst is fast, not dragged.
+    w.rivers.forEach((r, i) => { if (before[i].dropping) worst = Math.max(worst, (Math.hypot(r.x - before[i].x, r.z - before[i].z) - before[i].k / 20) / (before[i].dash || r.dashT > 0 ? 1 + TUNE.dashBoost : 1)); });
   }
   assert.ok(w.rivers.every((r) => !r.dropping), 'someone never landed');
   assert.ok(w.rivers.every((r) => pastLine(w, r.path[0].x, r.path[0].z)), 'a drop landed off the line');
