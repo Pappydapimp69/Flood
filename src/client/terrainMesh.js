@@ -19,6 +19,7 @@ const C = {
 };
 
 const tmp = new THREE.Color();
+const CANYON = new THREE.Color(0x3a5560);
 const ss = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -34,6 +35,104 @@ function colorAt(h, slope, lakeDepth, out) {
 }
 
 const BED = new THREE.Color('#7a6a55');
+
+// ---- Baked light. The sun never moves and the ground is a height grid, so cast shadows and
+// the shade in hollows are worked out once per island and multiplied into the vertex colours:
+// no shadow maps, nothing per frame (the game already drops resolution on phones).
+// sunOf: unit vector toward the sun for an island, low (about 27 degrees) and from the side of its
+// course, a little from behind the start, so shadows rake across the run. (A fixed compass sun
+// stood behind the summits on some islands and put the whole start in their shadow.)
+export function sunOf(t) {
+  const ax = t.axis?.x ?? 0, az = t.axis?.y ?? 1; // down the course
+  const v = [-az * 0.95 - ax * 0.2, 0.5, ax * 0.95 - az * 0.2], l = Math.hypot(...v);
+  return v.map((c) => c / l);
+}
+const SHADOW = [0.4, 0.48, 0.66]; // a fully shadowed colour keeps this much: cool, lit only by the sky
+const TREE_SHADOW = 240; // metres (displayed) a tree stands over its cell, for the shadow it throws
+
+// 1 where the sun reaches the ground, 0 in full shadow, soft at the edge. H: displayed heights.
+// extra: metres added to cells that hold something tall (trees); it shades others, never itself.
+function sunLit(SUN, n, cell, H, extra = null) {
+  const hz = Math.hypot(SUN[0], SUN[2]), dx = SUN[0] / hz, dy = SUN[2] / hz, rise = (cell * SUN[1]) / hz;
+  let top = -Infinity;
+  for (let i = 0; i < n * n; i++) top = Math.max(top, H[i] + (extra ? extra[i] : 0));
+  const out = new Float32Array(n * n).fill(1);
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const i = y * n + x, h0 = H[i] + 3;
+    if (H[i] < -20) continue; // deep seabed: under the sea surface anyway
+    let lit = 1;
+    for (let s = 1; s < 140; s++) {
+      const ray = h0 + rise * s;
+      if (ray > top) break;
+      const px = x + dx * s, py = y + dy * s;
+      if (px < 0 || py < 0 || px > n - 1 || py > n - 1) break;
+      const x0 = Math.floor(px), y0 = Math.floor(py), x1 = Math.min(n - 1, x0 + 1), y1 = Math.min(n - 1, y0 + 1), fx = px - x0, fy = py - y0;
+      let g = (H[y0 * n + x0] * (1 - fx) + H[y0 * n + x1] * fx) * (1 - fy) + (H[y1 * n + x0] * (1 - fx) + H[y1 * n + x1] * fx) * fy;
+      if (extra) g += extra[Math.round(py) * n + Math.round(px)];
+      const clear = (ray - g) / (s * cell * 0.09); // a near miss is half shade: the penumbra widens with distance
+      if (clear < lit) { lit = clear; if (lit <= 0) { lit = 0; break; } }
+    }
+    out[i] = lit;
+  }
+  return out;
+}
+
+// How open the sky is over each cell: 1 on a ridge or a plain, lower in gullies and at the foot of walls.
+function skyOpen(n, cell, H) {
+  const out = new Float32Array(n * n), dirs = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const i = y * n + x;
+    let sum = 0;
+    for (const [ax, ay] of dirs) {
+      let m = 0;
+      for (const d of [1, 2, 4, 7]) {
+        const px = Math.min(n - 1, Math.max(0, x + ax * d)), py = Math.min(n - 1, Math.max(0, y + ay * d));
+        m = Math.max(m, (H[py * n + px] - H[i]) / (d * cell * Math.hypot(ax, ay)));
+      }
+      sum += m / (1 + m); // slope to the horizon that way, squashed to 0..1
+    }
+    out[i] = 1 - 0.75 * (sum / 8);
+  }
+  return out;
+}
+
+const litTint = (lit, c) => SHADOW[c] + (1 - SHADOW[c]) * lit;
+
+// Trees throw shadows too (a pine stands about 250 m over its 100 m cell): darken the ground
+// they shade. cells: the cells that hold a drawn tree. Once per island.
+export function castTrees(mesh, cells) {
+  const ud = mesh.userData, n = ud.t.size;
+  if (ud.treesCast) return;
+  ud.treesCast = true;
+  const extra = new Float32Array(n * n);
+  let any = false;
+  for (const k of cells) { extra[k] = TREE_SHADOW; any = true; }
+  if (!any) return;
+  const lit = sunLit(ud.sun, n, ud.t.cell, ud.shown, extra), sh = mesh.geometry.attributes.shade;
+  for (let i = 0; i < n * n; i++) {
+    if (lit[i] >= ud.lit[i] - 0.01) continue;
+    const l = ud.lit[i] + (lit[i] - ud.lit[i]) * 0.8; // a little light gets through the branches
+    for (let c = 0; c < 3; c++) sh.array[i * 3 + c] = litTint(l, c) * ud.open[i];
+  }
+  sh.needsUpdate = true;
+}
+
+// Damp or dry, from the lie of the land: +1 in a hollow or beside a lake (lush), -1 on a
+// crest or a spur (dry, stony). The ground's colour follows it, so the eye reads the relief.
+function dampness(n, cell, H, lakeDepth) {
+  const out = new Float32Array(n * n), R = 3;
+  for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) {
+    const i = y * n + x;
+    let sum = 0, near = 0;
+    for (const [ax, ay] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+      const k = Math.min(n - 1, Math.max(0, y + ay * R)) * n + Math.min(n - 1, Math.max(0, x + ax * R));
+      sum += H[k];
+      if (lakeDepth[Math.min(n - 1, Math.max(0, y + ay * 2)) * n + Math.min(n - 1, Math.max(0, x + ax * 2))] > LAKE_MIN_DEPTH) near = 1;
+    }
+    out[i] = Math.max(near * 0.85, Math.max(-1, Math.min(1, (sum / 8 - H[i]) / 55)));
+  }
+  return out;
+}
 
 export function buildTerrainMesh(t) {
   const n = t.size, W = t.worldSize;
@@ -53,14 +152,23 @@ export function buildTerrainMesh(t) {
       const hx = t.height[y * n + Math.min(n - 1, x + 1)] - t.height[y * n + Math.max(0, x - 1)];
       const hy = t.height[Math.min(n - 1, y + 1) * n + x] - t.height[Math.max(0, y - 1) * n + x];
       const slope = Math.hypot(hx, hy) / (2 * t.cell);
-      colorAt(h, slope, lakeDepth, tmp).toArray(colors, i * 3);
+      colorAt(h, slope, lakeDepth, tmp);
+      if (t.fast?.[i] && lakeDepth <= LAKE_MIN_DEPTH) tmp.multiplyScalar(0.72).lerp(CANYON, 0.28); // canyon floor: dark wet rock, so the fast lane reads from afar
+      tmp.toArray(colors, i * 3);
     }
   }
+  // Bake the light in: cast shadows go cool and dark, hollows lose some sky.
+  const sun = sunOf(t), shown = Float32Array.from(base, (h) => h * VERT), lit = sunLit(sun, n, t.cell, shown), open = skyOpen(n, t.cell, shown);
+  const shade = new Float32Array(n * n * 3);
+  for (let i = 0; i < n * n; i++) for (let c = 0; c < 3; c++) shade[i * 3 + c] = litTint(lit[i], c) * open[i];
+  geo.setAttribute('shade', new THREE.BufferAttribute(shade, 3)); // light, kept apart from the colours: the shader reads those as ground cover
+  const lakeD = Float32Array.from(base, (_, i) => t.filled[i] - t.height[i]);
+  geo.setAttribute('damp', new THREE.BufferAttribute(dampness(n, t.cell, shown, lakeD), 1));
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
   const mat = terrainMaterial();
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'terrain';
-  mesh.userData = { t, base, pristineBase: base.slice(), baseColors: colors.slice(), pristineColors: colors.slice() };
+  mesh.userData = { t, base, pristineBase: base.slice(), baseColors: colors.slice(), pristineColors: colors.slice(), shown, lit, open, sun };
   for (let i = 0; i < n * n; i++) setNormal(mesh, i);
   return mesh;
 }
@@ -72,12 +180,14 @@ function terrainMaterial() {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   mat.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWPos;\nvarying vec3 vWNorm;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNorm = normalize(mat3(modelMatrix) * objectNormal);');
+      .replace('#include <common>', '#include <common>\nattribute vec3 shade;\nattribute float damp;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\nvarying vec3 vShade;\nvarying float vDamp;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNorm = normalize(mat3(modelMatrix) * objectNormal);\nvShade = shade;\nvDamp = damp;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
         varying vec3 vWPos;
         varying vec3 vWNorm;
+        varying vec3 vShade;
+        varying float vDamp;
         float th(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float tn(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
           return mix(mix(th(i), th(i + vec2(1, 0)), u.x), mix(th(i + vec2(0, 1)), th(i + vec2(1, 1)), u.x), u.y); }`)
@@ -91,18 +201,34 @@ function terrainMaterial() {
           // Rock on steep ground, banded along the height.
           float band = 0.5 + 0.5 * sin(vWPos.y * 0.09 + tn(vWPos.xz * 0.01) * 6.0);
           vec3 rock = mix(vec3(0.42, 0.39, 0.35), vec3(0.62, 0.58, 0.52), band * 0.6 + macro * 0.4);
-          float rockMix = smoothstep(0.32, 0.62, slope + (macro - 0.5) * 0.25) * (1.0 - wet);
-          // Grass patches: dry yellow and dark green.
+          // Ground cover follows the lie of the land (vDamp: hollows and lake shores damp, crests dry),
+          // broken up by noise at three sizes: lush green where water gathers, dry straw on the
+          // crests, rust bracken on the drier slopes, pale tussock in patches, bare stone on spurs.
           vec3 g = diffuseColor.rgb;
-          float green = g.g - max(g.r, g.b);
-          vec3 dry = vec3(0.72, 0.66, 0.36), dark = g * 0.72;
-          float patchy = smoothstep(0.55, 0.75, macro) * step(0.04, green);
-          g = mix(g, dry, patchy * 0.45);
-          g = mix(g, dark, smoothstep(0.35, 0.15, macro) * step(0.04, green) * 0.6);
-          vec3 col = mix(g, rock, rockMix);
-          // Close-up grit and scree.
+          float land = step(0.04, g.g - max(g.r, g.b)); // grass and scrub (not sand, rock, snow or a bed)
+          float n2 = tn(vWPos.xz * 0.0031 + 17.0), n3 = tn(vWPos.xz * 0.011 + 41.0);
+          float dampK = clamp(vDamp * 1.1 + (0.5 - macro) * 1.2, -1.0, 1.0);
+          g = mix(g, vec3(0.33, 0.41, 0.15), land * 0.65); // a brighter meadow green under it all (the old base read as mud once lit)
+          // Hard, broken edges (height-blend style): each cover wins where its measure, pushed about by
+          // fine detail noise, crosses a threshold, in a narrow band, instead of fading across hundreds
+          // of metres. The band widens with distance so the edges never shimmer.
           float grit = tn(vWPos.xz * 0.06) * 0.5 + tn(vWPos.xz * 0.17) * 0.5;
+          float brk = (tn(vWPos.xz * 0.019 + 7.0) - 0.5) * 0.6 + (grit - 0.5) * 0.5;
+          float e = mix(0.22, 0.035, near);
+          #define EDGE(v, t) smoothstep(-e, e, (v) - (t) + brk * 0.55)
+          g = mix(g, vec3(0.27, 0.47, 0.15), land * EDGE(dampK, 0.3) * 0.8);
+          g = mix(g, vec3(0.71, 0.63, 0.32), land * EDGE(-dampK, 0.3) * 0.7);
+          g = mix(g, vec3(0.50, 0.33, 0.18), land * EDGE(n2, 0.68) * (1.0 - EDGE(dampK, 0.2)) * 0.65);
+          g = mix(g, vec3(0.62, 0.66, 0.36), land * EDGE(n3, 0.74) * 0.4);
+          // High ground is stone by its vertex colour: break it with alpine turf where it is damp or sheltered, and pale lichen.
+          float upland = (1.0 - land) * (1.0 - wet) * smoothstep(${(1500 * VERT).toFixed(1)}, ${(1900 * VERT).toFixed(1)}, vWPos.y) * (1.0 - smoothstep(${(2500 * VERT).toFixed(1)}, ${(2750 * VERT).toFixed(1)}, vWPos.y));
+          g = mix(g, vec3(0.36, 0.42, 0.17), upland * EDGE(macro * 0.7 + n2 * 0.3 + vDamp * 0.35, 0.5) * 0.8);
+          g = mix(g, vec3(0.60, 0.58, 0.47), upland * EDGE(n3, 0.76) * 0.45);
+          float rockMix = max(smoothstep(0.32, 0.62, slope + (macro - 0.5) * 0.25), land * smoothstep(0.55, 1.0, -vDamp) * EDGE(n3, 0.58) * 0.7) * (1.0 - wet);
+          vec3 col = mix(g, rock, rockMix);
+          // Close-up grit and scree, and tufts in the grass nearer still.
           col *= mix(1.0, 0.74 + 0.5 * grit, near);
+          col *= mix(1.0, 0.8 + 0.4 * tn(vWPos.xz * 0.45), land * (1.0 - rockMix) * (1.0 - smoothstep(300.0, 1800.0, dist)));
           // Contour lines every 10 m of height (every 50 m a little stronger),
           // close up, so rises and dips read at a glance.
           float hm = vWPos.y / ${VERT.toFixed(2)} / 10.0;
@@ -110,7 +236,7 @@ function terrainMaterial() {
           float major = step(0.5, 1.0 - abs(fract(hm / 5.0 + 0.1) - 0.1) * 10.0);
           float contour = cl * (0.12 + 0.1 * major) * (1.0 - smoothstep(2000.0, 7000.0, dist)) * (1.0 - wet);
           col *= 1.0 - contour;
-          diffuseColor.rgb = col;
+          diffuseColor.rgb = col * vShade; // the baked light: cast shadows and hollows
         }`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         {

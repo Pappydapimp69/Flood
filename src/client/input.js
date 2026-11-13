@@ -36,7 +36,7 @@ export function createInput(target) {
     onChange?.(current());
   };
   const keys = { left: false, right: false, fwd: false, back: false };
-  // On-screen touch buttons (phones): ◀ ▶ steer, ▲ ▼ dive / float while falling. Kept apart
+  // On-screen touch buttons (phones): ◀ ▶ steer, ▲ ▼ dash / dive while falling. Kept apart
   // so one thumb steers and the other flies the drop (owner, 2026-11-11).
   const btn = { left: false, right: false, fwd: false, back: false };
   const pad = { left: false, right: false, down: new Set(), stickY: 0, seen: false, fwd: 0, glide: 0, look: 0, vec: { x: 0, y: 0 } };

@@ -372,3 +372,55 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
   a strong rival, not an unbeatable one. `?rival=look` puts it in a solo race as LOOKAHEAD (worker).
 - Open: an unsteered river won 3 of 20 from its seat alone, and beat the planner in 9 of 20.
 - Open: the gamepad play check fails on main ("A did not leave the splash"), before this change.
+
+## Dash, and wall ridges (2026-11-12, owner: float becomes dash; ridges and canyons must shape the course)
+- Descent: down is Dash, not float. Twice the glide speed for 1 s, ready again 5 s after it fired; nothing slows
+  the fall any more. Rain clouds sit at or under a steady fall (nobody can stay up for a higher one). Bots dash
+  after a drop that is getting away, clear of one they let go, for a far cloud, and half as often as they could when cruising.
+- Terrain: two spines per island (`ISLAND.spines`), walls 300 m tall and about 5 km long through the switchback
+  and the terraces, off-centre and slanted, so the course forks into a narrow canyon and a wide valley.
+- Measured (`npm run gap` on 6 islands x 2 seats, and 120 unsteered rivers on 10 islands): the spines changed no
+  result. Unsteered rivers finished 61 of 120 (58 before), median 262 s (258); the planner and the bot kept their
+  places and times. A dam across the wide valley (`SPINE.dam`, off) changed nothing either: its lake is skated across.
+- Why: the rules make every obstacle soft. Blocked water is walked round along the fill route (unsteered rivers
+  spend 36% of their racing time on it), lakes cost no time, and Gouge lifts a head 80 m. A wall along the flow
+  with the same valley either side is not a decision.
+- Open: steering is worth a factor of two in time (planner about 135 s, unsteered about 260 s) yet feels optional.
+  Next to try: hitting rock stops the head dead and the route out only starts after a wait, so a wall costs
+  seconds unless it is steered round.
+
+## Second try: fast water along the walls (2026-11-13)
+- Found in the speed rule: the slope bonus saturates at about a 4.5% grade and the course averages 5%, so every
+  route down runs at one pace and only distance counts. That, more than the autopilot, is why terrain did not matter.
+- Built: a chute, a strip about 500 m wide along the foot of each spine on its far side, where water runs 35%
+  faster (`TUNE.canyonBoost`, `terrain.fast`, shown as dark wet rock). The spines moved out to 0.30-0.42 of the
+  half-width, so reaching a chute means leaving the centre line and holding a line beside the wall.
+- Measured (6 islands x 2 seats): not proven. The planner's times and places did not improve (it looks 8 s ahead,
+  the chute is a 30 s commitment). With the whole canyon fast, unsteered rivers fell in by their seat and won;
+  hence the thin strip. A bot pull toward the chute ran bots into the walls, so it is off (`TUNE_BOT.canyon`).
+- Regression to settle before merging: with the spines this far out one bot run in 12 never finished (none
+  did with the spines nearer the centre), and unsteered finishes fell from 5 of 12 to 3.
+- Open: whether a player feels it. Agents cannot say; it needs hands on it.
+
+## Light with depth (2026-11-13, owner: it is visually flat)
+- Cause: nothing cast a shadow, the sky fill was half the sun's strength, and the sky was one flat colour.
+- Baked light (`src/client/terrainMesh.js`): once per island, march from every ground cell toward the sun over the
+  displayed heights and darken what is hidden (cool, soft-edged), and darken hollows by how much sky they see.
+  Trees throw shadows the same way (`castTrees`) and take the shade of the hill they stand behind. No shadow maps,
+  nothing per frame. The grid is 100 m a cell: hills, walls and stands cast shadows; a lone boulder does not.
+- Sun lower (27 degrees) and warmer, sky fill weaker and cooler; trees darken toward the ground so they stand on it.
+- Sky: a dome from the haze colour at the horizon to deeper blue overhead, with a glow round the sun.
+- Checked by eye on before / after screenshots (seed 4, ground and falling views), not on a phone.
+
+## Ground cover that follows the land (2026-11-13)
+- The baked light moved out of the vertex colours into its own attribute (`shade`): the shader tells grass, rock
+  and lake bed apart by colour, and a cool shadow tint in the colour made shaded grass read as a lake bed.
+- The sun is aimed per island, from the side of its course (`sunOf`): with a fixed compass sun some islands had
+  the whole start in the summits' shadow.
+- Cover (`damp` attribute: hollows and lake shores damp, crests dry): lush green where water gathers, straw on the
+  crests, rust bracken on drier slopes, pale tussock, bare stone on spurs, tufts close up; turf and lichen break
+  up the stone of the high ground. A brighter meadow green under it all.
+- Checked by eye on one island's opening view (seed 4); the lower course and phones are unchecked.
+- Edges (same day): cover patches no longer fade across hundreds of metres. Each wins where its measure, pushed by
+  fine detail noise, crosses a threshold in a narrow band (height-blend style); the band widens with distance so
+  far edges do not shimmer. Checked by eye on seed 4's opening view.

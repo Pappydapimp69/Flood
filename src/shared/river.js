@@ -150,7 +150,9 @@ export const TUNE = {
   cloudSpread: 4500, // metres either side of the comet path the first clouds sit; they close in toward the start line
   diveRate: 1.6,
   diveSpeed: 0, floatSpeed: 0.3, // diving only loses height, no ground speed (was 0.5: bots dived half the descent and outran players, owner 2026-11-09); // diving glides this much faster, floating this much slower // ...diving falls up to this much faster (about 12 s)...
-  floatRate: 0.35, // ...floating up to this much slower (about 31 s): land early for a head start, or stay up to catch clouds
+  floatRate: 0.35, // (float is gone, owner 2026-11-12: down is Dash now; kept for old tuning notes)
+  // Dash (owner, 2026-11-12, in place of float): down gives a burst across the ground, then recharges.
+  dashBoost: 1, dashTicks: 20, dashCool: 100, // twice the glide for 1 s; ready again 5 s after it fired
   // Rain clouds hang in the sky over the summits: fall through one and its
   // water is yours, a bigger start; each can only be taken once.
   skyClouds: 16, // rain clouds along the comet path in, closer together near the start line (was 10:
@@ -214,6 +216,7 @@ export const TUNE = {
   treeBreak: 1.3,
   treeHeight: 14, // (no longer a rise: see forestDrag)
   forestDrag: 0.35, // a small river among trees runs at this share of its speed
+  canyonBoost: 1.35, // water confined in a canyon (terrain.fast) runs this much faster: the lane worth steering for
   treeCost: 0.03, // share of its speed a head of size 1 loses per tick ploughing through forest its full width; divided by size
   // A head breaks trees by force: size x speed / base speed >= treeBreak (a small fast head smashes through, a slow one is held up).
   // The heat front: from heatStart ticks (counted from the start of the drop)
@@ -642,10 +645,17 @@ function glide(world, r, steer, fwd, g = 0) {
   // Diving trades height for speed (and floating, speed for height), on top of the stick's glide: capped at 2.2x.
   // On the floor there is no height left to trade: a dive there is no faster.
   // Dive and float build up and fade (owner, 2026-11-09): about 1.2 s to full, 0.6 s to let go.
-  const want = fwd > 0 && r.onFloor ? 0 : fwd;
+  // Down is Dash (it was float): nothing slows the fall any more.
+  const want = fwd > 0 && !r.onFloor ? fwd : 0;
   r.diveK = (r.diveK ?? 0) + Math.max(-TUNE.boostFade, Math.min(TUNE.boostBuild, want - (r.diveK ?? 0)));
   const dive = r.diveK;
-  const v = TUNE.glideSpeed * Math.min(2.2, (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g) * (dive > 0 ? 1 + TUNE.diveSpeed * dive : 1 + TUNE.floatSpeed * dive));
+  if (fwd < 0 && !(r.dashT > 0) && world.tick >= (r.dashAt ?? 0)) {
+    r.dashT = TUNE.dashTicks; r.dashAt = world.tick + TUNE.dashCool;
+    world.events.push({ type: 'dash', river: r.idx, tick: world.tick });
+  }
+  const dash = r.dashT > 0 ? 1 + TUNE.dashBoost : 1;
+  if (r.dashT > 0) r.dashT--;
+  const v = TUNE.glideSpeed * Math.min(2.2, (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g) * (1 + TUNE.diveSpeed * dive)) * dash;
   // After a bump: the drop that was hit darts away for a moment, the one that hit is checked.
   const kick = (r.burstT > 0 ? 1 + TUNE.bumpBurst : 1) * (r.recoilT > 0 ? TUNE.bumpRecoil : 1);
   if (r.burstT > 0) r.burstT--;
@@ -701,7 +711,7 @@ function glide(world, r, steer, fwd, g = 0) {
   for (const ahead of [0, 0.5, 1, 1.5]) gnd = Math.max(gnd, surfaceAt(world, r.x + r.dx * v * ahead, r.z + r.dz * v * ahead, r.idx));
   gnd -= skyBase(world);
   const floor = gnd + TUNE.floorGap * near, ceil = Math.max(floor, d * TUNE.ceilSlope + under * (1 - near)); // the ceiling meets the ground under the drop at the line (not the look-ahead: a hill leaving it dropped the ceiling 52 m in a tick)
-  const rate = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * (dive > 0 ? 1 + TUNE.diveRate * dive : 1 + TUNE.floatRate * dive) * heavy;
+  const rate = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * (1 + TUNE.diveRate * dive) * heavy;
   // Below the floor, climb to it with a climb speed that builds and fades by 0.6 m a tick, never in one jump.
   const fallTo = r.alt - rate, need = floor - fallTo;
   r.climb = need > 0 ? Math.min(need, (r.climb ?? 0) + 0.6, 14) : Math.max(0, (r.climb ?? 0) - 0.6);
@@ -745,7 +755,8 @@ export function skyClouds(world) {
       id,
       x: sx - ax * back - az * side,
       z: sz - az * back + ax * side,
-      alt: TUNE.cloudsRandom ? TUNE.dropAlt * (1 - p) * (0.3 + 0.9 * rng()) + 150 : early || TUNE.cloudsOnPath ? TUNE.dropAlt * (1 - p) * (0.85 + 0.1 * rng()) : Math.max(150, back * (0.3 + 0.9 * rng())), // on the steady path (TUNE.cloudsOnPath: all of them), else anywhere a drop can reach
+      alt: TUNE.cloudsRandom ? TUNE.dropAlt * (1 - p) * (0.25 + 0.7 * rng()) + 150 : // at or under a steady fall: with float gone, nobody can stay up for a higher one
+      early || TUNE.cloudsOnPath ? TUNE.dropAlt * (1 - p) * (0.85 + 0.1 * rng()) : Math.max(150, back * (0.3 + 0.9 * rng())), // on the steady path (TUNE.cloudsOnPath: all of them), else anywhere a drop can reach
       water: (TUNE.cloudWater[0] + rng() * (TUNE.cloudWater[1] - TUNE.cloudWater[0])) * TUNE.dropCloudShare,
       taken: -1,
     };
@@ -1132,7 +1143,7 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
   // Forest is rough ground (Manning's n for a wooded floodplain runs 3-4x
   // pasture's): a river too small to knock the trees down is slowed right
   // down among them, but never walled in; a big one flattens them.
-  const drag = world.trees?.[cHere] && !breaksTrees(r) ? TUNE.forestDrag : 1;
+  const drag = (world.trees?.[cHere] && !breaksTrees(r) ? TUNE.forestDrag : 1) * (tt.fast?.[cHere] && !onLake ? TUNE.canyonBoost : 1);
   const target = (level ? Math.max(TUNE.baseSpeed * mass, Math.min(TUNE.maxSpeed * mass, r.speed * TUNE.levelGlide))
     : Math.max(TUNE.minSpeed, Math.min(TUNE.maxSpeed * mass, (TUNE.baseSpeed + (along >= 0 ? TUNE.satSpeed * (1 - Math.exp(-along / TUNE.satSlope)) : TUNE.slopeSpeed * along)) * mass))) * drag;
   // Momentum: more water surges up to speed just as fast, but holds it

@@ -286,18 +286,18 @@ await check('sky drop: fall with a countdown and a landing marker, steer, land o
   await page.close();
 });
 
-await check('touch drop: ◀ ▶ turn, ▲ DIVE / ▼ FLOAT fly it, and no drag stick on a phone', async () => {
+await check('touch drop: ◀ ▶ turn, ▼ DIVE / ▲ DASH fly it, and no drag stick on a phone', async () => {
   const ctx = await browser.newContext(PHONE);
   const page = await ctx.newPage();
   await page.goto(`${root}?seed=3&nohint&nointro&lite`);
   await until(page, (s) => s.ready && s.tick > 95, 'falling, past the opening shot'); // no steering until TUNE.dropCalm
   if (await page.isHidden('#tfly')) throw new Error('no ▲ ▼ while falling');
-  // Arrows point the way you go: ▲ FLOAT on top, ▼ DIVE below (owner, 2026-11-11).
+  // ▲ DASH on top (it was FLOAT), ▼ DIVE below (owner, 2026-11-11 and 2026-11-12).
   const order = await page.evaluate(() => {
     const f = document.getElementById('t-float').getBoundingClientRect(), d = document.getElementById('t-dive').getBoundingClientRect();
     return { floatAbove: f.bottom <= d.top + 1, dive: document.getElementById('t-dive').textContent, float: document.getElementById('t-float').textContent };
   });
-  if (!order.floatAbove || !order.dive.startsWith('▼') || !order.float.startsWith('▲')) throw new Error(`drop buttons: ${JSON.stringify(order)}`);
+  if (!order.floatAbove || !order.dive.startsWith('▼') || !order.float.startsWith('▲') || !order.float.includes('DASH')) throw new Error(`drop buttons: ${JSON.stringify(order)}`);
   const btn = (id, type) => page.evaluate(([id, type]) => document.getElementById(id).dispatchEvent(
     new PointerEvent(type, { pointerId: 12, pointerType: 'touch', bubbles: true, cancelable: true })), [id, type]);
   const ticks = async (n, what) => { const t0 = (await state(page)).tick; await until(page, (s) => s.tick > t0 + n, what); };
@@ -308,16 +308,16 @@ await check('touch drop: ◀ ▶ turn, ▲ DIVE / ▼ FLOAT fly it, and no drag 
   await btn('t-right', 'pointerup');
   const steers = await page.evaluate(() => __flood.steers.slice());
   if (!steers.includes(1) || steers.includes(-1)) throw new Error(`▶ gave steers ${steers.join('')}`);
-  // ▲ DIVE: full throttle, well over the base 82.5 m/s glide. ▼ FLOAT: none, well under it.
+  // ▼ DIVE: full throttle, well over the base 82.5 m/s glide. ▲ DASH: a burst about twice that again.
   await btn('t-dive', 'pointerdown');
   await ticks(10, '10 ticks diving');
   const fast = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
   await btn('t-dive', 'pointerup');
   await btn('t-float', 'pointerdown');
-  await ticks(10, '10 ticks floating');
+  await ticks(6, '6 ticks dashing');
   const slow = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1);
   await btn('t-float', 'pointerup');
-  if (fast >= 0 && slow >= 0 && !(fast > 130 && slow < 60)) throw new Error(`dive ${fast.toFixed(0)} m/s, float ${slow.toFixed(0)} m/s`);
+  if (fast >= 0 && slow >= 0 && !(fast > 130 && slow > 250)) throw new Error(`dive ${fast.toFixed(0)} m/s, dash ${slow.toFixed(0)} m/s`);
   // A finger dragged on the canvas no longer draws the combined stick.
   const fire = (type, x, y) => page.evaluate(([type, x, y]) => document.querySelector('canvas').dispatchEvent(
     new PointerEvent(type, { pointerId: 9, pointerType: 'touch', clientX: x, clientY: y, bubbles: true })), [type, x, y]);
@@ -387,16 +387,16 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
     if (falling && how === 'stick') {
       await set(0);
       if (!steers.includes(-1)) throw new Error(`${how} left while falling gave ${steers.join('')}`);
-      // Throttle: stick up is full (1.8x the base glide), back is none (0.4x).
+      // Stick up dives at full glide (1.8x the base); back dashes: about twice that for a second.
       const glideAt = async (y) => {
         await page.evaluate((y) => { __pad.axes[1] = y; }, y);
         let v = 0;
-        for (let i = 0; i < 100; i++) { await page.waitForTimeout(100); v = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1); if (v < 0 || (y < 0 ? v > 150 : v < 80)) break; }
+        for (let i = 0; i < 100; i++) { await page.waitForTimeout(100); v = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1); if (v < 0 || (y < 0 ? v > 130 : v > 250)) break; }
         await page.evaluate(() => { __pad.axes[1] = 0; });
         return v;
       };
       const up = await glideAt(-1), back = await glideAt(1);
-      if (up >= 0 && back >= 0 && !(up > 150 && back < 80)) throw new Error(`throttle: up ${up.toFixed(0)} m/s, back ${back.toFixed(0)} m/s`);
+      if (up >= 0 && back >= 0 && !(up > 130 && back > 250)) throw new Error(`dive and dash: up ${up.toFixed(0)} m/s, back ${back.toFixed(0)} m/s`);
       continue;
     }
     await set(0);

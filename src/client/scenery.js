@@ -22,6 +22,17 @@ function pineGeometry() {
     for (const p of parts) { out.set(p, o); o += p.length; }
     geo.setAttribute(name, new THREE.BufferAttribute(out, 3));
   }
+  return grounded(geo);
+}
+
+// Darker toward the ground (the light a tree's own branches and its neighbours keep off its
+// foot): the cheapest thing that makes a tree stand on the ground instead of floating over it.
+function grounded(geo) {
+  const pos = geo.attributes.position, col = new Float32Array(pos.count * 3);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < pos.count; i++) { lo = Math.min(lo, pos.getY(i)); hi = Math.max(hi, pos.getY(i)); }
+  for (let i = 0; i < pos.count; i++) { const u = (pos.getY(i) - lo) / (hi - lo), g = 0.42 + 0.58 * Math.min(1, u * 1.6); col[i * 3] = g; col[i * 3 + 1] = g; col[i * 3 + 2] = g; }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   return geo;
 }
 
@@ -52,7 +63,9 @@ function seeThrough(mat) {
 // Trees: one tall stand per forest cell of the game (world.trees), pines on
 // the upper slope, round broadleaf trees mixed in lower down. Tall enough to
 // hide what's ahead from a low chase camera.
-export function buildTrees(world, max) {
+// lit: the terrain's baked sunlight per cell (terrainMesh userData.lit), so a stand in a hill's shadow is dark too.
+const shadeBy = (col, lit, k) => { const l = lit ? lit[k] : 1; return col.setRGB(col.r * (0.4 + 0.6 * l), col.g * (0.48 + 0.52 * l), col.b * (0.62 + 0.38 * l)); };
+export function buildTrees(world, max, lit = null) {
   const t = world.terrain, n = t.size;
   const pines = [], broad = [];
   for (let k = 0; k < n * n; k++) {
@@ -65,8 +78,8 @@ export function buildTrees(world, max) {
   // One instanced mesh per map chunk and kind, each with its own bounds, so
   // the stands off screen are culled instead of all drawn every frame.
   const group = new THREE.Group(), parts = [], CHUNKS = 8, size = Math.ceil(n / CHUNKS);
-  const pineGeo = pineGeometry(), leafGeo = new THREE.IcosahedronGeometry(1, 1).translate(0, 1.1, 0);
-  const pineMat = new THREE.MeshLambertMaterial({ color: '#ffffff' }), leafMat = new THREE.MeshLambertMaterial({ color: '#ffffff' });
+  const pineGeo = pineGeometry(), leafGeo = grounded(new THREE.IcosahedronGeometry(1, 1).translate(0, 1.1, 0));
+  const pineMat = new THREE.MeshLambertMaterial({ color: '#ffffff', vertexColors: true }), leafMat = new THREE.MeshLambertMaterial({ color: '#ffffff', vertexColors: true });
   for (const mat of [pineMat, leafMat]) seeThrough(mat);
   const place = (list, geo, mat, scale, tint) => {
     const chunks = new Map();
@@ -85,7 +98,7 @@ export function buildTrees(world, max) {
         q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), hash2(k, 5, t.seed) * 6.283);
         mesh.setMatrixAt(i, m.compose(p, q, s));
         tint(c, k);
-        mesh.setColorAt(i, c);
+        mesh.setColorAt(i, shadeBy(c, lit, k));
         byCell.set(k, i);
       });
       mesh.computeBoundingSphere();
@@ -98,12 +111,13 @@ export function buildTrees(world, max) {
   place(bk, leafGeo, leafMat, [85, 120], (col, k) => col.setHSL(0.22 + hash2(k, 3, t.seed) * 0.06, 0.4, 0.2 + hash2(k, 4, t.seed) * 0.08));
   group.name = 'trees';
   group.userData.parts = parts;
+  group.userData.cells = [...pk, ...bk]; // the cells that hold a drawn tree (for their shadows on the ground)
   return group;
 }
 
 // Boulders: low-poly rocks scattered over rocky and steep ground and the
 // high slopes, bigger and denser up high, as on the trailer's scree.
-export function buildRocks(world, max) {
+export function buildRocks(world, max, lit = null) {
   const t = world.terrain, n = t.size, spots = [];
   for (let y = 2; y < n - 2; y++) for (let x = 2; x < n - 2; x++) {
     const k = y * n + x, h = t.height[k];
@@ -125,7 +139,7 @@ export function buildRocks(world, max) {
     s.set(size * (0.8 + hash2(k, 6, t.seed) * 0.6), size * (0.5 + hash2(k, 9, t.seed) * 0.4), size * (0.8 + hash2(k, 10, t.seed) * 0.6));
     mesh.setMatrixAt(i, m.compose(p, q.setFromEuler(e), s));
     const g = 0.26 + hash2(k, 11, t.seed) * 0.16;
-    mesh.setColorAt(i, c.setRGB(g * 1.05, g, g * 0.9));
+    mesh.setColorAt(i, shadeBy(c.setRGB(g * 1.05, g, g * 0.9), lit, k));
     byCell.set(k, i);
   });
   mesh.count = keep.length;
