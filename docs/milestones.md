@@ -424,3 +424,15 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
 - Edges (same day): cover patches no longer fade across hundreds of metres. Each wins where its measure, pushed by
   fine detail noise, crosses a threshold in a narrow band (height-blend style); the band widens with distance so
   far edges do not shimmer. Checked by eye on seed 4's opening view.
+
+## Next build: skills build up with weight (agreed 2026-11-13, not built)
+- Gouge and Surge stop being an instant jump: the speed builds over a time that grows with the river, then the
+  full boost runs its whole length, and the cooldown starts only when it ends.
+- Build time follows size (the cube root of volume) by the middle curve: time = T x (s / s0)^1.5, computed as
+  s x sqrt(s) (no pow: the sim stays bit-identical). Anchored at 1 s for 1.5M L. Gives about 1.6 s at 4M L and
+  2.3 s at 8M L; it bends over with size, so no cap is needed. The anchor is a starting point to tune by hand.
+- Gouge's extra height comes at once; only its speed builds, or a river blocked at a rise waits at the wall.
+- The head never stops during the build (an earlier wind-up that held it still was removed: rivals drained it).
+- Also correct: an earlier note here that speed "tops out" was wrong. Measured, large rivers run about 50% faster
+  than small ones on plain ground (carried pulse momentum); the missing piece is that carried speed on flats and
+  lakes fades at one rate for every size.

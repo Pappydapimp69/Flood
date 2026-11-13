@@ -382,21 +382,11 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
       await page.waitForTimeout(100);
       steers = await page.evaluate(() => __flood.steers.slice());
     }
-    // Falling or landed, left is a left turn (falling, the left stick's up / down is the throttle).
+    // Falling or landed, left is a left turn. The left stick only steers; the right stick's up descends, RB dashes.
     const falling = await page.evaluate(() => __flood.river.dropping > 0);
     if (falling && how === 'stick') {
       await set(0);
       if (!steers.includes(-1)) throw new Error(`${how} left while falling gave ${steers.join('')}`);
-      // Stick up dives at full glide (1.8x the base); back dashes: about twice that for a second.
-      const glideAt = async (y) => {
-        await page.evaluate((y) => { __pad.axes[1] = y; }, y);
-        let v = 0;
-        for (let i = 0; i < 100; i++) { await page.waitForTimeout(100); v = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : -1); if (v < 0 || (y < 0 ? v > 130 : v > 250)) break; }
-        await page.evaluate(() => { __pad.axes[1] = 0; });
-        return v;
-      };
-      const up = await glideAt(-1), back = await glideAt(1);
-      if (up >= 0 && back >= 0 && !(up > 130 && back > 250)) throw new Error(`dive and dash: up ${up.toFixed(0)} m/s, back ${back.toFixed(0)} m/s`);
       continue;
     }
     await set(0);
@@ -430,6 +420,42 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   const before = (await state(page)).tick;
   await tap(0);
   await until(page, (s) => s.tick < before, 'A on the results card restarts');
+  await ctx.close();
+});
+
+await check('gamepad descent: left stick only steers, right stick up descends, RB dashes, both shown on screen', async () => {
+  const ctx = await browser.newContext({ viewport: { width: 960, height: 600 } });
+  await ctx.addInitScript(FAKE_PAD);
+  const page = await ctx.newPage();
+  await page.goto(`${root}?seed=1&lite&nointro&nohint`);
+  await until(page, (s) => s.ready && s.dropping > 0 && s.tick > 100, 'falling, past the calm opening');
+  const pad = (f) => page.evaluate(f);
+  const button = (i, on) => page.evaluate(([i, on]) => { __pad.buttons[i].pressed = on; __pad.buttons[i].value = on ? 1 : 0; }, [i, on]);
+  const diveK = () => page.evaluate(() => __flood.river.dropping ? __flood.river.diveK ?? 0 : -1);
+  // Left stick (and D-pad) up: no dive.
+  await pad(() => { __pad.axes[1] = -1; __pad.buttons[12].pressed = true; });
+  const t0 = (await state(page)).tick;
+  await until(page, (s) => s.tick > t0 + 30, '30 ticks with the left stick up');
+  const left = await diveK();
+  await pad(() => { __pad.axes[1] = 0; __pad.buttons[12].pressed = false; });
+  if (left > 0.05) throw new Error(`left stick up dived (${left.toFixed(2)})`);
+  // The prompts are on screen.
+  const shown = await page.evaluate(() => !document.getElementById('padfly').hidden);
+  if (!shown) throw new Error('no descent controls on screen with a pad');
+  // Right stick up: dive.
+  await pad(() => { __pad.axes[3] = -1; });
+  const t1 = (await state(page)).tick;
+  await until(page, (s) => s.tick > t1 + 30, '30 ticks with the right stick up');
+  const right = await diveK();
+  await pad(() => { __pad.axes[3] = 0; });
+  if (!(right > 0.3)) throw new Error(`right stick up did not descend (${right.toFixed(2)})`);
+  // RB: dash, about twice the cruising glide.
+  let v = 0;
+  for (let t = 0; t < 3 && !(v > 250); t++) {
+    await button(5, true); await page.waitForTimeout(400); await button(5, false);
+    for (let i = 0; i < 20 && !(v > 250); i++) { await page.waitForTimeout(100); v = await page.evaluate(() => __flood.river.dropping ? __flood.river.glideV : 999); }
+  }
+  if (!(v > 250)) throw new Error(`RB did not dash: ${v.toFixed(0)} m/s`);
   await ctx.close();
 });
 
