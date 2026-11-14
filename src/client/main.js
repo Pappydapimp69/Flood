@@ -287,7 +287,12 @@ hud.skill.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPro
 hud.surge.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); input.pressSurge(); });
 let gougeShakeAt = 0; // ms: when your own gouge landed (the camera jolts)
 
-const BOTS = Math.max(0, Math.min(40, Number(params.get('bots') ?? 11)));
+// Rivers per race (owner, 2026-11-14): chosen on the start screen, from the ski map's 12 up to 80; ?bots overrides.
+const RIVER_STEPS = [12, 20, 30, 40, 60, 80];
+let riversWanted = 12;
+try { riversWanted = Number(localStorage.getItem('flood.rivers')) || 12; } catch { /* no storage */ }
+if (!RIVER_STEPS.includes(riversWanted)) riversWanted = 12;
+const botCount = () => (params.has('bots') ? Math.max(0, Math.min(79, Number(params.get('bots')))) : riversWanted - 1);
 
 // A race: the world plus what draws it. `river` is null when spectating.
 let trees, rocks, lava; // scenery for the current race
@@ -607,10 +612,10 @@ function newRun() {
   mode = 'solo';
   // A fresh island every race, unless ?seed pins one.
   const want = Number(params.get('seed')) || 1 + Math.floor(Math.random() * 1_000_000);
-  const all = [PLAYER, ...Array.from({ length: BOTS }, (_, i) => `bot${String(i + 1).padStart(2, '0')}`)].sort();
+  const all = [PLAYER, ...Array.from({ length: botCount() }, (_, i) => `bot${String(i + 1).padStart(2, '0')}`)].sort();
   names = Object.fromEntries(all.filter((id) => id !== PLAYER).map((id, i) => [id, BOT_NAMES[i % BOT_NAMES.length]]));
-  // Reroll until the summit ring seats everyone.
-  const { seed, world: rolled } = rollIsland(want, all.length);
+  // Reroll until the summit ring seats everyone (the ski map seats 15-18 at spawnGap: past 12, the drops spread the rest).
+  const { seed, world: rolled } = rollIsland(want, Math.min(all.length, 12));
   beginRace(seed, all, PLAYER, rolled);
   bots = world.rivers.filter((r) => r !== river).map((r) => createBot(world, r));
   startPlanner();
@@ -2142,6 +2147,14 @@ addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 const fresh = () => performance.now() - splashLeftAt < 500; // the press that left the splash
+const riversBtn = document.getElementById('rivers');
+const showRivers = () => { riversBtn.textContent = `Rivers: ${riversWanted}`; };
+showRivers();
+riversBtn.onclick = () => {
+  riversWanted = RIVER_STEPS[(RIVER_STEPS.indexOf(riversWanted) + 1) % RIVER_STEPS.length];
+  try { localStorage.setItem('flood.rivers', String(riversWanted)); } catch { /* no storage */ }
+  showRivers();
+};
 document.getElementById('play-solo').onclick = () => {
   if (fresh()) return; goLandscape(); tutorial = false; hud.menu.hidden = true; newRun(); };
 document.getElementById('play-tutorial').onclick = () => {
