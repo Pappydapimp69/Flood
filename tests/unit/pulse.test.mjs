@@ -27,10 +27,11 @@ test('a river grows only when a pulse reaches its head, by the water it gathered
     const v = r.volume;
     step(w, new Map());
     const sw = w.events.filter((e) => e.type === 'swell' && e.river === r.idx);
+    const cloud = w.events.some((e) => e.type === 'cloud' && e.river === r.idx); // a low rain cloud flowed under
     w.events.length = 0;
     if (r.volume > v) {
       grew++;
-      assert.ok(sw.length > 0, `grew ${r.volume - v} L at tick ${w.tick} with no pulse arriving`);
+      assert.ok(sw.length > 0 || cloud, `grew ${r.volume - v} L at tick ${w.tick} with no pulse arriving`);
     }
     swelled += sw.length;
   }

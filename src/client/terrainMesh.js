@@ -20,6 +20,9 @@ const C = {
 
 const tmp = new THREE.Color();
 const CANYON = new THREE.Color(0x3a5560);
+// Ridges are turf over pebble. They read at speed by a pale crest line and a shaded lee (in flat light a
+// slope shows no bumps until you are on them; cross courses paint their take-offs: bs flood-71, flood-74).
+const CREST = new THREE.Color('#d9d08a');
 const ss = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
@@ -154,6 +157,10 @@ export function buildTerrainMesh(t) {
       const slope = Math.hypot(hx, hy) / (2 * t.cell);
       colorAt(h, slope, lakeDepth, tmp);
       if (t.fast?.[i] && lakeDepth <= LAKE_MIN_DEPTH) tmp.multiplyScalar(0.72).lerp(CANYON, 0.28); // canyon floor: dark wet rock, so the fast lane reads from afar
+      if (t.ridge?.[i] > 0 && lakeDepth <= LAKE_MIN_DEPTH) {
+        const face = t.ridgeFace[i];
+        if (face === 0) tmp.lerp(CREST, 0.6); else tmp.multiplyScalar(face > 0 ? 0.7 : 1.08);
+      }
       tmp.toArray(colors, i * 3);
     }
   }

@@ -84,6 +84,18 @@ function spinesOf(seed) {
   }
   return out;
 }
+// Ridges (owner, 2026-11-14: obstacles are a slight ridge running side to side, not cones in one spot):
+// low banks of pebble under turf laid across the slope, slanted down toward one gap near a wall. A river
+// that meets one goes round along it to the gap, grinds through it (turf wears fast, pebble at a quarter of
+// that rate: TUNE.pebbleWear), or times a skill to crest it: the low one Surge clears, the tall one needs
+// Gouge or a long grind. One above the sections, one in the middle of each of the switchback and the terraces.
+const RIDGE = { thick: 0.008, open: 0.5, slant: 0.03, turf: 2, heights: [18, 45, 30] };
+function ridgesOf(seed) {
+  if (!ISLAND.ridges) return [];
+  const r = stream(seed, 'ridges'), secs = sectionsOf(seed);
+  const at = [0.25, ...secs.filter((x) => x.kind === 'switchback' || x.kind === 'terraces').map((x) => x.t0 + SECTION.len / 2)];
+  return at.map((t, i) => ({ t: t + 0.01 * (r() * 2 - 1), side: (i % 2 ? 1 : -1) * (r() < 0.5 ? 1 : -1), height: RIDGE.heights[i % RIDGE.heights.length] }));
+}
 const slalomT = (seed, i) => { const sl = sectionsOf(seed).find((x) => x.kind === 'slalom'); return sl.t0 + SECTION.len * (i + 0.5) / GATES(); };
 const fract = (x) => x - Math.floor(x);
 const windowAt = (t, t0) => { const u = clamp01((t - t0) / SECTION.len); return 16 * u * u * (1 - u) * (1 - u); }; // 0 at the ends, 1 mid
@@ -96,6 +108,7 @@ function shapeOf(seed) {
   return {
     ax, ay, // down the slope: summit end at -long, sea end at +long
     long: 0.62 + 0.06 * r(), // half-length along the axis (fits the map in any direction)
+    shift: ISLAND.shift, // the whole island sits this far toward the sea end, for room behind the start
     wide: (0.17 + 0.05 * r()) * ISLAND.wide, // half-width of the corridor
     gap: 0.08 + 0.01 * r(), // how far the outer summits stand from the middle one
     taper: (0.25 + 0.2 * r()) * ISLAND.taper, // how much the width wanders along the slope
@@ -116,6 +129,7 @@ function shapeOf(seed) {
     // same notch.
     sections: sectionsOf(seed),
     spines: spinesOf(seed),
+    ridges: ridgesOf(seed),
     gates: Array.from({ length: GATES() }, (_, i) => ({
       t: ISLAND.mixed ? slalomT(seed, i) : 0.4 + (0.5 * (i + 0.3 + 0.4 * r())) / GATES(),
       v: (i % 2 ? 1 : -1) * (0.4 + 0.25 * r()), // a slalom: gaps 0.4-0.65 out to alternate sides (was 0.2-0.5; 0.5-0.7 left a river facing a cliff on one island; owner 2026-11-09)
@@ -141,7 +155,7 @@ function tutorialShape() {
 // and meets the others, with hills, dips and gullies down its floor.
 function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   // x, y in [-1, 1]; u runs down the slope, v across it.
-  const u = x * S.ax + y * S.ay, v = -x * S.ay + y * S.ax;
+  const u = x * S.ax + y * S.ay - (S.shift ?? 0), v = -x * S.ay + y * S.ax; // shift: the island sits toward the sea end
   lastFast = 0;
   const wu = u + S.warp * (fbm(x * 2.2, y * 2.2, seed + 11, 4) - 0.5);
   let wv = v + S.warp * (fbm(x * 2.2 + 5, y * 2.2 - 3, seed + 23, 4) - 0.5);
@@ -220,6 +234,18 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
     const d = (t - (G.t - GATE.spread * off)) * (2 * S.long) / GATE.thick;
     if (d > -1 && d < 1) h += GATE.height * (1 - d * d) * (0.8 + 0.4 * peaks);
   }
+  // Ridges: across from one wall to RIDGE.open of the half-width on the gap's side, slanting down toward
+  // the gap, rounded in section and easing out at the gap end.
+  lastRidge = 0; lastRidgeD = 0;
+  for (const R of S.ridges ?? []) {
+    const reach = sv * R.side; // 1 toward the gap's wall, -1 toward the far wall
+    if (reach > RIDGE.open) continue;
+    const d = (t - (R.t + RIDGE.slant * (reach + 1) / 2)) * (2 * S.long) / RIDGE.thick;
+    if (d <= -1 || d >= 1) continue;
+    const lift = R.height * (1 - d * d) * smooth(RIDGE.open, RIDGE.open - 0.08, reach);
+    h += lift;
+    if (lift > lastRidge) { lastRidge = lift; lastRidgeD = d; }
+  }
   // Lake basins: deep enough to hold water against the slope they sit on.
   for (const L of S.lakes) {
     const du = (t - L.t) * (2 * S.long), dv = wv - L.v * halfW;
@@ -252,7 +278,7 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
 // Island shape settings (exported so tuning passes can try others; defaults keep every island as it was).
 // 2026-11-02 map pass: more lakes and a wider, winding corridor. wide 1.5 or warp 2 put
 // a fifth of the start cells nearer another summit than their own; 1.3 / 1.5 keeps all of them.
-export const ISLAND = { mixed: true, lakes: 20, gates: 5, spines: 0, // spines: wall ridges that fork the course (0: none). Off 2026-11-13: they changed no race result and left a bot unable to finish (seed 43); mixed: the four-section course (4 test races: finishes 8.3 -> 10.8, knockouts 3.25 -> 1.25)
+export const ISLAND = { shift: 0.16, ridges: true, mixed: true, lakes: 20, gates: 5, spines: 0, // spines: wall ridges that fork the course (0: none). Off 2026-11-13: they changed no race result and left a bot unable to finish (seed 43); mixed: the four-section course (4 test races: finishes 8.3 -> 10.8, knockouts 3.25 -> 1.25)
   wide: 1.3, taper: 2, warp: 1.5, trough: 200 };
 // trough: metres the floor rises toward the walls (was 60). 200 pulls routes toward the centre line so rivals
 // cross each other's channels more: contacts +17% on two fresh sets of islands (12 and 16 races), finishes held.
@@ -269,8 +295,8 @@ const SPINE = { height: 300, thick: 0.05, off: [0.12, 0.3], slant: 0.2, // (0.3-
 
 const SUMMIT = { top: 1.2, grade: 7500, at: 0.1, room: 0.06 };
 // The land behind the start line (scenery): how far back it runs (in slope lengths) and how much wider it spreads.
-const BACK = { len: 0.2, spread: 0.8 };
-let inCourse = true, lastT = 0, lastSide = 0, lastFast = 0, lastQ = 0; // set by rawHeight for the cell it just made
+const BACK = { len: 0.45, spread: 0.8 }; // (len 0.2 until 2026-11-14: with the faster glide the comets started over the sea; with 0.45 and ISLAND.shift every one starts over the mountain)
+let inCourse = true, lastT = 0, lastSide = 0, lastFast = 0, lastQ = 0, lastRidge = 0, lastRidgeD = 0; // set by rawHeight for the cell it just made
 // Boulder outcrops down the course: rock no river passes over, Gouge or not
 // (taller than any boosted head reaches). Baked into the ground before the
 // fill, so water's routes, the map's distances and the bots all go round them.
@@ -281,7 +307,7 @@ export const BOULDERS = { count: 40, gap: 1100, from: 0.2, to: 0.93, side: 0.6, 
 // The three peaks' cells, where each summit cone stands highest.
 function summitCells(height, n, S) {
   const so = S.gap;
-  const u = -S.long + SUMMIT.at * 2 * S.long;
+  const u = -S.long + SUMMIT.at * 2 * S.long + (S.shift ?? 0);
   return [-so, 0, so].map((v) => {
     const x = u * S.ax - v * S.ay, y = u * S.ay + v * S.ax;
     const cx = Math.round((x + 1) / 2 * (n - 1)), cy = Math.round((y + 1) / 2 * (n - 1));
@@ -357,6 +383,7 @@ export function generateIsland(seed = 1, opts = {}) {
   const height = new Float32Array(n * n), mask = new Uint8Array(n * n); // mask: 1 on the race slope, 0 on scenery and sea
   const along = new Float32Array(n * n), across = new Float32Array(n * n);
   const fast = new Uint8Array(n * n), mouths = []; // fast: canyon floor (which spine's, from 1); mouths: where each canyon opens
+  const ridge = new Float32Array(n * n), ridgeFace = new Int8Array(n * n); // metres of ridge bank; -1 its uphill face, 1 its lee
   const shape = opts.course === 'tutorial' ? tutorialShape() : shapeOf(seed);
   for (let y = 0; y < n; y++) {
     const v = (y / (n - 1)) * 2 - 1;
@@ -365,6 +392,7 @@ export function generateIsland(seed = 1, opts = {}) {
       height[y * n + x] = rawHeight(u, v, seed, maxHeight, seaDepth, shape);
       mask[y * n + x] = inCourse ? 1 : 0;
       along[y * n + x] = lastT; across[y * n + x] = lastSide;
+      if (inCourse && lastRidge > 0.5) { ridge[y * n + x] = lastRidge; ridgeFace[y * n + x] = lastRidgeD < -0.25 ? -1 : lastRidgeD > 0.25 ? 1 : 0; }
       if (inCourse && lastFast && height[y * n + x] > SEA_LEVEL) {
         fast[y * n + x] = lastFast;
         if (lastQ > 0.08 && lastQ < 0.2) { const m = (mouths[lastFast - 1] ??= { x: 0, y: 0, n: 0 }); m.x += x; m.y += y; m.n++; }
@@ -375,8 +403,8 @@ export function generateIsland(seed = 1, opts = {}) {
   const filled = fillDepressions(height, n);
   // Where each canyon opens, in world metres (bots and the map aim for it from far off, as a player's eye does).
   const canyons = mouths.filter(Boolean).map((m) => ({ x: (m.x / m.n / (n - 1) - 0.5) * worldSize, z: (m.y / m.n / (n - 1) - 0.5) * worldSize }));
-  return { seed, course, mask, boulders, fast, canyons, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
-    summits: summitCells(height, n, shape), axis: { x: shape.ax, y: shape.ay }, long: shape.long };
+  return { seed, course, mask, boulders, fast, canyons, ridge, ridgeFace, ridgeTurf: RIDGE.turf, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
+    summits: summitCells(height, n, shape), axis: { x: shape.ax, y: shape.ay }, long: shape.long, shift: shape.shift ?? 0 };
 }
 
 // Steepest-descent neighbour on the filled surface, or -1 at the sea.

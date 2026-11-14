@@ -466,3 +466,18 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
   5.7 km from the beach when the 3 minutes after the first finisher run out. Its seat starts 46 km from the sea
   by water, behind a lake. The skill-gap tool seats rivers on the summit ring; the game itself starts everyone
   on the fair line after the drop, so this is the benchmark's seat, not a race bug.
+
+## Descent room, carving costs water, pebble ridges (2026-11-14, owner play tests)
+- Landing keeps the flight heading, held within 60 degrees of downhill (it took the local steepest slope and
+  could face 90 degrees sideways); the landing cut puts the camera behind it. Measured: landings past 60
+  degrees 12, 1 and 5 of 12 on seeds 4, 43, 99, now 0.
+- The descent covers more ground in the same 120 s: glide 82.5 -> 95 m/s. The island sits 0.16 toward the
+  sea end (`ISLAND.shift`) and its far side tapers over 0.45 instead of 0.2, so every comet starts over the
+  mountain (was 12, 9 and 11 of 12 over the sea). `node tools/descent-check.mjs <seeds>` counts both, and the
+  sky clouds the bots never reach (none on 8 seeds, so their placement is unchanged).
+- Carving costs water: the head pays `carveCost` litres per square metre of channel for every metre it moves,
+  and the trickle is flat (no growth with length). 3 seeds x 12 bots: median water at the end 4.1M -> 1.3M L.
+- Ridges: three banks of pebble under turf across the slope (18, 45 and 30 m), slanting down to a gap near
+  one wall; worn past 2 m of turf they wear at a quarter of the rate. Pale crest line, shaded lee.
+- Cost, measured lightly (same 3 seeds, 12 bots): finishers 31 -> 23 of 36, knockouts 3 -> 10, winning time
+  127 -> 152 s. Not tuned; not played by hand.

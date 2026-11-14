@@ -325,7 +325,7 @@ function updateWeather(time) {
   const front = heatFront(world);
   heatWall.visible = front > -Infinity && front < 1.05 && !mapView;
   if (heatWall.visible) {
-    const half = t.worldSize / 2, u = (front * 2 * t.long - t.long) * half;
+    const half = t.worldSize / 2, u = (front * 2 * t.long - t.long + t.shift) * half;
     heatWall.position.set(t.axis.x * u, 2600 * VERT * 0.5, t.axis.y * u);
     heatWall.scale.set(t.worldSize * 0.6, 2600 * VERT, 1);
     heatWall.rotation.set(0, Math.atan2(t.axis.x, t.axis.y), 0);
@@ -906,7 +906,7 @@ function feed(text) {
 const TUT_SIZE = { size: 400, worldSize: 40000 };
 let tcourse = { next: 0, beacons: null };
 const coursePoint = (t, v = 0) => {
-  const T = world.terrain, half = T.worldSize / 2, u = (t * 2 * T.long - T.long) * half;
+  const T = world.terrain, half = T.worldSize / 2, u = (t * 2 * T.long - T.long + T.shift) * half;
   return { x: T.axis.x * u - T.axis.y * v, z: T.axis.y * u + T.axis.x * v };
 };
 const STATIONS = [

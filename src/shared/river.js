@@ -42,9 +42,14 @@ export const TUNE = {
   // Mass. Volume is in litres; size = (volume / start) ^ 1/4. More mass: more
   // momentum (slower to speed up, slow down and turn), faster flow, deeper cuts.
   startVolume: 500_000,
-  trickle: 25, // litres gained per metre of trail at the start...
-  trickleGrowth: 4000, // ...and more per metre the longer the river already is: x(1 + length / this). A river drains
-  // more land the longer it gets (Hack's law: area grows about as length squared), so its gain per metre grows with length.
+  trickle: 25, // litres gained per metre of trail, every metre alike (owner, 2026-11-14: was x(1 + length / 4000),
+  // which grew every river with time alone, and with the carving cost below it still would have)
+  // Carving costs water (owner, 2026-11-14): the head pays for every metre it moves, as litres per square
+  // metre of the channel it cuts there (width times depth, uncapped: size squared, faster deeper). A river
+  // that only flows settles where the trickle pays for its carving (3 seeds x 12 bots: median water at the end
+  // 4.1M L -> 1.3M, largest 6.6M -> 3.0M, at 0.008); lakes, clouds, storms
+  // and rivals' water are what grow it past that. Paid on every metre, old beds too, so riding one is no free lunch.
+  carveCost: 0.008,
   speedPerSize: 0.1, // speed multiplier gained per unit of size above 1: twice the size, +10% (real rivers barely speed up as they grow: T175, owner 2026-11-06)
   // Lakes are reservoirs. They hold still until water flows in: every river
   // pouring in raises the level (its own volume holds while its head is in).
@@ -183,7 +188,7 @@ export const TUNE = {
   stormMaxWater: 5_000_000, // ...carrying at most this much, rained out until it's empty
   cloudWater: [150_000, 450_000],
   slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
-  glideSpeed: 82.5, // m/s across the ground while falling (was 110: cut 25%, owner 2026-11-09) (stick all the way: x1.8, stick let go: x0.4)
+  glideSpeed: 95, // m/s across the ground while falling (owner 2026-11-14: a longer descent, not a slower one; was 82.5, cut 25% from 110 on 2026-11-09) (stick all the way: x1.8, stick let go: x0.4)
   // Bumps between falling drops: touching (within bumpRadius across and
   // bumpDepth up or down) and closing, they knock each other off course and
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
@@ -652,13 +657,7 @@ function glide(world, r, steer, fwd, g = 0) {
     r.dx = dx; r.dz = dz;
     normalize(r);
   }
-  {
-    const ax = world.terrain.axis.x, az = world.terrain.axis.y, MAXC = 0.5; // cos 60
-    if (r.dx * ax + r.dz * az < MAXC) {
-      const side = r.dx * az - r.dz * ax < 0 ? -1 : 1, sn = Math.sqrt(1 - MAXC * MAXC);
-      r.dx = ax * MAXC + az * sn * side; r.dz = az * MAXC - ax * sn * side;
-    }
-  }
+  clampToCourse(world, r);
   // Diving trades height for speed (and floating, speed for height), on top of the stick's glide: capped at 2.2x.
   // On the floor there is no height left to trade: a dive there is no faster.
   // Dive and float build up and fade (owner, 2026-11-09): about 1.2 s to full, 0.6 s to let go.
@@ -845,7 +844,7 @@ export function descentLane(world) {
   const t = world.terrain, n = t.size, ax = t.axis.x, az = t.axis.y, line = startLine(world);
   const lats = line.cells.map((k) => { const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize; return -x * az + z * ax; }).sort((a, b) => a - b);
   const lo = lats[Math.floor(lats.length * 0.02)], hi = lats[Math.floor(lats.length * 0.98)];
-  world.lane = { c: (lo + hi) / 2, entry: ((hi - lo) / 2) * TUNE.laneEntry, end: ((hi - lo) / 2) * TUNE.laneEnd, run: cometRun(world), uLine: (line.t * 2 * t.long - t.long) * (t.worldSize / 2) };
+  world.lane = { c: (lo + hi) / 2, entry: ((hi - lo) / 2) * TUNE.laneEntry, end: ((hi - lo) / 2) * TUNE.laneEnd, run: cometRun(world), uLine: (line.t * 2 * t.long - t.long + t.shift) * (t.worldSize / 2) };
   return world.lane;
 }
 // The lane's half-width with `d` metres of flight still to go to the line.
@@ -904,13 +903,23 @@ export function landingCell(world, x, z, zone = dropZone(world)) {
 // drops never land on one spot and start the race already fighting. In the
 // order rivers move (sorted ids), so every machine agrees.
 
+// Holds a heading within 60 degrees of straight down the course.
+function clampToCourse(world, r) {
+  const ax = world.terrain.axis.x, az = world.terrain.axis.y, MAXC = 0.5; // cos 60
+  if (r.dx * ax + r.dz * az < MAXC) {
+    const side = r.dx * az - r.dz * ax < 0 ? -1 : 1, sn = Math.sqrt(1 - MAXC * MAXC);
+    r.dx = ax * MAXC + az * sn * side; r.dz = az * MAXC - ax * sn * side;
+  }
+}
+
 function land(world, r) {
   // Where it is: the line was crossed here (no snapping to a spot).
   r.dropping = 0;
   r.alt = 0;
-  const g = gradient(world, r.x, r.z, r.idx);
-  const len = Math.sqrt(g.x * g.x + g.z * g.z);
-  if (len > 1e-9) { r.dx = -g.x / len; r.dz = -g.z / len; }
+  // It lands heading the way it flew, held within 60 degrees of straight down the course (owner,
+  // 2026-11-14: taking the local steepest slope here turned rivers 90 degrees sideways on a summit's
+  // flank after a straight descent). The landing cut puts the camera behind this heading.
+  clampToCourse(world, r);
   r.born = world.tick;
   r.low = Infinity;
   // It hits the ground still moving: the glide carries into the river (then fades to what the ground allows).
@@ -1482,7 +1491,7 @@ function resolveContacts(world) {
 
 // How far down the slope a point is: 0 at the summit end, 1 at the sea end.
 export function slopeT(world, x, z) {
-  const t = world.terrain, u = (x * t.axis.x + z * t.axis.y) / (t.worldSize / 2);
+  const t = world.terrain, u = (x * t.axis.x + z * t.axis.y) / (t.worldSize / 2) - t.shift;
   return (u + t.long) / (2 * t.long);
 }
 
@@ -1638,7 +1647,7 @@ function weather(world) {
     const hi = mid[0], lo = mid[mid.length - 1], mean = mid.reduce((a, b) => a + b, 0) / mid.length;
     const tAt = Math.min(0.95, Math.max(0.25, Math.min(hi, Math.max(lo, mean + (rng() - 0.5) * (hi - lo)))));
     const t = world.terrain, ax = t.axis.x, az = t.axis.y, half = t.worldSize / 2;
-    const u = (tAt * 2 * t.long - t.long) * half, span = TUNE.stormSpan;
+    const u = (tAt * 2 * t.long - t.long + t.shift) * half, span = TUNE.stormSpan;
     const side = (rng() * 2 - 1) * span * 0.7;
     const x = ax * u - az * side, z = az * u + ax * side;
     const heading = rng() * Math.PI * 2;
@@ -2138,7 +2147,10 @@ function moveTo(world, r, nx, nz) {
   // What a longer channel gathers comes down it from the source, in pulses.
   if (world.lakeOf[cellIndex(world.terrain, nx, nz)] < 0) {
     const behind = TUNE.catchUp && world.leadReach !== undefined && world.toBeach[cellIndex(world.terrain, nx, nz)] - world.leadReach > TUNE.catchUpGap;
-    feed(r, 0, moved * TUNE.trickle * (1 + r.travelled / TUNE.trickleGrowth) * (behind ? 1 + TUNE.catchUp : 1));
+    feed(r, 0, moved * TUNE.trickle * (behind ? 1 + TUNE.catchUp : 1));
+    const cost = moved * TUNE.carveCost * TUNE.width * r.size * depthOf(r);
+    grow(r, -cost);
+    r.peak = Math.max(r.volume, (r.peak ?? r.volume) - cost); // paying to carve never brings the knockout floor closer
   }
 }
 
@@ -2490,7 +2502,9 @@ function wearAhead(world, r, amount = TUNE.stuckWear, most = TUNE.stuckWearMax) 
       if (world.lakeOf[k] >= 0 || t.filled[k] <= SEA_LEVEL) continue;
       const ground = t.filled[k] + world.rock[k];
       if (ground <= floor) continue;
-      const wear = Math.min(ground - floor, amount * r.size * strength);
+      // A ridge is pebble under turf: past its turf it wears at pebbleWear of the rate.
+      const worn = -world.rock[k], pebble = t.ridge?.[k] > 0 && worn >= t.ridgeTurf && worn < t.ridge[k];
+      const wear = Math.min(ground - floor, amount * r.size * strength * (pebble ? TUNE.pebbleWear : 1));
       const lowest = Math.max(-most, SEA_LEVEL + 0.5 - t.filled[k]);
       const was = world.rock[k], now = Math.max(lowest, was - wear);
       if (now >= was) continue;
