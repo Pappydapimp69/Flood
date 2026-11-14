@@ -177,12 +177,12 @@ function rawHeight(x, y, seed, maxHeight, seaDepth, S) {
   if (!inCourse) {
     // Behind and beside the summits: the mountain's far side, falling away to
     // the sea. Scenery only: no spawns, no landings, no lakes (the course mask).
-    const bt = clamp01((SUMMIT.at + 0.02 - t) / BACK.len); // 0 at the summits, 1 at the far shore
+    const bt = clamp01((-0.03 - t) / BACK.len); // 0 at the course's back wall, 1 at the far shore (from the wall, not the summits: 2026-11-14, that left a 1,900 m cliff)
     const sideB = Math.abs(wv) / (Math.max(halfW, topW) * (1 + BACK.spread * bt));
     if (t < SUMMIT.at + 0.12 && t > -BACK.len && sideB < 1.6) {
-      const crest = SUMMIT.top * maxHeight * 0.95;
+      const crest = SUMMIT.top * maxHeight * 0.99;
       const rough = ridged(x * 3.4, y * 3.4, seed + 71, 5);
-      const along = (1 - bt) * (1 - bt) * (0.75 + 0.3 * rough); // high near the peaks, down to the shore
+      const along = (1 - bt) * (1 - bt) * lerp(1, 0.75 + 0.3 * rough, bt); // the wall's height at the wall, down to the shore
       const across = 1 - smooth(0.9, 1.6, sideB); // falls away to the sides
       const edge = 1 - smooth(0.82, 0.95, Math.max(Math.abs(x), Math.abs(y))); // always open sea at the map edge
       const land = (crest * along * across + 160 * (rough - 0.5) * across) * edge - 30 * (1 - edge);
