@@ -332,7 +332,26 @@ export function generateSummit(seed, { n, worldSize, seaDepth }) {
   let top = (n >> 1) * n + (n >> 1);
   const R = Math.round(4000 / (worldSize / (n - 1)));
   for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) { const k = ((n >> 1) + dy) * n + (n >> 1) + dx; if (height[k] > height[top]) top = k; }
-  const filled = fillDepressions(height, n);
+  // Puddles: a hollow of a few cells that the rock noise left is not a lake to swallow (they were three quarters
+  // of the island's lakes, each announcing itself as it overflowed). Level them, and keep the lakes that are meant.
+  let filled = fillDepressions(height, n);
+  const seen = new Uint8Array(n * n);
+  let levelled = false;
+  for (let k0 = 0; k0 < n * n; k0++) {
+    if (seen[k0] || !(filled[k0] - height[k0] > 0.3) || height[k0] <= 0) continue;
+    const pit = [k0];
+    seen[k0] = 1;
+    for (let i = 0; i < pit.length; i++) {
+      const c = pit[i], cx = c % n, cy = (c - cx) / n;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const x = cx + dx, y = cy + dy, k = y * n + x;
+        if (x < 0 || y < 0 || x >= n || y >= n || seen[k] || !(filled[k] - height[k] > 0.3)) continue;
+        seen[k] = 1; pit.push(k);
+      }
+    }
+    if (pit.length <= 6) { for (const k of pit) height[k] = filled[k]; levelled = true; }
+  }
+  if (levelled) filled = fillDepressions(height, n);
   return {
     seed, course: 'summit', mask, boulders, fast: new Uint8Array(n * n), canyons: [], ridge, ridgeFace, ridgeTurf: S.barTurf,
     size: n, worldSize, cell: worldSize / (n - 1), maxHeight: S.top, height, filled, along, across,

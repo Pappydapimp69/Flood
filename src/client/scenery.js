@@ -246,3 +246,188 @@ export function clearAround(meshes, t, x, z, r) {
     if (changed) mesh.instanceMatrix.needsUpdate = true;
   }
 }
+
+// ---- Summit Rush's rock (docs/summit-rush.md): what the trailer's mountain is made of ----
+// The game's ground is one height per 100 m, which close up is smooth domes. The rock a low camera needs is
+// drawn here: shards standing along the crests between ravines and round the peak, scree and boulders on the
+// boulder fields and rock bars the sim plays on, a few standing stones on the spurs, and an arch over a gorge.
+// All of it is cleared under a river's water like the trees are.
+
+// A crag: a six-sided block tapering to a broken top, its points pushed about so no two faces line up. Flat shaded.
+function shardGeometry(seed) {
+  const g = new THREE.CylinderGeometry(0.3, 1, 1, 6, 3).translate(0, 0.5, 0), pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), a = Math.round(x * 50), b = Math.round(y * 50), c = Math.round(z * 50);
+    const j = (o) => hash2(a * 7 + b * 131 + o, c * 17 + b, seed) - 0.5;
+    pos.setXYZ(i, x + j(1) * 0.5 * (1 - y * 0.4), y + j(2) * 0.3 * (y > 0.01 ? 1 : 0), z + j(3) * 0.5 * (1 - y * 0.4));
+  }
+  const flat = g.toNonIndexed();
+  flat.computeVertexNormals();
+  return grounded(flat);
+}
+// A boulder: a dodecahedron squashed and knocked about.
+function boulderGeometry(seed) {
+  const g = new THREE.DodecahedronGeometry(1, 0), pos = g.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), a = Math.round(x * 50), b = Math.round(y * 50), c = Math.round(z * 50);
+    const k = 0.78 + 0.44 * hash2(a * 7 + b * 131, c * 17 + b, seed);
+    pos.setXYZ(i, x * k, y * k, z * k);
+  }
+  g.computeVertexNormals();
+  return grounded(g);
+}
+
+// Stratified rock colour: grey-brown, banded by height, a little warmer low down (the trailer's crags).
+function rockTint(col, t, k, h, o = 0) {
+  const band = 0.5 + 0.5 * Math.sin(h * 0.045 + hash2(k, 31 + o, t.seed) * 2), g = 0.2 + 0.11 * band + 0.07 * hash2(k, 32 + o, t.seed);
+  return col.setRGB(g * (1.06 + 0.06 * (1 - band)), g, g * (0.9 - 0.05 * band));
+}
+
+export function buildCrags(world, max, lit = null) {
+  const t = world.terrain, n = t.size, H = t.height, group = new THREE.Group();
+  group.name = 'crags';
+  group.userData.parts = [];
+  if (!max) return group;
+  const dry = (k) => world.lakeOf[k] < 0 && t.filled[k] - H[k] < 0.5 && H[k] > 30;
+  // Rock comes in clusters that thin out from their middles, never evenly (bs flood-98): a smooth field about
+  // 700 m across, 0 between outcrops and 1 in the middle of one.
+  const field = (x, y, o) => {
+    const gx = x / 7, gy = y / 7, ix = Math.floor(gx), iy = Math.floor(gy), fx = gx - ix, fy = gy - iy, u = fx * fx * (3 - 2 * fx), w = fy * fy * (3 - 2 * fy);
+    const v = (a, b) => hash2(ix + a, iy + b, t.seed + o);
+    const f = (v(0, 0) * (1 - u) + v(1, 0) * u) * (1 - w) + (v(0, 1) * (1 - u) + v(1, 1) * u) * w;
+    return Math.min(1, Math.max(0, (f - 0.42) * 3.2));
+  };
+  // How far a cell stands over the ground round it (a crest between ravines) and how steep it is.
+  const crags = [], scree = [], stones = [];
+  for (let y = 5; y < n - 5; y++) for (let x = 5; x < n - 5; x++) {
+    const k = y * n + x, h = H[k];
+    if (!t.mask[k] && h < 500) continue;
+    if (!dry(k)) continue;
+    const round = (H[k - 3] + H[k + 3] + H[k - 3 * n] + H[k + 3 * n] + H[k - 3 * n - 3] + H[k - 3 * n + 3] + H[k + 3 * n - 3] + H[k + 3 * n + 3]) / 8;
+    const crest = h - round, slope = Math.hypot(H[k + 1] - H[k - 1], H[k + n] - H[k - n]) / (2 * t.cell);
+    const r = hash2(x, y, t.seed + 91);
+    // Shards on the crests and on any high steep rock, thicker toward the peak.
+    const high = Math.min(1, Math.max(0, (h - 900) / 1300));
+    const wantCrag = (crest > 14 ? 0.3 + 0.5 * high : 0) + (slope > 0.38 ? 0.3 + 0.4 * Math.min(1, (slope - 0.38) * 2.5) : 0) + (h > 2000 ? 0.3 : 0);
+    const out = field(x, y, 97) * (0.35 + 0.65 * high) + (h > 2000 ? 0.5 : 0); // the outcrop this cell is in; the peak is all rock
+    if (r < wantCrag * Math.max(out, slope > 0.5 ? 0.45 : 0) * 1.6) crags.push([k, crest, high, slope, out]); // a real wall is rock all along
+    // Scree: on the rock bars and the sim's boulder domes, and in the ravine floors (hollows), most of all up high.
+    const bar = t.ridge?.[k] > 0, hollow = crest < -10;
+    // Small rock gathers round the big: under an outcrop, and in the tight ground of a ravine floor.
+    const wantScree = (bar ? 0.95 : 0) + (hollow ? 0.3 + 0.3 * high : 0) * field(x, y, 99) * 1.6 + (slope > 0.3 ? 0.12 : 0) + 0.55 * out * Math.min(1, wantCrag * 2);
+    if (hash2(x, y, t.seed + 93) < wantScree) scree.push([k, bar ? 1.5 : 1, 0]);
+    if (hash2(x, y, t.seed + 94) < wantScree * 0.6) scree.push([k, 0.7, 1]);
+    // Standing stones: rare, on gentle spurs in the middle heights.
+    if (crest > 8 && slope < 0.2 && h > 650 && h < 1500 && hash2(x, y, t.seed + 95) < 0.012) stones.push([k, crest, 0]);
+  }
+  for (const b of t.boulders ?? []) {
+    // A boulder field's dome is a pile of big blocks, not a smooth hill.
+    const R = Math.ceil(b.rad);
+    for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+      const k = (b.cy + dy) * n + b.cx + dx;
+      if (dx * dx + dy * dy <= b.rad * b.rad && dry(k)) { scree.push([k, 2.2, 2]); scree.push([k, 1.6, 3]); }
+    }
+  }
+  const thin = (list, cap) => (list.length > cap ? list.filter((_, i) => (i * cap) % list.length < cap) : list);
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3(), c = new THREE.Color(), e = new THREE.Euler();
+  const mat = new THREE.MeshLambertMaterial({ color: '#ffffff', vertexColors: true, flatShading: true });
+  seeThrough(mat);
+  const CH = 8, size = Math.ceil(n / CH);
+  // One instanced mesh per map chunk and layer (a cell holds at most one rock per layer, so the channel clearing can find it).
+  const place = (list, geo, layer, put) => {
+    const chunks = new Map();
+    for (const it of list) {
+      if ((it.length > 4 ? it[4] : it[2]) !== layer) continue;
+      const k = it[0], ck = Math.floor(Math.floor(k / n) / size) * CH + Math.floor((k % n) / size);
+      if (!chunks.has(ck)) chunks.set(ck, []);
+      chunks.get(ck).push(it);
+    }
+    for (const ck of [...chunks.keys()].sort((a, b) => a - b)) {
+      const items = chunks.get(ck), mesh = new THREE.InstancedMesh(geo, mat, items.length), byCell = new Map();
+      let i = 0;
+      for (const it of items) {
+        if (byCell.has(it[0])) continue;
+        put(it, layer);
+        mesh.setMatrixAt(i, m.compose(p, q, s));
+        mesh.setColorAt(i, shadeBy(c, lit, it[0]));
+        byCell.set(it[0], i++);
+      }
+      mesh.count = i;
+      mesh.computeBoundingSphere();
+      mesh.userData.byCell = byCell;
+      group.add(mesh);
+      group.userData.parts.push(mesh);
+    }
+  };
+  const spot = (k, o, sink) => { const [x, z] = cellPos(t, k); p.set(x + (hash2(k, 1 + o, t.seed) - 0.5) * t.cell * 0.9, H[k] * VERT - sink, z + (hash2(k, 2 + o, t.seed) - 0.5) * t.cell * 0.9); };
+  const shards = [shardGeometry(t.seed + 1), shardGeometry(t.seed + 2)];
+  const cragList = thin(crags, max).map((it, i) => [it[0], it[1], it[2], it[3], i % 2, it[4]]);
+  for (let layer = 0; layer < 2; layer++) place(cragList, shards[layer], layer, ([k, crest, high, slope, , out]) => {
+    // On a wall, a buttress: broad and leaning out of the face. On a crest or the peak, a tooth.
+    const face = slope > 0.38 && crest <= 14;
+    // Biggest in the middle of its outcrop, a third of each sunk in the ground (bs flood-99).
+    const tall = Math.min(150, (30 + 50 * hash2(k, 8, t.seed) + 70 * out * (0.4 + 0.6 * high)) * (face ? 0.8 : 1.2)), wide = tall * (face ? 0.8 + 0.5 * hash2(k, 9, t.seed) : 0.4 + 0.3 * hash2(k, 9, t.seed));
+    spot(k, 0, tall * 0.3);
+    e.set((hash2(k, 3, t.seed) - 0.5) * 0.5, hash2(k, 4, t.seed) * 6.283, (hash2(k, 5, t.seed) - 0.5) * 0.5);
+    q.setFromEuler(e);
+    s.set(wide, tall, wide * (0.7 + 0.6 * hash2(k, 10, t.seed)));
+    rockTint(c, t, k, H[k]);
+  });
+  const blocks = [boulderGeometry(t.seed + 3), boulderGeometry(t.seed + 4)];
+  const screeCap = thin(scree.filter((it) => it[2] < 2), max * 2).concat(scree.filter((it) => it[2] >= 2));
+  for (let layer = 0; layer < 4; layer++) place(screeCap, blocks[layer % 2], layer, ([k, big], L) => {
+    const size = (5 + 30 * hash2(k, 8 + L, t.seed) ** 3) * big + (L >= 2 ? 14 : 0);
+    spot(k, L * 5, -size * 0.25);
+    e.set(hash2(k, 3 + L, t.seed) * 3, hash2(k, 4 + L, t.seed) * 6.283, hash2(k, 5 + L, t.seed) * 3);
+    q.setFromEuler(e);
+    s.set(size * (0.8 + hash2(k, 6 + L, t.seed) * 0.7), size * (0.5 + hash2(k, 9 + L, t.seed) * 0.45), size * (0.8 + hash2(k, 10 + L, t.seed) * 0.7));
+    rockTint(c, t, k, H[k], L);
+  });
+  // Standing stones: one tall block each, upright, bigger than anything near it (a landmark to steer by).
+  place(thin(stones, 40), blocks[0], 0, ([k]) => {
+    const tall = 110 + 150 * hash2(k, 8, t.seed);
+    spot(k, 0, tall * 0.15);
+    q.setFromEuler(e.set((hash2(k, 3, t.seed) - 0.5) * 0.25, hash2(k, 4, t.seed) * 6.283, (hash2(k, 5, t.seed) - 0.5) * 0.25));
+    s.set(tall * 0.38, tall, tall * 0.34);
+    rockTint(c, t, k, H[k]);
+  });
+  return group;
+}
+
+// The arch: a span of rock over one breach's gorge, a third of the way out to the sea, which every river in that
+// valley runs under (the ground holds one height per point, so the arch is drawn, not terrain).
+export function buildArch(world) {
+  const t = world.terrain, n = t.size, group = new THREE.Group();
+  group.name = 'arch';
+  const b = (t.breaches ?? []).find((x) => x.kind !== 'stacks') ?? t.breaches?.[0];
+  if (!b) return group;
+  const at = (x, z) => t.height[Math.max(0, Math.min(n - 1, Math.round((z / t.worldSize + 0.5) * (n - 1)))) * n + Math.max(0, Math.min(n - 1, Math.round((x / t.worldSize + 0.5) * (n - 1))))];
+  // The gorge's middle at this distance out: the lowest ground across the breach's bearing.
+  const along = 20500;
+  let mid = 0, low = Infinity;
+  for (let a = -2600; a <= 2600; a += 50) { const h = at(b.x * along - b.z * a, b.z * along + b.x * a); if (h < low) { low = h; mid = a; } }
+  // Its walls: where the ground first stands well over the floor on each side.
+  const wall = (dir) => { for (let a = 100; a < 1500; a += 50) if (at(b.x * along - b.z * (mid + dir * a), b.z * along + b.x * (mid + dir * a)) > low + 70) return a; return 700; };
+  const half = Math.max(wall(-1), wall(1)) + 120, cx = b.x * along - b.z * mid, cz = b.z * along + b.x * mid;
+  const geo = new THREE.TorusGeometry(half, 1, 7, 18, Math.PI), pos = geo.attributes.position;
+  // A torus with a tube of 1, fattened unevenly into rock: thick at the feet, thinner over the middle.
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i), ang = Math.atan2(y, x), rx = Math.cos(ang) * half, ry = Math.sin(ang) * half;
+    const thick = (150 - 70 * Math.sin(ang)) * (0.75 + 0.5 * hash2(Math.round(ang * 9), Math.round(z * 3) + Math.round((Math.hypot(x, y) - half) * 3) * 7, t.seed + 5));
+    pos.setXYZ(i, rx + (x - rx) * thick, (ry + (y - ry) * thick) * 0.62, z * thick * 1.5);
+  }
+  const flat = geo.toNonIndexed();
+  flat.computeVertexNormals();
+  const col = new Float32Array(flat.attributes.position.count * 3), c = new THREE.Color();
+  for (let i = 0; i < col.length / 3; i++) {
+    const y = flat.attributes.position.getY(i), tri = Math.floor(i / 3), g = 0.4 + 0.12 * Math.sin(y * 0.05) + 0.08 * hash2(tri, 3, t.seed);
+    c.setRGB(g * 1.12, g, g * 0.84).toArray(col, i * 3);
+  }
+  flat.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  const mesh = new THREE.Mesh(flat, new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }));
+  mesh.position.set(cx, low * VERT - 30, cz);
+  mesh.rotation.y = Math.atan2(b.x, b.z); // the span lies across the gorge
+  group.add(mesh);
+  group.userData.at = { x: cx, z: cz, half };
+  return group;
+}

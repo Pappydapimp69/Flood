@@ -4,17 +4,32 @@ Status: built (owner, 2026-11-14) as Course: Summit Rush on the start screen (`?
 stays as it is.
 
 ## What is built, and what measured
-- `src/shared/summit.js`: the peak and its ravines carved by stream-power erosion (stochastic flow directions and
-  hillslope creep, so ravines branch instead of running down grid lines), the moat with a waterfall lip, three
-  breaches of three kinds, sea stacks. Generates in about 1.1 to 1.4 s on a desktop.
-- The sim reads each spot's own way to the sea (`courseDir`), the whole sea is the finish, the start ring goes all
-  the way round the peak, comets fall straight down over it (about 36 s), no heat wave, storms follow the field.
-- Low chase camera (200 m back, 55 m up), rock colouring on the peak, an opening shot looking up at the comets.
-- Bot races (`node tools/bot-race.mjs --course summit --rivers 30 --drop 1 2 3`): fastest finish 87 to 91 s, not
-  the two minutes asked for; the island already fills the 64 km map, so longer needs a bigger map. A rival within
-  400 m 8 to 10% of the time, LESS than the ski map's 16 to 19%: the moat does not bring rivers together as this
-  design claimed, they spread round a 110 km ring and meet only in the breaches. That is the open problem.
-- Not built: the camera-following detail patch and scattered rocks (the ground is still the 100 m grid up close).
+Rebuilt 2026-11-14 after the owner's verdict on the first build ("boring, nothing like the trailer, too slow"). The
+sections below this one describe the first design; where they speak of a moat, read this instead.
+- What was wrong, measured (`node tools/course-counts.mjs`): the water ran as fast as on the ski slope (median about
+  240 m/s on both), but a river on the first island swallowed 1 lake a race against the ski slope's 6, and met no
+  boulder, ridge or rock bar at all: the generator handed the sim a bare cone. And the moat did not bring rivers
+  together (a rival within 400 m 8 to 10% of the time): they spread round it.
+- `src/shared/summit.js` now: the erosion's base level is open only at the three breaches and the starting ground
+  tilts toward each, so the ravines gather into three trunk valleys, each leaving through its own gorge. No moat.
+  Along the channels: 14 tarns (bowls cut level into the slope, so they hold water), 10 rock bars (18, 30 or 45 m,
+  a gap at one end), 9 boulder fields. Puddles of six cells or fewer are levelled. The start ring is at 70% of the
+  peak's height (90% left room for too few seats on the sharper peak).
+- Measured after (30 bots, seeds 1 to 3): lakes swallowed per river 5 to 6; a rival within 400 m 10 to 15% (80
+  rivers: 21 to 25%); fastest finish 75 to 85 s, median 92 to 101 s. Contact is still under the ski slope's 16 to
+  19% with 30 rivers: the open problem, now smaller.
+- The look (`src/client/scenery.js` buildCrags, buildArch; the rugged rock in `terrainMesh.js`): crags in outcrops
+  along the crests and round the peak, buttresses on walls, scree under them and in ravine floors, block piles on the
+  boulder fields and rock bars, standing stones on spurs, a rock arch over one gorge; darker jointed rock shading.
+  Placement follows researched rules (clusters that thin from their middles, big rock first then small round it, a
+  third of each sunk in: bs flood-98, flood-99). Rock under a river's water is cleared like the trees.
+- Felt speed: it comes mostly from how many ground features pass each second (bs flood-95), which is what the rock
+  and the fuller valleys add; the water's speed is unchanged.
+- To look at a race: `node tools/race-shots.mjs <dir> <seed>` (a bot steers the player with `?pilot`, the game runs
+  ahead between shots).
+- Not built: a finer ground mesh near the camera (the ground itself is still the 100 m grid), sea stacks as meshes.
+- Not run: the unit tests and CI (owner, 2026-11-14: "no tests, no ci"). Tests that pin the old island's numbers
+  may need their numbers updated.
 
 ## What the owner asked for
 "It should look more like this" (the trailer "Playing as a River in a Battle Royale"): comets rain onto one jagged

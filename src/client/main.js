@@ -12,10 +12,11 @@ import { connect } from './net.js';
 import { createAudio } from './audio.js';
 import { alphaWanted, createFeedback } from './feedback.js';
 import { groupCrossings } from './crossmarks.js';
-import { buildTrees, buildRocks, clearTrees, clearAround, buildLava, coolLava, pulseLava, treeFade } from './scenery.js';
+import { buildTrees, buildRocks, buildCrags, buildArch, clearTrees, clearAround, buildLava, coolLava, pulseLava, treeFade } from './scenery.js';
 
 // Test/debug surface. Tests poll this instead of waiting on wall-clock time.
 const dbg = (window.__flood = { ready: false, error: null, frames: 0, steers: [], prints: new Map() });
+dbg.pilot = new URLSearchParams(location.search).has('pilot');
 
 const params = new URLSearchParams(location.search);
 // Stamped with the commit at deploy (see .github/workflows/pages.yml); shown small, so a stale cache is visible.
@@ -301,7 +302,7 @@ if (!COURSES.some(([k]) => k === courseWanted)) courseWanted = 'ski';
 const botCount = () => (params.has('bots') ? Math.max(0, Math.min(79, Number(params.get('bots')))) : riversWanted - 1);
 
 // A race: the world plus what draws it. `river` is null when spectating.
-let trees, rocks, lava; // scenery for the current race
+let trees, rocks, lava, crags, arch; // scenery for the current race
 let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, endShown, mode, raceOver, finalShown;
 let recordBanked = false, recordNotes = [];
 let paused = false; // solo: the race clock stops; online: just the menu over a running race
@@ -588,7 +589,7 @@ function beginRace(seed, raceIds, me, rolled) {
   updateLakes(); // dry basins show as dry from the first frame
   for (const g of guides) if (!g.parent) scene.add(g);
   buildZoneDots();
-  for (const m of [trees, rocks, lava]) if (m) {
+  for (const m of [trees, rocks, lava, crags, arch]) if (m) {
     scene.remove(m);
     m.traverse((o) => { o.geometry?.dispose(); o.material?.dispose(); o.dispose?.(); });
   }
@@ -596,6 +597,11 @@ function beginRace(seed, raceIds, me, rolled) {
   rocks = buildRocks(world, lite ? 0 : lowPower ? 1200 : 3500, terrainMesh.userData.lit);
   castTrees(terrainMesh, trees.userData.cells);
   scene.add(rocks);
+  // Summit Rush: the mountain's rock (crags on the crests, scree and boulder fields, standing stones, an arch).
+  crags = isSummit(world) ? buildCrags(world, lite ? 0 : lowPower ? 1500 : 5000, terrainMesh.userData.lit) : null;
+  arch = isSummit(world) && !lite ? buildArch(world) : null;
+  if (crags) scene.add(crags);
+  if (arch) scene.add(arch);
   lava = buildLava(world);
   scene.add(trees, lava);
   if (river?.dropping) highlightZone(terrainMesh, startLine(world).set, true);
@@ -1143,10 +1149,13 @@ function dragAim() {
   return { s, f: pitch };
 }
 
+let pilot = null;
 function soloTick() {
   if (handleActions() || raceOver) return;
   // Bots decide from the same start-of-tick state, then everyone steps together.
-  const inputs = new Map([[PLAYER, sampleSteer()]]);
+  // ?pilot (screenshots and watching): a bot steers the player's river too.
+  if (dbg.pilot && river && pilot?.river !== river) pilot = createBot(world, river);
+  const inputs = new Map([[PLAYER, dbg.pilot && river ? botSteer(world, pilot) : sampleSteer()]]);
   for (const b of bots) inputs.set(b.river.id, dbg.botsOff ? 0 : botSteer(world, b));
   if (planner) planRival(inputs);
   advance(inputs);
@@ -1222,6 +1231,7 @@ function advance(inputs) {
   applyCarve(terrainMesh, world.carve, dirty, world.rock);
   clearTrees(trees, world.felled.splice(0));
   clearTrees(rocks, dirty, world.carve);
+  if (crags) clearTrees(crags, dirty, world.carve);
   const cooled = world.cooled.splice(0);
   if (cooled.length) { coolLava(lava, cooled); clearTrees(trees, cooled, world.rock); }
   if (world.tick % 10 === 0) updateLakes();
@@ -1231,7 +1241,7 @@ function advance(inputs) {
       if (en) burstSpray(en.spray, lr.x, surfaceAt(world, lr.x, lr.z) * VERT, lr.z, 1.2, 70);
       if (river && e.river === river.idx) {
         highlightZone(terrainMesh, startLine(world).set, false); audio.splash(1.2);
-        if (isSummit(world)) teach('summit-sea', 'The finish', 'You landed, and now you are a <b>river</b>. Run down your ravine, over the falls into the <b>moat</b> round the mountain, and out through a <b>gorge</b> to the sea. Any sea finishes.', river.x, river.z);
+        if (isSummit(world)) teach('summit-sea', 'The finish', 'You landed, and now you are a <b>river</b>. Run down your ravine: it joins others into one of three <b>valleys</b>, each leaving the mountains through a <b>gorge</b> to the sea. Swallow the lakes on the way. Any sea finishes.', river.x, river.z);
         else teach('beach', 'The finish', 'You landed, and now you are a <b>river</b>. Race downhill to <b>the gold beach</b>: it is the only finish. Other beaches just carry you here on the current.', world.beachAt.x, world.beachAt.z);
         teach('ribbon', 'Your route', 'The <b>white ribbon</b> ahead of you shows where your water will run if you hold this heading. Steer to change it.', lr.x, lr.z);
       }
@@ -1783,6 +1793,7 @@ renderer.setAnimationLoop(() => {
   if (mode === 'solo') {
     if (paused || lesson || fb?.isOpen || mustRotate()) { handleActions(); acc = 0; }
     else while (acc >= DT && !lesson) { soloTick(); acc -= DT; }
+    for (; dbg.ff > 0 && !lesson && !raceOver; dbg.ff--) soloTick(); // dev: run ahead this many ticks at once (screenshots)
     if (lesson) acc = 0;
   } else {
     handleActions();
@@ -1870,7 +1881,7 @@ renderer.setAnimationLoop(() => {
     // Nothing stands in the water: clear trees and boulders along each new stretch.
     while ((e.cleared ?? 0) < r.path.length) {
       const q = r.path[e.cleared ?? 0];
-      clearAround([rocks], terrain, q.x, q.z, q.w * 0.7); // trees fall only where the game knocks them down
+      clearAround(crags ? [rocks, crags] : [rocks], terrain, q.x, q.z, q.w * 0.7); // trees fall only where the game knocks them down
       e.cleared = (e.cleared ?? 0) + 1;
     }
     if (r === focus) { fx = hx; fz = hz; fy = hy; }

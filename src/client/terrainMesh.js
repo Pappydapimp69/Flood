@@ -214,6 +214,9 @@ function terrainMaterial(rugged = false) {
           // Rock on steep ground, banded along the height.
           float band = 0.5 + 0.5 * sin(vWPos.y * 0.09 + tn(vWPos.xz * 0.01) * 6.0);
           vec3 rock = mix(vec3(0.42, 0.39, 0.35), vec3(0.62, 0.58, 0.52), band * 0.6 + macro * 0.4);
+          ${rugged ? `// Summit Rush: darker, harder rock, broken by joints running down the face (the trailer's grey crags).
+          float joint = tn(vec2((vWPos.x + vWPos.z) * 0.035, vWPos.y * 0.004)) * 0.6 + tn(vec2((vWPos.x - vWPos.z) * 0.011, vWPos.y * 0.002) + 9.0) * 0.4;
+          rock = mix(vec3(0.21, 0.2, 0.19), vec3(0.47, 0.43, 0.38), band * 0.45 + macro * 0.25 + joint * 0.3) * (0.72 + 0.5 * smoothstep(0.35, 0.6, joint));` : ''}
           // Ground cover follows the lie of the land (vDamp: hollows and lake shores damp, crests dry),
           // broken up by noise at three sizes: lush green where water gathers, dry straw on the
           // crests, rust bracken on the drier slopes, pale tussock in patches, bare stone on spurs.
