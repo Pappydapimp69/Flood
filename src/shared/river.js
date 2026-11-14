@@ -311,7 +311,7 @@ export function lakeGain(lake) {
 // Rules a course changes from TUNE (docs/summit-rush.md). Summit Rush seats about 20 rivers on each valley
 // head's ring, so starts sit closer; its landing lane stays the full width of the start line, so the drop picks
 // the valley; and its spawn grace is capped, or 80 rivers would have no contact for a sixth of a two-minute race.
-export const COURSE_RULES = { summit: { spawnGap: 250, graceMax: 140, startElevation: 0.9, dropScale: 0.6, fallRate: 2 } };
+export const COURSE_RULES = { summit: { spawnGap: 250, graceMax: 140, startElevation: 0.7, dropScale: 0.6, fallRate: 2 } };
 // Summit Rush (docs/summit-rush.md) has no single downhill direction: a peak in the middle, the sea all round.
 export const isSummit = (world) => world.terrain.course === 'summit';
 // Which way is forward at (x, z): down the ski slope's axis, or on the summit, this spot's own way to the sea
