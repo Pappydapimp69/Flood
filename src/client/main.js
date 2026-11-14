@@ -1219,7 +1219,7 @@ function advance(inputs) {
       if (en) burstSpray(en.spray, lr.x, surfaceAt(world, lr.x, lr.z) * VERT, lr.z, 1.2, 70);
       if (river && e.river === river.idx) {
         highlightZone(terrainMesh, startLine(world).set, false); audio.splash(1.2);
-        teach('beach', 'The finish', 'You landed, and now you are a <b>river</b>. Race downhill to <b>this gold beach</b>: it is the only finish. Other beaches just carry you here on the current.', world.beachAt.x, world.beachAt.z);
+        teach('beach', 'The finish', 'You landed, and now you are a <b>river</b>. Race downhill to <b>the gold beach</b>: it is the only finish. Other beaches just carry you here on the current.', world.beachAt.x, world.beachAt.z);
         teach('ribbon', 'Your route', 'The <b>white ribbon</b> ahead of you shows where your water will run if you hold this heading. Steer to change it.', lr.x, lr.z);
       }
     } else if (e.type === 'offcourse') {
@@ -1469,7 +1469,9 @@ function caption(key, html) {
 // explains. A press then flies the camera from there to the thing the card is about (the finish, a lake
 // ahead); the next press flies it back to where it was, and only then does the race carry on. A lesson about
 // something right where the player is has nowhere to fly: one press carries on.
-const LESSON_NEAR = 900, LESSON_OUT = 1400, LESSON_BACK = 1000; // metres; ms of flight out and back
+const LESSON_NEAR = 900; // metres: nearer than this, the card is about where the player already is
+// The flight out takes 1.2 s plus 1 s per 20 km, to 2.4 s (the finish is 20-odd km off); home takes 0.7 of that.
+const lessonMs = (l, at) => 1200 + Math.min(1200, Math.hypot(l.x - at.x, l.z - at.z) / 20);
 const lessonEl = document.getElementById('lesson');
 let lesson = null; const lessonQueue = [], taught = new Set();
 function teach(key, title, html, x, z, far = 1) {
@@ -1487,6 +1489,7 @@ function nextLesson() {
   lessonEl.querySelector('p').innerHTML = lesson.html;
   const at = focus ?? river;
   lesson.fly = lesson.x !== undefined && !!at && Math.hypot(lesson.x - at.x, lesson.z - at.z) > LESSON_NEAR;
+  lesson.ms = lesson.fly ? lessonMs(lesson, at) : 0;
   lesson.phase = 'read'; // read (view held) -> show (flown to the spot) -> back (flying home) -> the race resumes
   lessonEl.querySelector('small').textContent = `${key('A', 'Space / Enter', 'Tap')} ${lesson.fly ? 'to see it' : 'to carry on'}`;
   lesson.shownAt = performance.now();
@@ -1893,7 +1896,7 @@ renderer.setAnimationLoop(() => {
     if (lesson.phase !== 'read') {
       const g = surfaceAt(world, lesson.x, lesson.z) * VERT, f = lesson.far ?? 1;
       const spot = new THREE.Vector3(lesson.x + 700 * f, g + 1500 * f, lesson.z + 1700 * f), at = new THREE.Vector3(lesson.x, g, lesson.z);
-      const out = lesson.phase === 'show', t = Math.min(1, (performance.now() - lesson.shownAt) / (out ? LESSON_OUT : LESSON_BACK));
+      const out = lesson.phase === 'show', t = Math.min(1, (performance.now() - lesson.shownAt) / (out ? lesson.ms : lesson.ms * 0.7));
       const k = t * t * (3 - 2 * t), u = out ? k : 1 - k; // eased; u: 0 at the held view, 1 over the spot
       if (out) lesson.reach = u; // a press before it arrives flies home from wherever it got to
       const w = out ? u : (lesson.reach ?? 1) * (1 - k);
