@@ -362,7 +362,8 @@ export function createWorld(terrain, { forest = true, lava = true } = {}) {
   world.cooled = []; // cells that turned from lava to rock, for presentation
   world.rock = new Float32Array(n * n); // metres of cooled rock on top of the ground
   world.basins = makeBasins(world);
-  if (lava) makeLava(world);
+  if (lava && terrain.course !== 'slide') makeLava(world);
+  if (terrain.course === 'slide') world.slide = makeSlide(world);
   if (forest) addForest(world);
   return world;
 }
@@ -1112,6 +1113,7 @@ export function step(world, inputs) {
     if (!isRacing(r)) continue;
     moveRiver(world, r, readInput(inputs?.get(r.id)));
   }
+  if (world.slide) slideStep(world);
   dropBumps(world);
   dropClouds(world);
   waterCycle(world);
@@ -2711,4 +2713,108 @@ export function riverFingerprint(world) {
     mix(r.out ? r.out.tick : -1); mix(r.pooled); mix(r.via.size); mix(r.gougeT); mix(r.gougeAt); mix(r.boost); mix(r.surgeT ?? -1); mix(r.surgeAt ?? 0); mix((r.surgeOn ? 1 : 0) + (r.gougeOn ? 2 : 0));
   }
   return (h >>> 0).toString(16).padStart(8, '0');
+}
+
+// ---- The Landslide (Training: the test map for a living mountain) ----
+// A slope across the valley comes down as the leader nears it and dams the valley; water backs up behind it
+// (backflooding) until the dam breaks, by rivers wearing through its crest or by the pond overtopping it; then
+// the pond goes down the valley as one flood wave, and every river the wave passes rides it. Rivers held at
+// the dam when it breaks ride it furthest (bs flood-107: a landslide dam floods upstream when it forms and
+// downstream when it fails). The dam is ordinary rock on world.rock, so it is shared in lockstep, rivers wear
+// it as they wear any rise, and the client draws it like cooled lava.
+export const SLIDE = {
+  at: 0.55, // where along the course the slope comes down (share of the course)
+  height: 150, // metres of rock at the dam's crest
+  thick: 160, // metres: the dam's half-thickness along the valley (a smooth bump, not a wall)
+  trigger: 3500, // metres of route ahead of the leader when it starts to fall
+  fallTicks: 40, // 2 s from the first rocks to the full dam
+  holdTicks: 260, // 13 s until the pond overtops it, if no river breaks it first
+  breach: 0.4, // the dam breaks once its crest is worn below this share of its height anywhere
+  burstTicks: 16, // the dam washes out in 0.8 s
+  waveSpeed: 420, // m/s down the route
+  waveTicks: 200, // the wave runs 10 s (about 8 km)
+  waveBand: 700, // metres behind the front that still catch it
+  pond: 2500, // metres of route above the dam the pond reaches: rivers there ride from the start
+  rideTicks: 70, // a ride lasts 3.5 s...
+  rideSpeed: 520, // ...at least this fast
+  rideFromPond: 1.4, // a river that waited in the pond rides this much faster and longer
+  gift: 0.25, // of the start volume: the pond's water each rider takes with it
+};
+
+function makeSlide(world) {
+  const t = world.terrain, n = t.size, along = t.along;
+  if (!along) return null;
+  const len = t.long * t.worldSize, cells = [], peak = [];
+  let x = 0, z = 0, d = 0, low = Infinity, m = 0;
+  for (let k = 0; k < n * n; k++) {
+    if (!t.mask[k] || t.filled[k] <= SEA_LEVEL || world.lakeOf[k] >= 0) continue;
+    const off = (along[k] - SLIDE.at) * len;
+    if (Math.abs(off) > SLIDE.thick * 2.2) continue;
+    const h = SLIDE.height * Math.exp(-((off / SLIDE.thick) ** 2) * 2);
+    if (h < 3) continue;
+    cells.push(k); peak.push(h);
+    if (Math.abs(off) < t.cell) { const cx = k % n; x += (cx / (n - 1) - 0.5) * t.worldSize; z += (((k - cx) / n) / (n - 1) - 0.5) * t.worldSize; m++; if (world.toBeach[k] < 1e8) d += world.toBeach[k]; low = Math.min(low, t.filled[k]); }
+  }
+  if (!m) return null;
+  // The pond's footprint: valley cells above the dam, below the crest, within SLIDE.pond of route (for the look).
+  return { state: 'armed', tick: 0, cells, peak: Float32Array.from(peak), x: x / m, z: z / m, reach: d / m, base: low, level: 0, front: 0, rode: new Set(),
+    axis: { x: t.axis.x, z: t.axis.y } };
+}
+
+function slideStep(world) {
+  const s = world.slide, t = world.terrain;
+  if (!s || s.state === 'done') return;
+  const age = world.tick - s.tick, set = (state) => { s.state = state; s.tick = world.tick; world.events.push({ type: 'slide', phase: state, x: s.x, z: s.z, tick: world.tick }); };
+  if (s.state === 'armed') { if (world.leadReach !== undefined && world.leadReach < s.reach + SLIDE.trigger) set('falling'); return; }
+  if (s.state === 'falling') {
+    const u = Math.min(1, (age + 1) / SLIDE.fallTicks), e = u * u * (3 - 2 * u);
+    for (let i = 0; i < s.cells.length; i++) {
+      const k = s.cells[i], want = s.peak[i] * e;
+      if (want > world.rock[k]) { world.treeRock[k] += want - world.rock[k]; world.rock[k] = want; world.dirty.push(k); }
+    }
+    if (u >= 1) set('dammed');
+    return;
+  }
+  if (s.state === 'dammed') {
+    s.level = Math.min(1, age / SLIDE.holdTicks) * SLIDE.height * 0.85; // the pond backing up behind it
+    let worn = age >= SLIDE.holdTicks;
+    if (!worn && age % 5 === 0) for (let i = 0; i < s.cells.length && !worn; i++) if (s.peak[i] > SLIDE.height * 0.9 && world.rock[s.cells[i]] < SLIDE.height * SLIDE.breach) worn = true;
+    if (worn) { set('burst'); s.front = s.reach; ridePond(world, s); }
+    return;
+  }
+  // Bursting: the dam washes out and the wave runs down the route.
+  if (age <= SLIDE.burstTicks) {
+    const keep = 1 - age / SLIDE.burstTicks;
+    for (let i = 0; i < s.cells.length; i++) {
+      const k = s.cells[i], want = Math.min(world.rock[k], s.peak[i] * keep * 0.6);
+      if (want < world.rock[k]) { world.treeRock[k] += want - world.rock[k]; world.rock[k] = want; world.dirty.push(k); }
+    }
+  }
+  s.level = Math.max(0, s.level - SLIDE.height * 0.85 / SLIDE.burstTicks);
+  s.front = s.reach - SLIDE.waveSpeed * age * DT;
+  for (const r of world.rivers) {
+    if (!isRacing(r) || r.dropping || s.rode.has(r.idx)) continue;
+    const at = world.toBeach[cellIndex(t, r.x, r.z)];
+    if (at <= s.front + SLIDE.waveBand && at >= s.front - 200) ride(world, s, r, 1);
+  }
+  if (age >= SLIDE.waveTicks) set('done');
+}
+
+// Rivers held in the pond when it breaks: they go with the whole lake.
+function ridePond(world, s) {
+  for (const r of world.rivers) {
+    if (!isRacing(r) || r.dropping) continue;
+    const at = world.toBeach[cellIndex(world.terrain, r.x, r.z)];
+    if (at >= s.reach - 300 && at <= s.reach + SLIDE.pond) ride(world, s, r, SLIDE.rideFromPond);
+  }
+}
+
+// A ride is a surge the river does not pay for: the same machinery (speed floor, lift, hop), more water.
+function ride(world, s, r, k) {
+  s.rode.add(r.idx);
+  grow(r, TUNE.startVolume * SLIDE.gift * k);
+  r.surgeT = 0; r.surgeBuild = 0; r.surgeFrom = r.speed; r.surgeLen = Math.round(SLIDE.rideTicks * k);
+  r.surgeSpeed = Math.max(SLIDE.rideSpeed * k, r.speed + TUNE.baseSpeed * TUNE.surgeAdd);
+  r.surgeAt = Math.max(r.surgeAt ?? 0, world.tick + r.surgeLen);
+  world.events.push({ type: 'flood-ride', river: r.idx, pond: k > 1, tick: world.tick });
 }

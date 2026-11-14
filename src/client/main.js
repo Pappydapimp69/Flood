@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes, TUTORIAL as COURSE } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, startLine, pastLine, descentLane, laneHalf, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, isSummit, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, startLine, pastLine, descentLane, laneHalf, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, isSummit, DT, TICK_HZ, TUNE, SLIDE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, castTrees, buildDetailPatch, placeDetailPatch, hideDetailPatch, VERT } from './terrainMesh.js';
@@ -300,6 +300,10 @@ const COURSES = [['ski', 'Ski slope'], ['summit', 'Summit Rush']];
 let courseWanted = 'ski';
 try { courseWanted = localStorage.getItem('flood.course') || 'ski'; } catch { /* no storage */ }
 if (params.has('course')) courseWanted = params.get('course');
+// Training's test maps (owner, 2026-11-14): not in the Course list, started from the menu's Training entries.
+// The Landslide: a small map where a slope comes down ahead of the leader, dams the valley and bursts.
+const TRAINING = { slide: { seed: 7001 } };
+let trainingCourse = TRAINING[params.get('course')] ? params.get('course') : null;
 if (!COURSES.some(([k]) => k === courseWanted)) courseWanted = 'ski';
 const botCount = () => (params.has('bots') ? Math.max(0, Math.min(79, Number(params.get('bots')))) : riversWanted - 1);
 
@@ -627,11 +631,11 @@ function newRun() {
   if (tutorial) return newTutorial();
   mode = 'solo';
   // A fresh island every race, unless ?seed pins one.
-  const want = Number(params.get('seed')) || 1 + Math.floor(Math.random() * 1_000_000);
+  const want = Number(params.get('seed')) || TRAINING[trainingCourse]?.seed || 1 + Math.floor(Math.random() * 1_000_000);
   const all = [PLAYER, ...Array.from({ length: botCount() }, (_, i) => `bot${String(i + 1).padStart(2, '0')}`)].sort();
   names = Object.fromEntries(all.filter((id) => id !== PLAYER).map((id, i) => [id, BOT_NAMES[i % BOT_NAMES.length]]));
   // Reroll until the summit ring seats everyone (the ski map seats 15-18 at spawnGap: past 12, the drops spread the rest).
-  const { seed, world: rolled } = rollIsland(want, Math.min(all.length, 12), 40, courseWanted === 'ski' ? undefined : courseWanted);
+  const { seed, world: rolled } = rollIsland(want, Math.min(all.length, 12), 40, trainingCourse ?? (courseWanted === 'ski' ? undefined : courseWanted));
   beginRace(seed, all, PLAYER, rolled);
   bots = world.rivers.filter((r) => r !== river).map((r) => createBot(world, r));
   startPlanner();
@@ -1216,6 +1220,22 @@ function tugFeedback(now) {
 
 // Lake levels follow the water each holds; redrawn in small steps.
 const lakeShown = new Map();
+// The Landslide's pond: a flat sheet above the dam that the valley's own sides cut to shape as it rises.
+let slidePond = null;
+function showSlidePond() {
+  const s = world.slide;
+  if (!s) { if (slidePond) slidePond.visible = false; return; }
+  if (!slidePond) {
+    const g = new THREE.PlaneGeometry(9000, SLIDE.pond, 1, 1).rotateX(-Math.PI / 2).translate(0, 0, -SLIDE.pond / 2);
+    slidePond = new THREE.Mesh(g, new THREE.MeshPhongMaterial({ color: '#2a9fb4', transparent: true, opacity: 0.88, shininess: 80, specular: '#bfefff' }));
+    slidePond.renderOrder = 2;
+    scene.add(slidePond);
+  }
+  slidePond.visible = s.level > 1;
+  slidePond.position.set(s.x, (s.base + s.level) * VERT + 2, s.z);
+  slidePond.rotation.y = Math.atan2(s.axis.x, s.axis.z);
+}
+
 function updateLakes() {
   const { lakes, lakeVol, lakeCap } = world;
   for (let i = 0; i < lakes.length; i++) {
@@ -1240,6 +1260,7 @@ function advance(inputs) {
   const cooled = world.cooled.splice(0);
   if (cooled.length) { coolLava(lava, cooled); clearTrees(trees, cooled, world.rock); }
   if (world.tick % 10 === 0) updateLakes();
+  showSlidePond();
   for (const e of world.events.splice(0)) {
     if (e.type === 'land') {
       const en = entries[e.river], lr = world.rivers[e.river];
@@ -1309,6 +1330,13 @@ function advance(inputs) {
         audio.splash(1.3); gougeShakeAt = performance.now() - 200;
         teach('bump', 'Bumping', 'Drops that collide knock each other off course. Whoever hits with more momentum (more water, more speed into the other) <b>wins</b>: the loser spills water and the winner soaks most of it up. Ram lighter drops; dodge heavier ones.', e.x, e.z);
       }
+    } else if (e.type === 'slide') {
+      if (e.phase === 'falling') { showPop('LANDSLIDE AHEAD — the valley is closing'); feed('A slope is coming down across the valley'); audio.splash(1); }
+      else if (e.phase === 'dammed') feed('The landslide has dammed the valley: the water is backing up');
+      else if (e.phase === 'burst') { showPop('THE DAM BURST — ride the flood'); feed('The dam burst: a flood wave is running down the valley'); audio.splash(1); }
+    } else if (e.type === 'flood-ride') {
+      if (river && e.river === river.idx) showPop(e.pond ? 'RIDING THE FLOOD — the whole lake goes with you' : 'CAUGHT BY THE FLOOD WAVE');
+      else feed(`${nameOf(world.rivers[e.river])} ${e.pond ? 'rides the lake out' : 'is caught by the wave'}`);
     } else if (e.type === 'unlock') {
       if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `${e.why === 'behind' ? "You're far behind the leader, so you get" : "You're big enough for"} <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): it builds up for a moment (longer the bigger you are), then gives a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
       if (river && e.river === river.idx) { showPop(e.skill === 'gouge' ? 'GOUGE unlocked — A / SPACE to boost over a rise' : 'SURGE unlocked — RB / Q for a speed burst'); audio.splash(1); }
@@ -2211,9 +2239,11 @@ courseBtn.onclick = () => {
   showCourse();
 };
 document.getElementById('play-solo').onclick = () => {
-  if (fresh()) return; goLandscape(); tutorial = false; hud.menu.hidden = true; newRun(); };
+  if (fresh()) return; goLandscape(); tutorial = false; trainingCourse = null; hud.menu.hidden = true; newRun(); };
+document.getElementById('play-slide').onclick = () => {
+  if (fresh()) return; goLandscape(); tutorial = false; trainingCourse = 'slide'; hud.menu.hidden = true; newRun(); };
 document.getElementById('play-tutorial').onclick = () => {
-  if (fresh()) return; goLandscape(); tutorial = true; hud.menu.hidden = true; newTutorial(); };
+  if (fresh()) return; goLandscape(); tutorial = true; trainingCourse = null; hud.menu.hidden = true; newTutorial(); };
 document.getElementById('play-online').onclick = () => { hud.menu.hidden = true; goOnline(pickName()); };
 if (params.has('online')) { hud.menu.hidden = true; goOnline(params.get('name') ?? ''); }
 else if (params.has('seed') || params.has('solo') || params.has('bots')) { hud.menu.hidden = true; newRun(); }

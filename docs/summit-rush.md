@@ -117,3 +117,15 @@ that bends the radial flow back together (bs flood-93).
 - Knickpoints: https://en.wikipedia.org/wiki/Knickpoint
 - Camera: https://support.iracing.com/support/solutions/articles/31000157467, https://arxiv.org/pdf/2103.05200
 - Terrain detail: https://hhoppe.com/proj/geomclipmap/, https://github.com/nwpointer/three-landscape
+
+## The living mountain: Training's test map (owner, 2026-11-14)
+The owner's verdict on the set-piece library ("just combining 3 ski maps... the map has to feel alive"): Summit's
+mountain should change during the race. First piece, on a small test map under Training in the menu
+(`?course=slide`, seed 7001, a 400-cell ski-style valley that builds in under a second): the Landslide
+(`src/shared/river.js` SLIDE, makeSlide, slideStep). As the leader nears it a slope comes down across the
+valley as rock on `world.rock` (the layer cooled lava already used, so lockstep and drawing needed nothing new);
+a pond backs up behind it; the dam breaks when a river wears its crest through or after 13 s, and the pond goes
+down the valley as a wave: every river it passes rides it (a free surge plus water), rivers held in the pond
+ride furthest. Measured (12 bots, seeds 7001-7003): it falls 24-28 s in, holds the pack, and 8-9 of 12 ride
+the burst. Not yet: no river breaks the dam before it overtops (bots don't Gouge a 150 m dam), so the early
+break is untested; the dam's own look is plain dark rock.
