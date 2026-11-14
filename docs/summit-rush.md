@@ -12,12 +12,15 @@ sections below this one describe the first design; where they speak of a moat, r
   together (a rival within 400 m 8 to 10% of the time): they spread round it.
 - `src/shared/summit.js` now: the erosion's base level is open only at the three breaches and the starting ground
   tilts toward each, so the ravines gather into three trunk valleys, each leaving through its own gorge. No moat.
-  Along the channels: 14 tarns (bowls cut level into the slope, so they hold water), 10 rock bars (18, 30 or 45 m,
-  a gap at one end), 9 boulder fields. Puddles of six cells or fewer are levelled. The start ring is at 70% of the
+  Along the channels: 36 tarns on the big channels (bowls cut level into the slope, so they hold water), 10 rock
+  bars (18, 30 or 45 m, a gap at one end), 9 boulder fields. Puddles of six cells or fewer are levelled. The valleys
+  are narrow (the divides between them rise from a third of the way off a breach's bearing), so ravines join early. The start ring is at 70% of the
   peak's height (90% left room for too few seats on the sharper peak).
-- Measured after (30 bots, seeds 1 to 3): lakes swallowed per river 5 to 6; a rival within 400 m 10 to 15% (80
-  rivers: 21 to 25%); fastest finish 75 to 85 s, median 92 to 101 s. Contact is still under the ski slope's 16 to
-  19% with 30 rivers: the open problem, now smaller.
+- Measured after (30 bots, seeds 1 to 3): a rival within 400 m 14 to 17% of the time (the ski slope: 16 to 19%);
+  the water's own path from a start crosses 4 to 5 lakes, but bots enter only 2.4 to 2.9 a race (the ski slope: 6),
+  and soak about 10 times (ski: 55 to 90); fastest finish 73 to 87 s, median 95 to 110 s. (An earlier count of 5 to
+  6 lakes was inflated by puddles of a few cells, since levelled.) Open: why bots leave half the lakes on their
+  water's path.
 - The look (`src/client/scenery.js` buildCrags, buildArch; the rugged rock in `terrainMesh.js`): crags in outcrops
   along the crests and round the peak, buttresses on walls, scree under them and in ravine floors, block piles on the
   boulder fields and rock bars, standing stones on spurs, a rock arch over one gorge; darker jointed rock shading.
@@ -27,7 +30,10 @@ sections below this one describe the first design; where they speak of a moat, r
   and the fuller valleys add; the water's speed is unchanged.
 - To look at a race: `node tools/race-shots.mjs <dir> <seed>` (a bot steers the player with `?pilot`, the game runs
   ahead between shots).
-- Not built: a finer ground mesh near the camera (the ground itself is still the 100 m grid), sea stacks as meshes.
+- The detail patch (`terrainMesh.js` buildDetailPatch): a 15 m mesh 2.4 km across that follows the camera and draws
+  the ground there with relief the 100 m grid cannot hold (ledged on steep rock, gentle on grass, none in water or
+  channels, none at its edges); the big mesh skips drawing under it. Summit Rush only, not with `?lite`.
+- Not built: sea stacks as meshes.
 - Not run: the unit tests and CI (owner, 2026-11-14: "no tests, no ci"). Tests that pin the old island's numbers
   may need their numbers updated.
 

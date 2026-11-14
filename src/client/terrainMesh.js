@@ -191,7 +191,10 @@ export function buildTerrainMesh(t) {
 // shows close up and fades out with distance so it never shimmers.
 function terrainMaterial(rugged = false) {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  // The ground the detail patch draws instead (x0, z0, x1, z1 in world metres; empty when there is none).
+  const cut = (mat.userData.cut = { value: new THREE.Vector4(0, 0, 0, 0) });
   mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uCut = cut;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nattribute vec3 shade;\nattribute float damp;\nvarying vec3 vWPos;\nvarying vec3 vWNorm;\nvarying vec3 vShade;\nvarying float vDamp;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWPos = (modelMatrix * vec4(transformed, 1.0)).xyz;\nvWNorm = normalize(mat3(modelMatrix) * objectNormal);\nvShade = shade;\nvDamp = damp;');
@@ -201,10 +204,12 @@ function terrainMaterial(rugged = false) {
         varying vec3 vWNorm;
         varying vec3 vShade;
         varying float vDamp;
+        uniform vec4 uCut;
         float th(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
         float tn(vec2 p) { vec2 i = floor(p), f = fract(p); vec2 u = f * f * (3.0 - 2.0 * f);
           return mix(mix(th(i), th(i + vec2(1, 0)), u.x), mix(th(i + vec2(0, 1)), th(i + vec2(1, 1)), u.x), u.y); }`)
       .replace('#include <color_fragment>', `#include <color_fragment>
+        if (vWPos.x > uCut.x && vWPos.x < uCut.z && vWPos.z > uCut.y && vWPos.z < uCut.w) discard;
         {
           float dist = length(cameraPosition - vWPos);
           float near = 1.0 - smoothstep(1500.0, 6000.0, dist);
@@ -431,4 +436,93 @@ export function buildSea(worldSize) {
   sea.renderOrder = 1;
   sea.name = 'sea';
   return sea;
+}
+
+// ---- The detail patch (Summit Rush): the ground near the camera, finer than the 100 m grid ----
+// The game's ground holds one height per 100 m, so from a camera 50 m up a mountainside is smooth domes. The patch
+// is a finer mesh (15 m) that follows the camera and draws the ground there instead: the same surface as the big
+// mesh (its heights, channels, lakes, colours, light, sampled triangle by triangle), plus relief the grid cannot
+// hold, strong on steep dry rock, gentle on grass, none in water or a river's channel, and none at its edges, so it
+// meets the big mesh without a seam. The big mesh skips drawing under it. Draw only: the sim never sees it.
+const PATCH = { n: 161, step: 15 }; // vertices a side, metres between them: 2.4 km across
+export function buildDetailPatch(terrainMesh) {
+  const { t } = terrainMesh.userData, n = PATCH.n;
+  const geo = new THREE.PlaneGeometry(1, 1, n - 1, n - 1);
+  geo.rotateX(-Math.PI / 2);
+  for (const [name, size] of [['color', 3], ['shade', 3], ['damp', 1]]) geo.setAttribute(name, new THREE.BufferAttribute(new Float32Array(n * n * size), size));
+  const mesh = new THREE.Mesh(geo, terrainMaterial(t.course === 'summit'));
+  mesh.name = 'detail';
+  mesh.frustumCulled = false;
+  mesh.visible = false;
+  mesh.userData = { at: null, rel: new Float32Array(n * n) };
+  return mesh;
+}
+
+// Sample attribute `a` (itemSize s, component c) of the big mesh at grid point (gx, gy), on the same triangle the
+// big mesh draws there (PlaneGeometry splits each square from (x, y+1) to (x+1, y)).
+function onGrid(arr, s, c, m, gx, gy) {
+  const x0 = Math.max(0, Math.min(m - 2, Math.floor(gx))), y0 = Math.max(0, Math.min(m - 2, Math.floor(gy)));
+  const fx = Math.min(1, Math.max(0, gx - x0)), fy = Math.min(1, Math.max(0, gy - y0));
+  const A = arr[(y0 * m + x0) * s + c], B = arr[((y0 + 1) * m + x0) * s + c], C = arr[((y0 + 1) * m + x0 + 1) * s + c], D = arr[(y0 * m + x0 + 1) * s + c];
+  return fx + fy <= 1 ? A + (D - A) * fx + (B - A) * fy : C + (B - C) * (1 - fx) + (D - C) * (1 - fy);
+}
+
+const pn = (x, y) => { // smooth value noise, 0..1
+  const ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy, u = fx * fx * (3 - 2 * fx), w = fy * fy * (3 - 2 * fy);
+  const h = (a, b) => { let q = Math.imul(a, 374761393) + Math.imul(b, 668265263); q = Math.imul(q ^ (q >>> 13), 1274126177); return ((q ^ (q >>> 16)) >>> 0) / 4294967296; };
+  return (h(ix, iy) * (1 - u) + h(ix + 1, iy) * u) * (1 - w) + (h(ix, iy + 1) * (1 - u) + h(ix + 1, iy + 1) * u) * w;
+};
+// Rock relief in metres per unit of amplitude: ridged noise at 90 and 35 m, cut into ledges (strata) on rock.
+function relief(x, z, rock) {
+  const r1 = 1 - Math.abs(pn(x / 90, z / 90) * 2 - 1), r2 = 1 - Math.abs(pn(x / 35 + 17, z / 35) * 2 - 1);
+  let h = r1 * r1 * 0.7 + r2 * r2 * 0.3 - 0.35;
+  if (rock > 0) { const q = h * 4; h = (Math.floor(q) + Math.pow(q - Math.floor(q), 4)) / 4 * rock + h * (1 - rock); }
+  return h;
+}
+
+// Move the patch to cover (cx, cz) and rebuild it from the big mesh as it is now (channels and lakes included).
+export function placeDetailPatch(patch, terrainMesh, cx, cz, carve) {
+  const { t } = terrainMesh.userData, m = t.size, n = PATCH.n, st = PATCH.step, half = ((n - 1) / 2) * st;
+  const ox = Math.round(cx / st) * st - half, oz = Math.round(cz / st) * st - half; // snapped to world grid: the relief never swims
+  const big = terrainMesh.geometry.attributes, pos = patch.geometry.attributes.position, nor = patch.geometry.attributes.normal;
+  const bigY = big.position.array, bigC = big.color.array, bigS = big.shade.array, bigD = big.damp.array;
+  const col = patch.geometry.attributes.color.array, sha = patch.geometry.attributes.shade.array, dmp = patch.geometry.attributes.damp.array;
+  const toG = (w) => (w / t.worldSize + 0.5) * (m - 1);
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const k = j * n + i, x = ox + i * st, z = oz + j * st, gx = toG(x), gy = toG(z);
+    let y = onGrid(bigY, 3, 1, m, gx, gy);
+    // How much relief here: by slope and height, none where water stands or a river has cut, none at the edges.
+    const cx0 = Math.max(0, Math.min(m - 1, Math.round(gx))), cy0 = Math.max(0, Math.min(m - 1, Math.round(gy))), c = cy0 * m + cx0;
+    let dry = t.filled[c] - t.height[c] < 0.3 && t.height[c] > 2 ? 1 : 0;
+    if (dry && carve) for (let dy = -1; dy <= 1 && dry; dy++) for (let dx = -1; dx <= 1; dx++) { const q = (cy0 + dy) * m + cx0 + dx; if (carve[q] > 0) { dry = 0; break; } }
+    const sx = (onGrid(bigY, 3, 1, m, gx + 0.5, gy) - onGrid(bigY, 3, 1, m, gx - 0.5, gy)) / (t.cell * VERT), sz = (onGrid(bigY, 3, 1, m, gx, gy + 0.5) - onGrid(bigY, 3, 1, m, gx, gy - 0.5)) / (t.cell * VERT);
+    const slope = Math.sqrt(sx * sx + sz * sz), rock = Math.min(1, Math.max(0, (slope - 0.2) / 0.3));
+    const edge = Math.min(i, j, n - 1 - i, n - 1 - j) / (n * 0.12), fade = Math.min(1, edge) ** 2;
+    const amp = dry * fade * (4 + 22 * rock) * VERT;
+    y += amp * relief(x, z, rock);
+    pos.setXYZ(k, x, y, z);
+    for (let q = 0; q < 3; q++) { col[k * 3 + q] = onGrid(bigC, 3, q, m, gx, gy); sha[k * 3 + q] = onGrid(bigS, 3, q, m, gx, gy); }
+    dmp[k] = onGrid(bigD, 1, 0, m, gx, gy);
+  }
+  // Normals from the patch's own heights.
+  const P = pos.array;
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) {
+    const k = j * n + i, l = P[(j * n + Math.max(0, i - 1)) * 3 + 1], r = P[(j * n + Math.min(n - 1, i + 1)) * 3 + 1];
+    const u = P[(Math.max(0, j - 1) * n + i) * 3 + 1], d = P[(Math.min(n - 1, j + 1) * n + i) * 3 + 1];
+    const nx = (l - r) / (2 * st), nz = (u - d) / (2 * st), len = Math.hypot(nx, 1, nz);
+    nor.setXYZ(k, nx / len, 1 / len, nz / len);
+  }
+  for (const a of ['position', 'normal', 'color', 'shade', 'damp']) patch.geometry.attributes[a].needsUpdate = true;
+  patch.geometry.computeBoundingSphere();
+  // The big mesh stops drawing just inside the patch's edge (the edges meet on the same surface).
+  terrainMesh.material.userData.cut.value.set(ox + st, oz + st, ox + 2 * half - st, oz + 2 * half - st);
+  patch.userData.at = { x: ox + half, z: oz + half };
+  patch.visible = true;
+}
+
+export function hideDetailPatch(patch, terrainMesh) {
+  if (!patch?.visible) return;
+  patch.visible = false;
+  patch.userData.at = null;
+  terrainMesh.material.userData.cut.value.set(0, 0, 0, 0);
 }

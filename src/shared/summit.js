@@ -22,7 +22,7 @@ export const SUMMIT_ISLAND = {
   breachHalf: { slot: 180, lakes: 480, wide: 340, stacks: 360 }, // each breach's half-width, by its kind
   wall: 140, // a breach's walls over its floor
   grid: 150, steps: 120, // the erosion grid across the basin, and how many steps it runs
-  lakes: 14, bars: 10, fields: 9, // what is laid along the channels: lake bowls, rock bars, boulder fields
+  lakes: 36, bars: 10, fields: 9, // what is laid along the channels: lake bowls, rock bars, boulder fields
   barHeights: [18, 45, 30], barTurf: 2, // a rock bar's crest over the channel (Surge clears the low one, the tall needs Gouge or a grind)
 };
 const S = SUMMIT_ISLAND;
@@ -53,9 +53,9 @@ export function erodeCone(seed, Sh) {
     const wl = Math.sqrt(wx * wx + wy * wy) || 1;
     let nd = -2;
     for (const b of Sh.breaches) nd = Math.max(nd, (wx * b.x + wy * b.y) / wl);
-    const divide = clamp01((1 - nd) * 2), dv = divide * divide * (3 - 2 * divide), rr = Math.min(r, 1);
+    const divide = clamp01((1 - nd) * 3), dv = divide * divide * (3 - 2 * divide), rr = Math.min(r, 1);
     const dome = Math.max(0, 1 - r);
-    h[k] = 1.4 * dome * Math.sqrt(dome) + 0.12 * (fbm(wx / 3000, wy / 3000, seed + 5, 5) - 0.5) + 0.4 * rr * dv;
+    h[k] = 1.4 * dome * Math.sqrt(dome) + 0.12 * (fbm(wx / 3000, wy / 3000, seed + 5, 5) - 0.5) + 0.6 * rr * dv;
     // Uplift: more on the divides and on the ring of mountains, except where a breach leaves.
     U[k] = (0.6 + 0.5 * fbm(px / 6000, py / 6000, seed + 9, 3)) * (0.55 + 0.9 * dv * rr + 2.4 * dome * dome) + 1.6 * smooth(0.85, 1, r) * (1 - gate);
   }
@@ -249,7 +249,9 @@ function channelSites(E, seed) {
     }
     return out;
   };
-  const lakes = take(S.lakes, 2600, []);
+  // Lakes go where the most water runs (a trunk or a big ravine), so most rivers meet several on the way down:
+  // dropped on any channel, most sat on side ravines few rivers took (2 swallowed a race against the ski slope's 6).
+  const lakes = take(S.lakes, 1250, [], (s) => s.area >= 80);
   const bars = take(S.bars, 2000, lakes, (s) => s.q > 0.3);
   const fields = take(S.fields, 2400, [...lakes, ...bars], (s) => s.q > 0.3);
   return { lakes, bars, fields, r };
@@ -269,7 +271,7 @@ function layFeatures(E, seed, n, worldSize, height, mask, ridge, ridgeFace) {
     }
   };
   for (const s of lakes) {
-    const big = s.area > 400, rad = (big ? 650 : 380) + 220 * r(), depth = (big ? 55 : 38) + 14 * r();
+    const big = s.area > 400, rad = (big ? 430 : 270) + 150 * r(), depth = (big ? 45 : 32) + 12 * r();
     // A tarn: a bowl cut level into the slope, longer along the valley than across it. Its floor hangs from the
     // lowest point of its own edge (the lip the water leaves over), so the uphill side becomes a headwall and the
     // bowl holds water on any slope (a bowl merely sunk into a slope drains straight out of its low side).

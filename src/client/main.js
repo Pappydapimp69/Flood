@@ -4,7 +4,7 @@ import { generateIsland, stats, fingerprint, findLakes, TUTORIAL as COURSE } fro
 import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, startLine, pastLine, descentLane, laneHalf, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, isSummit, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
-import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, castTrees, VERT } from './terrainMesh.js';
+import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, castTrees, buildDetailPatch, placeDetailPatch, hideDetailPatch, VERT } from './terrainMesh.js';
 import { buildSea, buildLakes, makeSurge, makeSpray, updateSpray, burstSpray, tickWater } from './water.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
@@ -133,10 +133,11 @@ skyDome.renderOrder = -10;
 scene.add(skyDome);
 
 // The island changes per race online, so its meshes are rebuilt on demand.
-let terrain, terrainMesh, seabed, sea, lakesMesh, W;
+let terrain, terrainMesh, seabed, sea, lakesMesh, W, detail = null, detailStale = false, detailAt = 0; // detail: the fine ground near the camera (Summit Rush)
 function useIsland(seed, made) {
   if (terrain?.seed === seed && terrain.course === made?.course) return;
-  for (const m of [terrainMesh, seabed, sea, lakesMesh]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+  for (const m of [terrainMesh, seabed, sea, lakesMesh, detail]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
+  detail = null;
   terrain = made ?? generateIsland(seed);
   W = terrain.worldSize;
   terrainMesh = buildTerrainMesh(terrain);
@@ -144,6 +145,7 @@ function useIsland(seed, made) {
   sea = buildSea(terrain);
   lakesMesh = buildLakes(terrain, findLakes(terrain).label);
   scene.add(terrainMesh, seabed, sea, lakesMesh);
+  if (terrain.course === 'summit' && !lite) scene.add((detail = buildDetailPatch(terrainMesh)));
   const sd = terrainMesh.userData.sun; // per island: from the side of its course
   sun.position.set(W * sd[0], W * sd[1], W * sd[2]);
   skyDome.material.uniforms.uSun.value.set(sd[0], sd[1], sd[2]);
@@ -584,6 +586,7 @@ function beginRace(seed, raceIds, me, rolled) {
   if (coach) hud.hint.hidden = true; // the coach teaches the same things, one at a time
   document.getElementById('hud').hidden = false;
   resetCarve(terrainMesh);
+  detailStale = true;
   markBeach(terrainMesh, world.beachLand);
   placeFinishFlags();
   updateLakes(); // dry basins show as dry from the first frame
@@ -1221,6 +1224,7 @@ function updateLakes() {
     if (Math.abs(was - full) < 0.03 && !(full >= 0.999 && was < 0.999) && !(full === 0 && was !== 0)) continue;
     lakeShown.set(i, full);
     setLakeLevel(terrainMesh, world.lakeOf, world.carve, i, full);
+    detailStale = true;
   }
 }
 
@@ -1229,6 +1233,7 @@ function advance(inputs) {
   step(world, inputs);
   const dirty = world.dirty.splice(0);
   applyCarve(terrainMesh, world.carve, dirty, world.rock);
+  if (dirty.length) detailStale = true;
   clearTrees(trees, world.felled.splice(0));
   clearTrees(rocks, dirty, world.carve);
   if (crags) clearTrees(crags, dirty, world.carve);
@@ -2049,6 +2054,17 @@ renderer.setAnimationLoop(() => {
     const ahead = (falling ? 600 : done ? 2200 : low ? 260 + 40 * sz : 420 + 60 * sz) + 2600 * camRise;
     camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), cut ? 1 : 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
+    // Summit Rush, down among the water: the fine ground covers what the camera sees close up (1 km ahead of it,
+    // so from just behind the camera to 2 km out). Moved when the view has gone 150 m from its middle, rebuilt
+    // when a channel or lake under it changes, at most about three times a second.
+    if (detail) {
+      if (low && !mapView) {
+        const fl = Math.hypot(camTarget.x - camera.position.x, camTarget.z - camera.position.z) || 1;
+        const px = camera.position.x + ((camTarget.x - camera.position.x) / fl) * 1000, pz = camera.position.z + ((camTarget.z - camera.position.z) / fl) * 1000;
+        const at = detail.userData.at, far = !at || Math.hypot(px - at.x, pz - at.z) > 150;
+        if (far || (detailStale && now - detailAt > 300)) { placeDetailPatch(detail, terrainMesh, far || !at ? px : at.x, far || !at ? pz : at.z, world.carve); detailStale = false; detailAt = now; }
+      } else hideDetailPatch(detail, terrainMesh);
+    }
     // Trees standing between the camera and the head fade out (not while falling or finished).
     treeFade.cam.value.copy(camera.position);
     treeFade.focus.value.set(fx, fy + 30, fz);
