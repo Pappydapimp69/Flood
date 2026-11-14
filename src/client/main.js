@@ -560,6 +560,8 @@ let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 
 // rolled: a world already built for this seed (solo rolls it), else built here.
 function beginRace(seed, raceIds, me, rolled) {
+  clearSlideFx();
+  if (freeCam) { freeCam = null; document.body.classList.remove('freecam'); input.freeze(false); }
   recordBanked = false; recordNotes = [];
   for (const e of entries) {
     scene.remove(e.ribbon.mesh, e.head, e.streak, e.surge, e.spray, e.line, e.shadow, e.stem);
@@ -574,7 +576,7 @@ function beginRace(seed, raceIds, me, rolled) {
   spillRibbons.clear();
   useIsland(seed, rolled?.terrain);
   world = rolled?.terrain === terrain ? rolled : createWorld(terrain);
-  for (const id of raceIds) addRiver(world, id, undefined, { drop: !params.has('nodrop') }); // sorted ids: reproducible spawns
+  for (const id of raceIds) addRiver(world, id, undefined, { drop: !params.has('nodrop') && !trainingCourse }); // Training maps start on the line (owner) // sorted ids: reproducible spawns
   river = world.rivers.find((r) => r.id === me) ?? null;
   focus = river ?? world.rivers[0];
   entries = world.rivers.map(makeEntry);
@@ -1088,7 +1090,8 @@ document.getElementById('opt-shake').onchange = (e) => { settings.shake = e.targ
 
 function handleActions() {
   for (const a of pendingActions.splice(0)) {
-    if (a === 'pause') { setPaused(!paused); continue; }
+    if (a === 'pause') { if (!freeCam) setPaused(!paused); continue; }
+    if (a === 'select') { if (trainingCourse && mode === 'solo' && river && !paused && !lesson) toggleFreeCam(); continue; }
     // (The map, Y / M, is off for now: the right stick's raised view does its job. frameMap stays for later.)
     if (a === 'map') continue;
     if ((a === 'restart' || a === 'tap') && mode === 'solo' && river && !isRacing(river)) {
@@ -1158,7 +1161,7 @@ function dragAim() {
 
 let pilot = null;
 function soloTick() {
-  if (handleActions() || raceOver) return;
+  if (handleActions() || raceOver || freeCam) return;
   // Bots decide from the same start-of-tick state, then everyone steps together.
   // ?pilot (screenshots and watching): a bot steers the player's river too.
   if (dbg.pilot && river && pilot?.river !== river) pilot = createBot(world, river);
@@ -1220,6 +1223,144 @@ function tugFeedback(now) {
 
 // Lake levels follow the water each holds; redrawn in small steps.
 const lakeShown = new Map();
+// The free camera (Training, owner 2026-11-14): Select pauses the race and frees the view. Left stick moves over
+// the ground, right stick turns and tilts, the triggers lower and raise; nothing on screen but the world. Select
+// again flies back to the held view over 2 s and the race resumes. Keys: C toggles, arrows move, Q E raise and lower.
+let freeCam = null;
+dbg.freeCam = () => freeCam; // dev: aim the free camera from a script
+dbg.camState = () => ({ lesson: !!lesson, paused, mode, training: trainingCourse, pending: pendingActions.length });
+const camKeys = new Set();
+addEventListener('keydown', (e) => { if (freeCam) camKeys.add(e.code); });
+addEventListener('keyup', (e) => camKeys.delete(e.code));
+function toggleFreeCam() {
+  if (!freeCam) {
+    const look = camLook.clone(), off = camera.position.clone().sub(look), dist = off.length();
+    freeCam = { phase: 'free', home: { pos: camera.position.clone(), look }, target: look.clone(), dist: Math.max(600, dist),
+      yaw: Math.atan2(off.x, off.z), pitch: Math.asin(Math.min(1, Math.max(0.1, off.y / Math.max(1, dist)))) };
+    document.body.classList.add('freecam');
+    input.freeze(true);
+  } else if (freeCam.phase === 'free') {
+    freeCam.phase = 'back'; freeCam.from = { pos: camera.position.clone(), look: camLook.clone() }; freeCam.at = performance.now();
+  }
+}
+function updateFreeCam(dt, now) {
+  const f = freeCam;
+  if (f.phase === 'back') {
+    const u = Math.min(1, (now - f.at) / 2000), k = u * u * (3 - 2 * u);
+    camera.position.lerpVectors(f.from.pos, f.home.pos, k);
+    camera.lookAt(camLook.lerpVectors(f.from.look, f.home.look, k));
+    if (u >= 1) { freeCam = null; document.body.classList.remove('freecam'); input.freeze(false); acc = 0; }
+    return;
+  }
+  let mx = 0, my = 0, rx = 0, ry = 0, zoom = 0;
+  const dz = (v) => (Math.abs(v) < 0.15 ? 0 : (v - Math.sign(v) * 0.15) / 0.85);
+  for (const gp of navigator.getGamepads?.() ?? []) {
+    if (!gp) continue;
+    mx += dz(gp.axes[0] ?? 0); my += dz(gp.axes[1] ?? 0); rx += dz(gp.axes[2] ?? 0); ry += dz(gp.axes[3] ?? 0);
+    zoom += (gp.buttons[7]?.value ?? 0) - (gp.buttons[6]?.value ?? 0); // RT raises, LT lowers
+  }
+  const key = (c) => (camKeys.has(c) ? 1 : 0);
+  mx += key('ArrowRight') + key('KeyD') - key('ArrowLeft') - key('KeyA');
+  my += key('ArrowDown') + key('KeyS') - key('ArrowUp') - key('KeyW');
+  zoom += key('KeyE') - key('KeyQ');
+  rx += key('KeyL') - key('KeyJ'); ry += key('KeyK') - key('KeyI');
+  f.yaw -= rx * 1.8 * dt;
+  f.pitch = Math.min(1.45, Math.max(0.05, f.pitch + ry * 1.1 * dt));
+  f.dist = Math.min(W * 1.2, Math.max(250, f.dist * Math.exp(zoom * 1.3 * dt)));
+  const speed = Math.max(600, f.dist * 1.1), fx = -Math.sin(f.yaw), fz = -Math.cos(f.yaw); // forward: the way the camera looks
+  f.target.x = Math.min(W / 2, Math.max(-W / 2, f.target.x + (fx * -my + -fz * mx) * speed * dt));
+  f.target.z = Math.min(W / 2, Math.max(-W / 2, f.target.z + (fz * -my + fx * mx) * speed * dt));
+  f.target.y += (surfaceAt(world, f.target.x, f.target.z) * VERT - f.target.y) * Math.min(1, dt * 6);
+  const cp = Math.cos(f.pitch);
+  camera.position.set(f.target.x + Math.sin(f.yaw) * cp * f.dist, f.target.y + Math.sin(f.pitch) * f.dist, f.target.z + Math.cos(f.yaw) * cp * f.dist);
+  camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 60);
+  camera.lookAt(camLook.copy(f.target));
+}
+
+// The Landslide as it happens (look only): boulders tumbling off the valley side onto the dam line with dust
+// rising over it, and once it bursts, a band of white water across the valley at the wave's front.
+let slideFx = null;
+const roundDot = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,0.6)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
+  return new THREE.CanvasTexture(c); })();
+function clearSlideFx() {
+  if (!slideFx) return;
+  for (const o of [slideFx.rocks, slideFx.dust, slideFx.wave]) if (o) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); }
+  slideFx = null;
+}
+function startSlideFx() {
+  clearSlideFx();
+  const s = world.slide, t = world.terrain, n = t.size;
+  if (!s) return;
+  const at = (k) => ({ x: ((k % n) / (n - 1) - 0.5) * W, z: (Math.floor(k / n) / (n - 1) - 0.5) * W });
+  const sx = -s.axis.z, sz = s.axis.x; // across the valley
+  const N = 70, rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5b524a', flatShading: true }), N);
+  const fall = [];
+  for (let i = 0; i < N; i++) {
+    const j = Math.floor(Math.random() * s.cells.length), p = at(s.cells[j]), g = surfaceAt(world, p.x, p.z);
+    const back = -s.from * (s.half + 400 + Math.random() * 600) - ((p.x - s.x) * sx + (p.z - s.z) * sz);
+    fall.push({ x0: p.x + sx * back, z0: p.z + sz * back, y0: g + 350 + Math.random() * 300, x1: p.x, z1: p.z, y1: g + s.peak[j] * 0.6, r: 60 + Math.random() * 120,
+      t0: s.fallAt[j] * SLIDE.fallTicks * DT * 1000, spin: Math.random() * 6 });
+  }
+  scene.add(rocks);
+  const D = 600, dpos = new Float32Array(D * 3), dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(dpos, 3)),
+    new THREE.PointsMaterial({ color: '#a8927a', size: 420, map: roundDot, transparent: true, opacity: 0.8, depthWrite: false }));
+  const seeds = Array.from({ length: D }, () => { const j = Math.floor(Math.random() * s.cells.length), p = at(s.cells[j]); return { ...p, g: surfaceAt(world, p.x, p.z), t0: s.fallAt[j] * SLIDE.fallTicks * DT * 1000, v: 40 + Math.random() * 120, dx: Math.random() - 0.5, dz: Math.random() - 0.5 }; });
+  scene.add(dust);
+  // The wave: valley cells below the dam, ordered by route left, drawn where the front is.
+  const below = [];
+  for (let k = 0; k < n * n; k++) { const tb = world.toBeach[k]; if (t.mask[k] && tb < s.reach && tb > s.reach - SLIDE.waveSpeed * SLIDE.waveTicks * DT - 500) below.push(k); }
+  below.sort((a, b) => world.toBeach[a] - world.toBeach[b]);
+  const WN = 2500, wpos = new Float32Array(WN * 3), wave = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(wpos, 3)),
+    new THREE.PointsMaterial({ color: '#f2fbff', size: 220, map: roundDot, transparent: true, opacity: 0.95, depthWrite: false }));
+  wave.frustumCulled = false; dust.frustumCulled = false;
+  scene.add(wave);
+  slideFx = { start: performance.now(), rocks, fall, dust, seeds, wave, below, at };
+}
+const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler();
+function tickSlideFx(now) {
+  const f = slideFx, s = world?.slide;
+  if (!f || !s) return;
+  const ms = now - f.start;
+  // Boulders: 1.2 s from the valley side to the dam line, staggered with the sweep, then gone under the rock.
+  let shown = 0;
+  f.fall.forEach((b, i) => {
+    const u = (ms - b.t0) / 1200;
+    if (u < 0 || u > 1.15) { tmpM.makeScale(0, 0, 0); f.rocks.setMatrixAt(i, tmpM); return; }
+    const v = Math.min(1, u), x = b.x0 + (b.x1 - b.x0) * v, z = b.z0 + (b.z1 - b.z0) * v, y = (b.y0 + (b.y1 - b.y0) * v * v) * VERT + Math.sin(Math.PI * v) * 200;
+    tmpQ.setFromEuler(tmpE.set(b.spin * u * 3, b.spin * u * 2, 0));
+    tmpM.compose(new THREE.Vector3(x, y, z), tmpQ, new THREE.Vector3(b.r, b.r, b.r));
+    f.rocks.setMatrixAt(i, tmpM); shown++;
+  });
+  f.rocks.instanceMatrix.needsUpdate = true;
+  // Dust: rises where the rock lands and thins out over five seconds.
+  const dp = f.dust.geometry.attributes.position;
+  f.seeds.forEach((d, i) => {
+    const age = Math.max(0, (ms - d.t0) / 1000);
+    dp.setXYZ(i, d.x + d.dx * age * 160, (d.g + 20 + d.v * age) * VERT, d.z + d.dz * age * 160);
+  });
+  dp.needsUpdate = true;
+  f.dust.material.opacity = 0.8 * Math.max(0, 1 - Math.max(0, ms - 2500) / 6000);
+  f.dust.visible = f.dust.material.opacity > 0.01 && !mapView;
+  // The wave's front: white water across the valley, a band 350 m deep.
+  const wp = f.wave.geometry.attributes.position;
+  let m = 0;
+  if (s.state === 'burst' && world.tick - s.tick < SLIDE.waveTicks) {
+    const lo = s.front - 120, hi = s.front + 230;
+    let a = 0, b = f.below.length;
+    while (a < b) { const c = (a + b) >> 1; if (world.toBeach[f.below[c]] < lo) a = c + 1; else b = c; }
+    for (let i = a; i < f.below.length && m < wp.count; i++) {
+      const k = f.below[i]; if (world.toBeach[k] > hi) break;
+      const p = f.at(k);
+      for (let j = 0; j < 3 && m < wp.count; j++) { const jx = p.x + (Math.random() - 0.5) * 100, jz = p.z + (Math.random() - 0.5) * 100; wp.setXYZ(m++, jx, surfaceAt(world, jx, jz) * VERT + 30 + Math.random() * 60, jz); }
+    }
+  }
+  f.wave.geometry.setDrawRange(0, m);
+  wp.needsUpdate = true;
+  f.wave.visible = m > 0;
+  if (ms > 8000 && s.state === 'done') clearSlideFx();
+}
+
 // The Landslide's pond: a flat sheet above the dam that the valley's own sides cut to shape as it rises.
 let slidePond = null;
 function showSlidePond() {
@@ -1231,7 +1372,7 @@ function showSlidePond() {
     slidePond.renderOrder = 2;
     scene.add(slidePond);
   }
-  slidePond.visible = s.level > 1;
+  slidePond.visible = s.level > 1 && !mapView;
   slidePond.position.set(s.x, (s.base + s.level) * VERT + 2, s.z);
   slidePond.rotation.y = Math.atan2(s.axis.x, s.axis.z);
 }
@@ -1331,9 +1472,14 @@ function advance(inputs) {
         teach('bump', 'Bumping', 'Drops that collide knock each other off course. Whoever hits with more momentum (more water, more speed into the other) <b>wins</b>: the loser spills water and the winner soaks most of it up. Ram lighter drops; dodge heavier ones.', e.x, e.z);
       }
     } else if (e.type === 'slide') {
-      if (e.phase === 'falling') { showPop('LANDSLIDE AHEAD — the valley is closing'); feed('A slope is coming down across the valley'); audio.splash(1); }
-      else if (e.phase === 'dammed') feed('The landslide has dammed the valley: the water is backing up');
-      else if (e.phase === 'burst') { showPop('THE DAM BURST — ride the flood'); feed('The dam burst: a flood wave is running down the valley'); audio.splash(1); }
+      if (e.phase === 'falling') { showPop('LANDSLIDE AHEAD — the valley is closing'); feed('A slope is coming down across the valley'); audio.splash(1); startSlideFx(); }
+      else if (e.phase === 'dammed') feed('The landslide has dammed the valley: break it at its low point, or wait and ride the flood');
+      else if (e.phase === 'burst') {
+        const who = e.by >= 0 ? world.rivers[e.by] : null;
+        showPop(who === river ? 'YOU BROKE THE DAM — ride the flood' : 'THE DAM BURST — ride the flood');
+        feed(who ? `${nameOf(who)} broke the dam: a flood wave is running down the valley` : 'The pond overtopped the dam: a flood wave is running down the valley');
+        audio.splash(1);
+      }
     } else if (e.type === 'flood-ride') {
       if (river && e.river === river.idx) showPop(e.pond ? 'RIDING THE FLOOD — the whole lake goes with you' : 'CAUGHT BY THE FLOOD WAVE');
       else feed(`${nameOf(world.rivers[e.river])} ${e.pond ? 'rides the lake out' : 'is caught by the wave'}`);
@@ -1717,7 +1863,7 @@ function showFlow(now) {
 function showDownhill(now) {
   const me = river;
   const on = !!me && isRacing(me) && !me.dropping && me.pooled < 0 && !mapView;
-  chevron.visible = on && downTurn !== 0;
+  chevron.visible = on && downTurn !== 0 && !freeCam;
   if (!on) { downEl.hidden = true; return; }
   if (now - downAt > 200) {
     downAt = now;
@@ -1824,9 +1970,9 @@ renderer.setAnimationLoop(() => {
   // Fixed-step sim, decoupled from frame rate; render interpolates between ticks.
   acc += frameDt;
   if (mode === 'solo') {
-    if (paused || lesson || fb?.isOpen || mustRotate()) { handleActions(); acc = 0; }
-    else while (acc >= DT && !lesson) { soloTick(); acc -= DT; }
-    for (; dbg.ff > 0 && !lesson && !raceOver; dbg.ff--) soloTick(); // dev: run ahead this many ticks at once (screenshots)
+    if (paused || lesson || freeCam || fb?.isOpen || mustRotate()) { handleActions(); acc = 0; }
+    else while (acc >= DT && !lesson && !freeCam) { soloTick(); acc -= DT; }
+    for (; dbg.ff > 0 && !lesson && !raceOver && !freeCam; dbg.ff--) soloTick(); // dev: run ahead this many ticks at once (screenshots)
     if (lesson) acc = 0;
   } else {
     handleActions();
@@ -1947,7 +2093,9 @@ renderer.setAnimationLoop(() => {
     : `${focus.dropping ? 'drop' : focus.finished ? 'done' : 'chase'}:${focus.id}`;
   const cut = camMode !== lastCamMode;
   lastCamMode = camMode;
-  if (lesson && !mapView) {
+  tickSlideFx(now);
+  if (freeCam) updateFreeCam(frameDt, now);
+  else if (lesson && !mapView) {
     // A lesson holds the view where it was. Shown its spot, the camera flies there (high and to the south of
     // it, looking down on it) and, on the next press, back to the held view; then the race carries on.
     lesson.home ??= { pos: camera.position.clone(), look: camTarget.clone() };

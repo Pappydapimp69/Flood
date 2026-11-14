@@ -2726,10 +2726,13 @@ export const SLIDE = {
   at: 0.55, // where along the course the slope comes down (share of the course)
   height: 150, // metres of rock at the dam's crest
   thick: 160, // metres: the dam's half-thickness along the valley (a smooth bump, not a wall)
-  trigger: 3500, // metres of route ahead of the leader when it starts to fall
+  trigger: 1800, // metres of route ahead of the leader when it starts to fall (about 6 s: it lands in view)
   fallTicks: 40, // 2 s from the first rocks to the full dam
-  holdTicks: 260, // 13 s until the pond overtops it, if no river breaks it first
-  breach: 0.4, // the dam breaks once its crest is worn below this share of its height anywhere
+  holdTicks: 260, // 13 s from the first river reaching it until the pond overtops it, if no river breaks it first
+  arrive: 500, // metres of route above the dam that count as reaching it
+  breach: 0.25, // the dam breaks once its crest is worn below this share of its full height anywhere
+  loose: 0.3, // metres a tick a river pressing against it washes off the crest near it, times its size: the rubble is
+  // loose, so one river at the saddle breaks it in about 6 s, a few together in 2, and one on the high crest not in time
   burstTicks: 16, // the dam washes out in 0.8 s
   waveSpeed: 420, // m/s down the route
   waveTicks: 200, // the wave runs 10 s (about 8 km)
@@ -2739,47 +2742,96 @@ export const SLIDE = {
   rideSpeed: 520, // ...at least this fast
   rideFromPond: 1.4, // a river that waited in the pond rides this much faster and longer
   gift: 0.25, // of the start volume: the pond's water each rider takes with it
+  saddle: 0.45, // the crest dips by this share of its height at one seeded spot across the valley (real dams breach at
+  saddleWide: 450, // their low point): water pressing there wears it through in seconds, and Gouge tops it at once
+  sweep: 0.6, // share of the fall spent sweeping across: the slope comes down from one side of the valley to the other
 };
 
+const wxOf = (t, k) => ((k % t.size) / (t.size - 1) - 0.5) * t.worldSize, wzOf = (t, k) => (Math.floor(k / t.size) / (t.size - 1) - 0.5) * t.worldSize;
 function makeSlide(world) {
   const t = world.terrain, n = t.size, along = t.along;
   if (!along) return null;
-  const len = t.long * t.worldSize, cells = [], peak = [];
-  let x = 0, z = 0, d = 0, low = Infinity, m = 0;
+  const len = t.long * t.worldSize, W = t.worldSize;
+  const wx = (k) => ((k % n) / (n - 1) - 0.5) * W, wz = (k) => (Math.floor(k / n) / (n - 1) - 0.5) * W;
+  const centre = (a) => { let x = 0, z = 0, m = 0; for (let k = 0; k < n * n; k++) if (t.mask[k] && Math.abs(along[k] - a) * len < t.cell * 0.6) { x += wx(k); z += wz(k); m++; } return m ? { x: x / m, z: z / m } : null; };
+  // A straight wall across the valley's own direction there (the course winds, so not across its axis), at the
+  // first spot from SLIDE.at on with no standing water under it: rock is not laid on a lake, which would leave a hole.
+  let site = null;
+  for (let i = 0; i < 80 && !site; i++) {
+    const a = SLIDE.at + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.005; // outward from SLIDE.at, either way
+    const c = centre(a), p = centre(a - 0.012), q = centre(a + 0.012);
+    if (!c || !p || !q) continue;
+    let dx = q.x - p.x, dz = q.z - p.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
+    const offOf = (k) => (wx(k) - c.x) * dx + (wz(k) - c.z) * dz, sideOf = (k) => -(wx(k) - c.x) * dz + (wz(k) - c.z) * dx;
+    let half = 0;
+    for (let k = 0; k < n * n; k++) if (t.mask[k] && Math.abs(offOf(k)) < t.cell && Math.abs(sideOf(k)) < 5000) half = Math.max(half, Math.abs(sideOf(k)));
+    half = Math.min(4000, half + 300);
+    let wet = false;
+    for (let k = 0; k < n * n && !wet; k++) if (Math.abs(offOf(k)) < SLIDE.thick * 1.6 && Math.abs(sideOf(k)) < half && world.lakeOf[k] >= 0) wet = true;
+    if (!wet) site = { c, dx, dz, half, offOf, sideOf };
+  }
+  if (!site) return null;
+  const { c, dx, dz, half, offOf, sideOf } = site;
+  const r = stream(t.seed, 'slide'), saddleAt = (r() * 2 - 1) * half * 0.45, from = r() < 0.5 ? -1 : 1;
+  const cells = [], peak = [], crest = [], fallAt = [];
+  let d = 0, m = 0, low = Infinity;
   for (let k = 0; k < n * n; k++) {
-    if (!t.mask[k] || t.filled[k] <= SEA_LEVEL || world.lakeOf[k] >= 0) continue;
-    const off = (along[k] - SLIDE.at) * len;
-    if (Math.abs(off) > SLIDE.thick * 2.2) continue;
-    const h = SLIDE.height * Math.exp(-((off / SLIDE.thick) ** 2) * 2);
+    const o = offOf(k), sd = sideOf(k);
+    if (Math.abs(o) > SLIDE.thick * 2.2 || Math.abs(sd) > half || t.filled[k] <= SEA_LEVEL || world.lakeOf[k] >= 0) continue;
+    const dip = 1 - SLIDE.saddle * Math.exp(-(((sd - saddleAt) / SLIDE.saddleWide) ** 2));
+    const h = SLIDE.height * dip * Math.exp(-((o / SLIDE.thick) ** 2) * 2) * Math.min(1, (half - Math.abs(sd)) / 300 + 0.3);
     if (h < 3) continue;
-    cells.push(k); peak.push(h);
-    if (Math.abs(off) < t.cell) { const cx = k % n; x += (cx / (n - 1) - 0.5) * t.worldSize; z += (((k - cx) / n) / (n - 1) - 0.5) * t.worldSize; m++; if (world.toBeach[k] < 1e8) d += world.toBeach[k]; low = Math.min(low, t.filled[k]); }
+    cells.push(k); peak.push(h); crest.push(Math.abs(o) < SLIDE.thick * 0.35 && h > SLIDE.height * 0.4 ? 1 : 0);
+    fallAt.push(SLIDE.sweep * Math.min(1, Math.max(0, (from * sd / half + 1) / 2))); // 0 on the side it falls from
+    if (Math.abs(o) < t.cell && t.mask[k]) { if (world.toBeach[k] < 1e8) { d += world.toBeach[k]; m++; } low = Math.min(low, t.filled[k]); }
   }
   if (!m) return null;
-  // The pond's footprint: valley cells above the dam, below the crest, within SLIDE.pond of route (for the look).
-  return { state: 'armed', tick: 0, cells, peak: Float32Array.from(peak), x: x / m, z: z / m, reach: d / m, base: low, level: 0, front: 0, rode: new Set(),
-    axis: { x: t.axis.x, z: t.axis.y } };
+  return { state: 'armed', tick: 0, cells, peak: Float32Array.from(peak), crest: Uint8Array.from(crest), fallAt: Float32Array.from(fallAt),
+    x: c.x, z: c.z, reach: d / m, base: low, level: 0, front: 0, rode: new Set(), by: -1, from, half,
+    saddle: { x: c.x - dz * saddleAt, z: c.z + dx * saddleAt }, axis: { x: dx, z: dz } };
 }
 
 function slideStep(world) {
   const s = world.slide, t = world.terrain;
   if (!s || s.state === 'done') return;
-  const age = world.tick - s.tick, set = (state) => { s.state = state; s.tick = world.tick; world.events.push({ type: 'slide', phase: state, x: s.x, z: s.z, tick: world.tick }); };
+  const age = world.tick - s.tick, set = (state) => { s.state = state; s.tick = world.tick; world.events.push({ type: 'slide', phase: state, x: s.x, z: s.z, by: s.by, tick: world.tick }); };
   if (s.state === 'armed') { if (world.leadReach !== undefined && world.leadReach < s.reach + SLIDE.trigger) set('falling'); return; }
   if (s.state === 'falling') {
-    const u = Math.min(1, (age + 1) / SLIDE.fallTicks), e = u * u * (3 - 2 * u);
+    const u = Math.min(1, (age + 1) / SLIDE.fallTicks);
     for (let i = 0; i < s.cells.length; i++) {
-      const k = s.cells[i], want = s.peak[i] * e;
+      const v = Math.min(1, Math.max(0, (u - s.fallAt[i]) / (1 - SLIDE.sweep))), k = s.cells[i], want = s.peak[i] * v * v * (3 - 2 * v);
       if (want > world.rock[k]) { world.treeRock[k] += want - world.rock[k]; world.rock[k] = want; world.dirty.push(k); }
     }
     if (u >= 1) set('dammed');
     return;
   }
   if (s.state === 'dammed') {
-    s.level = Math.min(1, age / SLIDE.holdTicks) * SLIDE.height * 0.85; // the pond backing up behind it
-    let worn = age >= SLIDE.holdTicks;
-    if (!worn && age % 5 === 0) for (let i = 0; i < s.cells.length && !worn; i++) if (s.peak[i] > SLIDE.height * 0.9 && world.rock[s.cells[i]] < SLIDE.height * SLIDE.breach) worn = true;
-    if (worn) { set('burst'); s.front = s.reach; ridePond(world, s); }
+    // Rivers against the dam wash its loose crest away near them.
+    if (age % 2 === 0) for (const r of world.rivers) {
+      if (!isRacing(r) || r.dropping) continue;
+      for (let i = 0; i < s.cells.length; i++) {
+        if (!s.crest[i]) continue;
+        const k = s.cells[i], q = (wxOf(t, k) - r.x) ** 2 + (wzOf(t, k) - r.z) ** 2;
+        if (q > 220 * 220) continue;
+        const was = world.rock[k], now = Math.max(0, was - SLIDE.loose * 2 * Math.max(1, r.size));
+        if (now < was) { world.rock[k] = now; world.treeRock[k] += now - was; world.dirty.push(k); }
+      }
+    }
+    if (s.arrived === undefined) for (const r of world.rivers) if (isRacing(r) && !r.dropping && world.toBeach[cellIndex(t, r.x, r.z)] < s.reach + SLIDE.arrive) { s.arrived = world.tick; break; }
+    const held = s.arrived === undefined ? 0 : world.tick - s.arrived;
+    s.level = Math.min(1, (age * 0.25 + held) / SLIDE.holdTicks) * SLIDE.height * 0.85; // the pond backing up behind it
+    let worn = held >= SLIDE.holdTicks, at = -1;
+    if (!worn && age % 2 === 0) for (let i = 0; i < s.cells.length && !worn; i++) if (s.crest[i] && world.rock[s.cells[i]] < SLIDE.height * SLIDE.breach) { worn = true; at = s.cells[i]; }
+    if (worn) {
+      // Who broke it: the river nearest the breach (none when the pond overtopped it).
+      if (at >= 0) {
+        const n = t.size, bx = ((at % n) / (n - 1) - 0.5) * t.worldSize, bz = (Math.floor(at / n) / (n - 1) - 0.5) * t.worldSize;
+        let best = 1500 ** 2;
+        for (const r of world.rivers) { const q = (r.x - bx) ** 2 + (r.z - bz) ** 2; if (isRacing(r) && q < best) { best = q; s.by = r.idx; } }
+        s.breach = { x: bx, z: bz };
+      }
+      set('burst'); s.front = s.reach; ridePond(world, s);
+    }
     return;
   }
   // Bursting: the dam washes out and the wave runs down the route.

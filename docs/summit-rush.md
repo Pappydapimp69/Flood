@@ -130,8 +130,16 @@ ride furthest. Measured (12 bots, seeds 7001-7003): it falls 24-28 s in, holds t
 the burst. Not yet: no river breaks the dam before it overtops (bots don't Gouge a 150 m dam), so the early
 break is untested; the dam's own look is plain dark rock.
 
-### To build next (owner's list)
-- Training maps start on the start line: no descent (drop off, as `?nodrop`).
-- A river can break the landslide dam early (Gouge or wear), and bots try it.
-- The slide coming down and the flood wave running down the valley are visible as they happen.
-- Training: Select pauses and frees the camera (left stick moves, right stick turns and tilts, triggers lower and raise), no HUD boxes; Select again flies back to your river over 2 s, then resumes. Elsewhere Select still opens the map.
+### Built from the owner's list (2026-11-14)
+- Training maps start on the start line (no descent).
+- The dam is a straight wall across the valley's own direction (the first build followed the winding course and
+  left gaps rivers slipped through), with a seeded saddle, its low point. Its crest is loose rubble: a river
+  pressing it washes 0.3 m a tick (times size) off the crest near it, so one river at the saddle breaks it in about
+  6 s, a few together faster, and one on the high crest not before the pond overtops it (13 s from the first
+  river's arrival). Bold bots (aggression over 0.4) make for the saddle. Seeds 7001 to 7005: a river broke it in 4
+  of 5 races; the feed names who.
+- The look: boulders tumble off the valley side across the dam line in the slope's sweep, dust rises and thins
+  over five seconds, and the wave's front runs down the valley as a band of white water.
+- Select (C on a keyboard) on a Training map: the race pauses, nothing on screen but the world; left stick moves,
+  right stick turns and tilts, triggers lower and raise (keys: arrows or WASD, IJKL, Q E). Select again flies back
+  over 2 s and the race resumes. Y keeps the map elsewhere; Select no longer opens it.

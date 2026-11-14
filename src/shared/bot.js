@@ -191,6 +191,17 @@ export function botSteer(world, bot) {
   bot.next = world.tick + (TUNE_BOT.think || bot.think);
 
   const t = world.terrain;
+  // The Landslide's dam (Training): a bold bot near it makes for the saddle, the crest's low point, to break
+  // through first; the rest wait in the pond to ride the flood.
+  const sl = world.slide;
+  if (sl?.state === 'dammed' && bot.aggression > 0.4) {
+    const p = sl.saddle, d = Math.hypot(p.x - r.x, p.z - r.z);
+    if (d < 3000 && (p.x - r.x) * sl.axis.x + (p.z - r.z) * sl.axis.z > -150) {
+      const cross = r.dx * (p.z - r.z) - r.dz * (p.x - r.x);
+      bot.steer = Math.abs(cross) < d * 0.08 ? 0 : cross < 0 ? -1 : 1;
+      return bot.steer;
+    }
+  }
   if (TUNE_BOT.pursue) {
     // Map reading: aim at a point that far ahead along the shortest water route to the beach.
     const p = beachRoute(world, r.x, r.z, TUNE_BOT.pursue);

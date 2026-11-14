@@ -24,9 +24,10 @@ export function createInput(target) {
   let onChange = null; // (steer) => void, fired on every press and release
   let onSkill = null; // () => void, fired on every skill press
   let skillPulse = 0; // a skill press not yet taken by a tick
-  const pressSkill = () => { skillPulse = 1; onSkill?.(); };
+  let frozen = false; // the free camera (Training): the race is paused, presses go nowhere
+  const pressSkill = () => { if (!frozen) { skillPulse = 1; onSkill?.(); } };
   let onSurge = null, surgePulse = 0;
-  const pressSurge = () => { surgePulse = 1; onSurge?.(); };
+  const pressSurge = () => { if (!frozen) { surgePulse = 1; onSurge?.(); } };
   // A dash press not yet read by a tick: a tap can start and end between two ticks (or inside one
   // slow frame), and read only as a held level it was lost. Latched like a steer tap or a skill.
   let dashPulse = false;
@@ -70,6 +71,7 @@ export function createInput(target) {
     else if (e.code === 'Escape' || e.code === 'KeyP') actions.push('pause');
     else if (e.code === 'KeyR' || e.code === 'Enter') actions.push('restart');
     else if (e.code === 'KeyM') actions.push('map');
+    else if (e.code === 'KeyC') actions.push('select');
   });
   addEventListener('keyup', (e) => {
     if (LEFT.has(e.code)) keys.left = false;
@@ -196,6 +198,8 @@ export function createInput(target) {
       return v < 0.15 ? 0 : Math.min(1, v);
     },
     takeActions() { return actions.splice(0); },
+    // Freeze: no skills while the free camera holds the race; thawing drops any press made meanwhile.
+    freeze(on) { frozen = on; skillPulse = 0; surgePulse = 0; dashPulse = false; pulse.left = pulse.right = false; },
     // The drag stick: offset from where the finger went down, in screen pixels,
     // with its start point; null while no finger (or mouse button) is down.
     drag: () => (stick ? { dx: stick.x - stick.x0, dy: stick.y - stick.y0, x0: stick.x0, y0: stick.y0 } : null),
@@ -242,7 +246,8 @@ export function createInput(target) {
         else if (i === PAD.RB || i === PAD.LB) pressSurge();
         else if (i === PAD.START) actions.push('pause');
         else if (i === PAD.X) actions.push('mute');
-        else if (i === PAD.Y || i === PAD.BACK) actions.push('map');
+        else if (i === PAD.BACK) actions.push('select'); // Select: the free camera on Training maps
+        else if (i === PAD.Y) actions.push('map');
         else if (i === PAD.UP) actions.push('up');
         else if (i === PAD.DOWN) actions.push('down');
       }
