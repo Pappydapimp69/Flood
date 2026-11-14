@@ -1227,7 +1227,12 @@ const lakeShown = new Map();
 // the ground, right stick turns and tilts, the triggers lower and raise; nothing on screen but the world. Select
 // again flies back to the held view over 2 s and the race resumes. Keys: C toggles, arrows move, Q E raise and lower.
 let freeCam = null;
-dbg.freeCam = () => freeCam; // dev: aim the free camera from a script
+dbg.freeCam = () => freeCam; // dev (tools/event-shots.mjs): open, aim and close the free camera from a script
+dbg.freeCamOn = () => { if (!freeCam && world) toggleFreeCam(); return !!freeCam; };
+dbg.freeCamOff = () => { if (freeCam) { freeCam = null; document.body.classList.remove('freecam'); input.freeze(false); acc = 0; } };
+dbg.freeCamAim = (x, z, dist, yaw, pitch) => Object.assign(freeCam, { dist, yaw, pitch }) && freeCam.target.set(x, surfaceAt(world, x, z) * VERT, z);
+dbg.waveAt = () => { const f = slideFx, s = world?.slide; if (!f || !s) return null; const near = f.below.filter((k) => Math.abs(world.toBeach[k] - s.front) < 150).map(f.at);
+  if (!near.length) return null; near.sort((a, b) => a.x - b.x); return near[near.length >> 1]; };
 dbg.camState = () => ({ lesson: !!lesson, paused, mode, training: trainingCourse, pending: pendingActions.length });
 const camKeys = new Set();
 addEventListener('keydown', (e) => { if (freeCam) camKeys.add(e.code); });
@@ -1294,12 +1299,12 @@ function startSlideFx() {
   if (!s) return;
   const at = (k) => ({ x: ((k % n) / (n - 1) - 0.5) * W, z: (Math.floor(k / n) / (n - 1) - 0.5) * W });
   const sx = -s.axis.z, sz = s.axis.x; // across the valley
-  const N = 70, rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5b524a', flatShading: true }), N);
+  const N = 140, rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5b524a', flatShading: true }), N);
   const fall = [];
   for (let i = 0; i < N; i++) {
     const j = Math.floor(Math.random() * s.cells.length), p = at(s.cells[j]), g = surfaceAt(world, p.x, p.z);
-    const back = -s.from * (s.half + 400 + Math.random() * 600) - ((p.x - s.x) * sx + (p.z - s.z) * sz);
-    fall.push({ x0: p.x + sx * back, z0: p.z + sz * back, y0: g + 350 + Math.random() * 300, x1: p.x, z1: p.z, y1: g + s.peak[j] * 0.6, r: 60 + Math.random() * 120,
+    const back = -s.from * (500 + Math.random() * 900), gb = surfaceAt(world, p.x + sx * back, p.z + sz * back); // each falls from just up the slope above where it lands
+    fall.push({ x0: p.x + sx * back, z0: p.z + sz * back, y0: Math.max(g, gb) + 150 + Math.random() * 250, x1: p.x, z1: p.z, y1: g + s.peak[j] * 0.6, r: 60 + Math.random() * 120,
       t0: s.fallAt[j] * SLIDE.fallTicks * DT * 1000, spin: Math.random() * 6 });
   }
   scene.add(rocks);
@@ -1311,17 +1316,17 @@ function startSlideFx() {
   const below = [];
   for (let k = 0; k < n * n; k++) { const tb = world.toBeach[k]; if (t.mask[k] && tb < s.reach && tb > s.reach - SLIDE.waveSpeed * SLIDE.waveTicks * DT - 500) below.push(k); }
   below.sort((a, b) => world.toBeach[a] - world.toBeach[b]);
-  const WN = 2500, wpos = new Float32Array(WN * 3), wave = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(wpos, 3)),
-    new THREE.PointsMaterial({ color: '#f2fbff', size: 220, map: roundDot, transparent: true, opacity: 0.95, depthWrite: false }));
+  const WN = 4000, wpos = new Float32Array(WN * 3), wave = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(wpos, 3)),
+    new THREE.PointsMaterial({ color: '#f2fbff', size: 170, map: roundDot, transparent: true, opacity: 0.95, depthWrite: false }));
   wave.frustumCulled = false; dust.frustumCulled = false;
   scene.add(wave);
-  slideFx = { start: performance.now(), rocks, fall, dust, seeds, wave, below, at };
+  slideFx = { tick0: world.tick, rocks, fall, dust, seeds, wave, below, at };
 }
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler();
 function tickSlideFx(now) {
   const f = slideFx, s = world?.slide;
   if (!f || !s) return;
-  const ms = now - f.start;
+  const ms = (world.tick - f.tick0 + (freeCam ? 0 : Math.min(1, acc / DT))) * DT * 1000; // race time: a pause freezes it mid-fall
   // Boulders: 1.2 s from the valley side to the dam line, staggered with the sweep, then gone under the rock.
   let shown = 0;
   f.fall.forEach((b, i) => {
@@ -1352,7 +1357,7 @@ function tickSlideFx(now) {
     for (let i = a; i < f.below.length && m < wp.count; i++) {
       const k = f.below[i]; if (world.toBeach[k] > hi) break;
       const p = f.at(k);
-      for (let j = 0; j < 3 && m < wp.count; j++) { const jx = p.x + (Math.random() - 0.5) * 100, jz = p.z + (Math.random() - 0.5) * 100; wp.setXYZ(m++, jx, surfaceAt(world, jx, jz) * VERT + 30 + Math.random() * 60, jz); }
+      for (let j = 0; j < 4 && m < wp.count; j++) { const jx = p.x + (Math.random() - 0.5) * 100, jz = p.z + (Math.random() - 0.5) * 100; wp.setXYZ(m++, jx, surfaceAt(world, jx, jz) * VERT + 8 + Math.random() * 30, jz); } // low on the ground: water, not cloud
     }
   }
   f.wave.geometry.setDrawRange(0, m);

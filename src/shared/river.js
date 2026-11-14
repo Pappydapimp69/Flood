@@ -2783,7 +2783,8 @@ function makeSlide(world) {
     if (h < 3) continue;
     cells.push(k); peak.push(h); crest.push(Math.abs(o) < SLIDE.thick * 0.35 && h > SLIDE.height * 0.4 ? 1 : 0);
     fallAt.push(SLIDE.sweep * Math.min(1, Math.max(0, (from * sd / half + 1) / 2))); // 0 on the side it falls from
-    if (Math.abs(o) < t.cell && t.mask[k]) { if (world.toBeach[k] < 1e8) { d += world.toBeach[k]; m++; } low = Math.min(low, t.filled[k]); }
+    if (Math.abs(o) < t.cell && t.mask[k] && world.toBeach[k] < 1e8) { d += world.toBeach[k]; m++; }
+    if (o < -SLIDE.thick * 1.4 && o > -SLIDE.thick * 2.2 && t.mask[k]) low = Math.min(low, t.filled[k]); // the floor just behind it, where the pond starts
   }
   if (!m) return null;
   return { state: 'armed', tick: 0, cells, peak: Float32Array.from(peak), crest: Uint8Array.from(crest), fallAt: Float32Array.from(fallAt),
@@ -2819,7 +2820,7 @@ function slideStep(world) {
     }
     if (s.arrived === undefined) for (const r of world.rivers) if (isRacing(r) && !r.dropping && world.toBeach[cellIndex(t, r.x, r.z)] < s.reach + SLIDE.arrive) { s.arrived = world.tick; break; }
     const held = s.arrived === undefined ? 0 : world.tick - s.arrived;
-    s.level = Math.min(1, (age * 0.25 + held) / SLIDE.holdTicks) * SLIDE.height * 0.85; // the pond backing up behind it
+    s.level = Math.min(1, (age * 0.5 + held * 1.5) / SLIDE.holdTicks) * SLIDE.height * 0.85; // the pond backing up behind it (full before it overtops)
     let worn = held >= SLIDE.holdTicks, at = -1;
     if (!worn && age % 2 === 0) for (let i = 0; i < s.cells.length && !worn; i++) if (s.crest[i] && world.rock[s.cells[i]] < SLIDE.height * SLIDE.breach) { worn = true; at = s.cells[i]; }
     if (worn) {
