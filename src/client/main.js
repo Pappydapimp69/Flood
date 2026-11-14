@@ -1465,8 +1465,11 @@ function caption(key, html) {
   captionEl.classList.add('on');
   captionOff = performance.now() + 2800;
 }
-// Tutorial lessons: the race stops, the camera flies to where it happened,
-// and a card explains it; A / Space / Enter / a click carries on.
+// Tutorial lessons (owner, 2026-11-14): the race stops and the view stays exactly where it is while a card
+// explains. A press then flies the camera from there to the thing the card is about (the finish, a lake
+// ahead); the next press flies it back to where it was, and only then does the race carry on. A lesson about
+// something right where the player is has nowhere to fly: one press carries on.
+const LESSON_NEAR = 900, LESSON_OUT = 1400, LESSON_BACK = 1000; // metres; ms of flight out and back
 const lessonEl = document.getElementById('lesson');
 let lesson = null; const lessonQueue = [], taught = new Set();
 function teach(key, title, html, x, z, far = 1) {
@@ -1482,13 +1485,22 @@ function nextLesson() {
   coachEl.hidden = true; // one thing at a time
   lessonEl.querySelector('h3').textContent = lesson.title;
   lessonEl.querySelector('p').innerHTML = lesson.html;
-  lessonEl.querySelector('small').textContent = `${key('A', 'Space / Enter', 'Tap')} to carry on`;
+  const at = focus ?? river;
+  lesson.fly = lesson.x !== undefined && !!at && Math.hypot(lesson.x - at.x, lesson.z - at.z) > LESSON_NEAR;
+  lesson.phase = 'read'; // read (view held) -> show (flown to the spot) -> back (flying home) -> the race resumes
+  lessonEl.querySelector('small').textContent = `${key('A', 'Space / Enter', 'Tap')} ${lesson.fly ? 'to see it' : 'to carry on'}`;
   lesson.shownAt = performance.now();
 }
 function endLesson() {
-  if (!lesson || performance.now() - lesson.shownAt < 600) return; // a held button doesn't skip it
+  if (!lesson || lesson.phase === 'back' || performance.now() - lesson.shownAt < 600) return; // a held button doesn't skip it
   input.takeSkill(); input.takeSurge(); // the press that closed it fires nothing
-  nextLesson();
+  if (lesson.phase === 'read' && lesson.fly && !mapView) {
+    lesson.phase = 'show'; lesson.shownAt = performance.now();
+    lessonEl.querySelector('small').textContent = `${key('A', 'Space / Enter', 'Tap')} to carry on`;
+  } else if (lesson.phase === 'show') {
+    lesson.phase = 'back'; lesson.shownAt = performance.now();
+    lessonEl.hidden = true; // the flight home is watched without the card over it
+  } else nextLesson();
 }
 lessonEl.onclick = endLesson;
 addEventListener('keydown', (e) => { if (lesson && (e.code === 'Enter' || e.code === 'Space')) { endLesson(); e.preventDefault(); } });
@@ -1870,16 +1882,25 @@ renderer.setAnimationLoop(() => {
   // new shot starts already in place (owner: "none of that weird zooming
   // around"; Brain FILM kernel: a view swap is a cut). Within a view the
   // camera still eases as it follows.
-  const camMode = lesson && lesson.x !== undefined && !mapView ? `lesson:${lesson.title}` : mapView ? 'map' : intro ? 'intro'
+  const camMode = mapView ? 'map' : intro ? 'intro'
     : `${focus.dropping ? 'drop' : focus.finished ? 'done' : 'chase'}:${focus.id}`;
   const cut = camMode !== lastCamMode;
   lastCamMode = camMode;
-  if (lesson && lesson.x !== undefined && !mapView) {
-    // A lesson: a still shot over the spot, high and to the south of it, looking down on it.
-    const g = surfaceAt(world, lesson.x, lesson.z) * VERT, f = lesson.far ?? 1;
-    camera.position.set(lesson.x + 700 * f, g + 1500 * f, lesson.z + 1700 * f);
-    camLook.set(lesson.x, g, lesson.z);
-    camera.lookAt(camLook);
+  if (lesson && !mapView) {
+    // A lesson holds the view where it was. Shown its spot, the camera flies there (high and to the south of
+    // it, looking down on it) and, on the next press, back to the held view; then the race carries on.
+    lesson.home ??= { pos: camera.position.clone(), look: camTarget.clone() };
+    if (lesson.phase !== 'read') {
+      const g = surfaceAt(world, lesson.x, lesson.z) * VERT, f = lesson.far ?? 1;
+      const spot = new THREE.Vector3(lesson.x + 700 * f, g + 1500 * f, lesson.z + 1700 * f), at = new THREE.Vector3(lesson.x, g, lesson.z);
+      const out = lesson.phase === 'show', t = Math.min(1, (performance.now() - lesson.shownAt) / (out ? LESSON_OUT : LESSON_BACK));
+      const k = t * t * (3 - 2 * t), u = out ? k : 1 - k; // eased; u: 0 at the held view, 1 over the spot
+      if (out) lesson.reach = u; // a press before it arrives flies home from wherever it got to
+      const w = out ? u : (lesson.reach ?? 1) * (1 - k);
+      camera.position.lerpVectors(lesson.home.pos, spot, w);
+      camera.lookAt(camLook.lerpVectors(lesson.home.look, at, w));
+      if (!out && t >= 1) nextLesson(); // home again: the race resumes (or the next card shows, from this same view)
+    }
   } else if (mapView) {
     controls.update();
   } else if (intro) {
