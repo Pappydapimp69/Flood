@@ -2731,17 +2731,18 @@ export const SLIDE = {
   // The slide itself: blocks break off the scar and fall, bounce and roll down the real ground (bs flood-116),
   // and where each stops it piles up; the piles are the dam (a hummocky tongue that runs up the far wall, flood-117).
   blocks: 120,
-  release: 30, // ticks over which the scar lets go, top first
-  grav: 70, // m/s2 along the slope: game time, so the slide crosses the valley in a few seconds
+  release: 16, // ticks over which the scar lets go, top first
+  grav: 450, // m/s2 along the slope: game time (rivers run 300 m/s), so the slide crosses a wide floor in about 5 s
   rest: 10, // m/s: a block on gentle ground slower than this stops
-  maxTicks: 220, // a block still moving after 11 s stops where it is
+  maxTicks: 140, // a block still moving after 7 s stops where it is
+  trail: 0.12, // share of a pile a moving block leaves every 3 ticks along its path on the floor
   pile: 34, // metres of rock a stopped block leaves at its middle...
   pileR: 230, // ...falling to nothing this far out
   cap: 170, // metres: piles add up to at most this
   // The pond and the burst (flood-113: a landslide dam fails by overtopping at its lowest point, when the inflow has
   // filled it): the pond fills with the water held rivers pour in; it bursts when it reaches the crest's low point,
   // or when rivers pressing the low point wash it down near the valley floor.
-  pondPerMetre: 40_000, // litres the pond holds per metre of the low point's height above the floor
+  pondPerMetre: 8_000, // litres the pond holds per metre of the low point's height above the floor (one river fills a 100 m dam in about 18 s, three in 6)
   pondArea: 2500, // metres of route above the dam that count as in the pond
   loose: 0.6, // metres a tick a river pressing the dam washes off the debris near it, times its size
   breachLeft: 15, // metres: the low point worn to this above the floor breaks it
@@ -2800,7 +2801,7 @@ function releaseBlocks(world, s) {
   for (let i = 0; i < SLIDE.blocks; i++) {
     const along = (r() - 0.5) * 900, up = (r() - 0.3) * 500; // up: further up the side (positive) or nearer the floor
     const x = s.scar.x + ax * along + px * up, z = s.scar.z + az * along + pz * up;
-    s.blocks.push({ x, z, y: sampleFilled(t, x, z) + 20, vx: -px * 20, vz: -pz * 20, vy: 0, size: 25 + r() * r() * 70, mu: 0.35 + r() * 0.9, at: 0, moving: true, air: false });
+    s.blocks.push({ x, z, y: sampleFilled(t, x, z) + 20, vx: -px * 260, vz: -pz * 260, vy: 0, size: 25 + r() * r() * 70, mu: 0.03 + r() * 0.17, at: 0, moving: true, air: false });
   }
   // Top first: the higher a block sits, the sooner it goes.
   s.blocks.sort((a, b) => b.y - a.y).forEach((b, i) => { b.at = Math.round((i / s.blocks.length) * SLIDE.release); });
@@ -2811,12 +2812,19 @@ function releaseBlocks(world, s) {
 // and its pile goes on world.rock, so the dam grows where the debris comes to rest. Ground here is the
 // starting terrain plus rock already piled (so blocks ride up on earlier ones), not rivers' channels.
 function stepBlocks(world, s, age) {
-  const t = world.terrain, g = SLIDE.grav, h = (x, z) => sampleFilled(t, x, z) + world.rock[cellIndex(t, x, z)];
+  const t = world.terrain, g = SLIDE.grav, n = t.size;
+  // The ground between cells, not cell by cell: read per cell, a slope is flat inside each 100 m cell and a block
+  // stopped dead on the valley side (owner, 2026-11-14: the rocks only made dust on the cliff).
+  const h = (x, z) => {
+    const gx = Math.min(n - 1.001, Math.max(0, (x / t.worldSize + 0.5) * (n - 1))), gy = Math.min(n - 1.001, Math.max(0, (z / t.worldSize + 0.5) * (n - 1)));
+    const x0 = Math.floor(gx), y0 = Math.floor(gy), fx = gx - x0, fy = gy - y0, k = y0 * n + x0, v = (j) => t.filled[j] + world.rock[j];
+    return (v(k) * (1 - fx) + v(k + 1) * fx) * (1 - fy) + (v(k + n) * (1 - fx) + v(k + n + 1) * fx) * fy;
+  };
   let moving = 0;
   for (const b of s.blocks) {
     if (!b.moving || age < b.at) { if (b.moving) moving++; continue; }
     moving++;
-    const e = 40, gx = (h(b.x + e, b.z) - h(b.x - e, b.z)) / (2 * e), gz = (h(b.x, b.z + e) - h(b.x, b.z - e)) / (2 * e), steep = Math.hypot(gx, gz);
+    const e = t.cell, gx = (h(b.x + e, b.z) - h(b.x - e, b.z)) / (2 * e), gz = (h(b.x, b.z + e) - h(b.x, b.z - e)) / (2 * e), steep = Math.hypot(gx, gz);
     const floorY = h(b.x, b.z);
     if (b.air) {
       b.vy -= g * DT;
@@ -2830,14 +2838,17 @@ function stepBlocks(world, s, age) {
     }
     b.x += b.vx * DT; b.z += b.vz * DT;
     if (!b.air) b.y = h(b.x, b.z);
+    // A rock avalanche flows as one mass and leaves debris all along its path (bs flood-117: a lobate tongue from
+    // the scar to where it stops), so the valley closes as the front crosses it, not only once the last block stops.
+    if (!b.air && (age + (b.size | 0)) % 3 === 0 && steep < 0.6) settle(world, b, SLIDE.trail);
     const speed = Math.hypot(b.vx, b.vz);
-    if ((!b.air && steep < 0.45 && speed < SLIDE.rest) || age - b.at > SLIDE.maxTicks || t.filled[cellIndex(t, b.x, b.z)] <= SEA_LEVEL) { b.moving = false; settle(world, b); }
+    if ((!b.air && steep < 0.12 && speed < SLIDE.rest) || age - b.at > SLIDE.maxTicks || t.filled[cellIndex(t, b.x, b.z)] <= SEA_LEVEL) { b.moving = false; settle(world, b); }
   }
   return moving;
 }
 
-function settle(world, b) {
-  const t = world.terrain, n = t.size, R = SLIDE.pileR * (0.7 + b.size / 100), H = SLIDE.pile * (0.6 + b.size / 60);
+function settle(world, b, share = 1) {
+  const t = world.terrain, n = t.size, R = SLIDE.pileR * (0.7 + b.size / 100) * (share < 1 ? 0.7 : 1), H = SLIDE.pile * (0.6 + b.size / 60) * share;
   const gx = (b.x / t.worldSize + 0.5) * (n - 1), gy = (b.z / t.worldSize + 0.5) * (n - 1), reach = Math.ceil(R / t.cell);
   for (let y = Math.round(gy) - reach; y <= Math.round(gy) + reach; y++) for (let x = Math.round(gx) - reach; x <= Math.round(gx) + reach; x++) {
     if (x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
@@ -2846,7 +2857,7 @@ function settle(world, b) {
     const add = H * (1 - (d / R) ** 2), now = Math.min(SLIDE.cap, Math.max(0, world.rock[k]) + add);
     if (now > world.rock[k]) { world.treeRock[k] += now - world.rock[k]; world.rock[k] = now; world.dirty.push(k); }
   }
-  b.y = sampleFilled(t, b.x, b.z) + world.rock[cellIndex(t, b.x, b.z)];
+  if (share === 1) b.y = sampleFilled(t, b.x, b.z) + world.rock[cellIndex(t, b.x, b.z)];
 }
 
 // The dam's low point: across the valley along its line, the lowest top of the debris on the floor (where the pond
@@ -2861,7 +2872,7 @@ function lowPoint(world, s) {
       if (v > top) { top = v; fx = x; fz = z; }
       rock = Math.max(rock, world.rock[k]);
     }
-    if (rock < 8 || t.filled[cellIndex(t, fx, fz)] > s.base + 150) continue; // no debris here, or up the valley side
+    if (t.filled[cellIndex(t, fx, fz)] > s.base + 150) continue; // up the valley side (a gap in the debris on the floor counts: water runs through it)
     if (!best || top < best.top) best = { top, x: fx, z: fz };
   }
   return best;
@@ -2900,7 +2911,7 @@ function slideStep(world) {
     for (const r of world.rivers) {
       if (!isRacing(r) || r.dropping) continue;
       const at = world.toBeach[cellIndex(t, r.x, r.z)], up = (r.x - s.x) * s.axis.x + (r.z - s.z) * s.axis.z;
-      if (up < 0 && at >= s.reach - 300 && at <= s.reach + SLIDE.pondArea) s.pondVol += dischargeOf(r) * DT;
+      if (up < 0 && at >= s.reach - 300 && at <= s.reach + SLIDE.pondArea) s.pondVol += dischargeOf(r); // litres a tick
     }
     const cap = SLIDE.pondPerMetre * lip;
     s.level = lip ? Math.min(1, s.pondVol / cap) * lip : 0;
