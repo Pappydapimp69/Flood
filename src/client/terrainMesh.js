@@ -28,8 +28,14 @@ const ss = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
-function colorAt(h, slope, lakeDepth, out) {
+// rugged: Summit Rush's peak, bare rock from about 1,100 m and on any steep ground (the trailer's grey crags).
+function colorAt(h, slope, lakeDepth, out, rugged = false) {
   if (lakeDepth > LAKE_MIN_DEPTH) return out.copy(C.lake);
+  if (rugged && h > SEA_LEVEL) {
+    out.copy(C.sand).lerp(C.maquis, ss(4, 30, h)).lerp(C.forest, ss(150, 500, h) * (1 - ss(900, 1300, h)));
+    out.lerp(C.rock, Math.max(ss(1000, 1500, h), ss(0.22, 0.5, slope)));
+    return out.lerp(C.snow, ss(2450, 2650, h) * (1 - ss(0.5, 0.9, slope)));
+  }
   if (h <= SEA_LEVEL) return out.copy(C.shallow).lerp(C.deep, ss(0, 120, -h)).lerp(C.sand, ss(-8, 0, h) * 0.6);
   out.copy(C.sand).lerp(C.maquis, ss(4, 30, h));
   out.lerp(C.forest, ss(250, 700, h) * (1 - ss(1700, 2100, h)));
@@ -155,7 +161,7 @@ export function buildTerrainMesh(t) {
       const hx = t.height[y * n + Math.min(n - 1, x + 1)] - t.height[y * n + Math.max(0, x - 1)];
       const hy = t.height[Math.min(n - 1, y + 1) * n + x] - t.height[Math.max(0, y - 1) * n + x];
       const slope = Math.hypot(hx, hy) / (2 * t.cell);
-      colorAt(h, slope, lakeDepth, tmp);
+      colorAt(h, slope, lakeDepth, tmp, t.course === 'summit');
       if (t.fast?.[i] && lakeDepth <= LAKE_MIN_DEPTH) tmp.multiplyScalar(0.72).lerp(CANYON, 0.28); // canyon floor: dark wet rock, so the fast lane reads from afar
       if (t.ridge?.[i] > 0 && lakeDepth <= LAKE_MIN_DEPTH) {
         const face = t.ridgeFace[i];
@@ -172,7 +178,7 @@ export function buildTerrainMesh(t) {
   const lakeD = Float32Array.from(base, (_, i) => t.filled[i] - t.height[i]);
   geo.setAttribute('damp', new THREE.BufferAttribute(dampness(n, t.cell, shown, lakeD), 1));
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-  const mat = terrainMaterial();
+  const mat = terrainMaterial(t.course === 'summit');
   const mesh = new THREE.Mesh(geo, mat);
   mesh.name = 'terrain';
   mesh.userData = { t, base, pristineBase: base.slice(), baseColors: colors.slice(), pristineColors: colors.slice(), shown, lit, open, sun };
@@ -183,7 +189,7 @@ export function buildTerrainMesh(t) {
 // Lambert with procedural detail: steep ground turns to banded rock, the
 // grass breaks into dry yellow and dark patches, and fine scree/grit noise
 // shows close up and fades out with distance so it never shimmers.
-function terrainMaterial() {
+function terrainMaterial(rugged = false) {
   const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   mat.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader
@@ -229,9 +235,9 @@ function terrainMaterial() {
           g = mix(g, vec3(0.62, 0.66, 0.36), land * EDGE(n3, 0.74) * 0.4);
           // High ground is stone by its vertex colour: break it with alpine turf where it is damp or sheltered, and pale lichen.
           float upland = (1.0 - land) * (1.0 - wet) * smoothstep(${(1500 * VERT).toFixed(1)}, ${(1900 * VERT).toFixed(1)}, vWPos.y) * (1.0 - smoothstep(${(2500 * VERT).toFixed(1)}, ${(2750 * VERT).toFixed(1)}, vWPos.y));
-          g = mix(g, vec3(0.36, 0.42, 0.17), upland * EDGE(macro * 0.7 + n2 * 0.3 + vDamp * 0.35, 0.5) * 0.8);
+          g = mix(g, vec3(0.36, 0.42, 0.17), upland * EDGE(macro * 0.7 + n2 * 0.3 + vDamp * 0.35, ${rugged ? '0.85' : '0.5'}) * 0.8); // the summit keeps its turf to the wettest hollows
           g = mix(g, vec3(0.60, 0.58, 0.47), upland * EDGE(n3, 0.76) * 0.45);
-          float rockMix = max(smoothstep(0.32, 0.62, slope + (macro - 0.5) * 0.25), land * smoothstep(0.55, 1.0, -vDamp) * EDGE(n3, 0.58) * 0.7) * (1.0 - wet);
+          float rockMix = max(smoothstep(${rugged ? '0.2, 0.45' : '0.32, 0.62'}, slope + (macro - 0.5) * 0.25), land * smoothstep(0.55, 1.0, -vDamp) * EDGE(n3, 0.58) * 0.7) * (1.0 - wet);
           vec3 col = mix(g, rock, rockMix);
           // Close-up grit and scree, and tufts in the grass nearer still.
           col *= mix(1.0, 0.74 + 0.5 * grit, near);

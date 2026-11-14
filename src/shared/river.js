@@ -311,7 +311,22 @@ export function lakeGain(lake) {
 // Rules a course changes from TUNE (docs/summit-rush.md). Summit Rush seats about 20 rivers on each valley
 // head's ring, so starts sit closer; its landing lane stays the full width of the start line, so the drop picks
 // the valley; and its spawn grace is capped, or 80 rivers would have no contact for a sixth of a two-minute race.
-export const COURSE_RULES = { summit: { spawnGap: 250, laneEnd: 1, graceMax: 140 } };
+export const COURSE_RULES = { summit: { spawnGap: 250, graceMax: 140, startElevation: 0.9, dropScale: 0.6, fallRate: 2 } };
+// Summit Rush (docs/summit-rush.md) has no single downhill direction: a peak in the middle, the sea all round.
+export const isSummit = (world) => world.terrain.course === 'summit';
+// Which way is forward at (x, z): down the ski slope's axis, or on the summit, this spot's own way to the sea
+// (down the gradient of the water route's length), falling back to straight out from the peak.
+export function courseDir(world, x, z) {
+  const t = world.terrain;
+  if (!isSummit(world)) return { x: t.axis.x, z: t.axis.y };
+  const n = t.size, k = cellIndex(t, x, z), cx = k % n, cy = (k - cx) / n, tb = world.toBeach;
+  const at = (xx, yy) => { const v = xx >= 0 && yy >= 0 && xx < n && yy < n ? tb[yy * n + xx] : Infinity; return v < 1e8 ? v : tb[k]; };
+  let gx = 0, gz = 0;
+  if (tb[k] < 1e8) for (const s2 of [1, 2]) { gx += at(cx - s2, cy) - at(cx + s2, cy); gz += at(cx, cy - s2) - at(cx, cy + s2); }
+  let l = Math.sqrt(gx * gx + gz * gz);
+  if (l < 1e-6) { gx = x - t.centre.x; gz = z - t.centre.z; l = Math.sqrt(gx * gx + gz * gz) || 1; }
+  return { x: gx / l, z: gz / l };
+}
 export const rule = (world, key) => world.rules?.[key] ?? TUNE[key];
 
 export function createWorld(terrain, { forest = true, lava = true } = {}) {
@@ -322,9 +337,10 @@ export function createWorld(terrain, { forest = true, lava = true } = {}) {
   const world = {
     terrain,
     rules: COURSE_RULES[terrain.course] ?? {},
+    dropScale: COURSE_RULES[terrain.course]?.dropScale,
     dist: distanceToSea(terrain, downhill), // along the fill's downhill tree
     reach: descentDistance(terrain), // shortest route water can take to any sea (spawn fairness, forest lanes)
-    ...finishBeach(terrain), // beach (sea cells that end the race), beachLand, seaNext, toBeach
+    ...(terrain.course === 'summit' ? anySea(terrain) : finishBeach(terrain)), // beach (sea cells that end the race), beachLand, seaNext, toBeach
     lakeOf, lakes,
     lakeCap: Float64Array.from(lakes, (l) => lakeGain(l)), // litres when full
     lakeVol: Float64Array.from(lakes, (l) => lakeGain(l) * TUNE.lakeStart), // litres now
@@ -475,7 +491,7 @@ export function spawnBand(world) {
   const groups = [], ring = [];
   for (const top of t.summits) {
     const peak = h[top], tx = top % n, ty = (top - tx) / n;
-    const target = peak * TUNE.startElevation;
+    const target = peak * rule(world, 'startElevation'), round = isSummit(world); // the summit's ring goes all the way round
     let tol = peak * TUNE.startTolerance, cells;
     do {
       // The summit's own slopes: everything connected to its top that stays
@@ -485,7 +501,7 @@ export function spawnBand(world) {
       cells = [];
       while (queue.length) {
         const c = queue.pop(), cx = c % n, cy = (c - cx) / n;
-        if (Math.abs(h[c] - target) <= tol && t.filled[c] - h[c] < 0.5 && (cx - tx) * ax + (cy - ty) * ay >= 0 && (!t.mask || t.mask[c])) cells.push(c); // never on the scenery
+        if (Math.abs(h[c] - target) <= tol && t.filled[c] - h[c] < 0.5 && (round || (cx - tx) * ax + (cy - ty) * ay >= 0) && (!t.mask || t.mask[c])) cells.push(c); // never on the scenery
         for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
           const x = cx + dx, y = cy + dy;
           if (x < 8 || y < 8 || x >= n - 8 || y >= n - 8) continue;
@@ -501,13 +517,13 @@ export function spawnBand(world) {
     const reach = world.reach;
     const sorted = cells.map((c) => reach[c]).sort((a, b) => a - b);
     const mid = sorted[sorted.length >> 1];
-    groups.push(cells.filter((c) => Math.abs(reach[c] - mid) <= mid * TUNE.fairReach));
+    groups.push(round ? cells : cells.filter((c) => Math.abs(reach[c] - mid) <= mid * TUNE.fairReach)); // the summit: every ravine is a choice
     ring.push(...cells);
   }
   const fair = groups.flat().sort((a, b) => a - b);
   // ring: the contours, which falling drops glide along; cells: their fair
   // spots, where they touch down; groups: those spots per summit.
-  world.band = { target: h[t.summits[1]] * TUNE.startElevation, cells: fair, wide: fair, groups, ring, top: t.summits[1] };
+  world.band = { target: h[t.summits[1] ?? t.summits[0]] * rule(world, 'startElevation'), cells: fair, wide: fair, groups, ring, top: t.summits[1] ?? t.summits[0] };
   return world.band;
 }
 
@@ -618,6 +634,15 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
   if (!river.dropping) {
     pushPathPoint(world, river);
     applyDigs(world);
+  } else if (isSummit(world)) {
+    // Summit Rush: comets come down from straight above the peak, from every side, over the start ring.
+    const t = world.terrain, rng = stream(t.seed, `drop-start:${id}`), band = spawnBand(world), n = t.size;
+    const c = band.ring[Math.floor(rng() * band.ring.length)];
+    const px = ((c % n) / (n - 1) - 0.5) * t.worldSize, pz = (Math.floor(c / n) / (n - 1) - 0.5) * t.worldSize;
+    const ox = px - t.centre.x, oz = pz - t.centre.z, ol = Math.hypot(ox, oz) || 1;
+    river.x = t.centre.x + ox * (0.4 + 0.5 * rng()); river.z = t.centre.z + oz * (0.4 + 0.5 * rng());
+    river.dx = ox / ol; river.dz = oz / ol; // facing out, toward its own side of the mountain
+    river.alt = TUNE.dropAlt * (world.dropScale ?? 1) * (0.9 + 0.2 * rng());
   } else {
     // Start the fall heading down the slope: drops that don't steer fall
     // side by side and keep apart, instead of all closing on one spot.
@@ -651,6 +676,7 @@ export function addRiver(world, id, at = spawnPoint(world, id), opts = {}) {
 // While falling: turn, and hurry (+1) or slow (-1) the glide, anywhere over the map.
 // steer turns, fwd hurries (+1) or slows (-1) the fall, g glides faster or slower across the ground.
 function glide(world, r, steer, fwd, g = 0) {
+  if (isSummit(world)) return summitGlide(world, r, steer, fwd, g);
   if (steer) {
     // A comet keeps coming in: at most 60 degrees off straight down the slope (was 70: held there with no
     // dive boost it crept in at a third of its speed). Turning further
@@ -755,11 +781,69 @@ function glide(world, r, steer, fwd, g = 0) {
   if (pastLine(world, r.x, r.z) || r.fallT > 3 * TUNE.dropTicks) land(world, r);
 }
 
+// Summit Rush's fall: straight down over the peak. Steer anywhere over the start ring (never out past it), dive to
+// fall faster, dash for a burst across; touch down on the nearest start cell once the fall reaches the ring's height.
+function summitGlide(world, r, steer, fwd, g) {
+  if (steer) {
+    const a = (TUNE.glideTurn * -steer) / Math.max(1, r.size), dx = r.dx + r.dz * a, dz = r.dz - r.dx * a;
+    r.dx = dx; r.dz = dz; normalize(r);
+  }
+  const want = fwd > 0 ? fwd : 0;
+  r.diveK = want > (r.diveK ?? 0) ? want : (r.diveK ?? 0) + Math.max(-TUNE.boostFade, want - (r.diveK ?? 0));
+  if (fwd < 0 && !(r.dashT > 0) && world.tick >= (r.dashAt ?? 0)) {
+    r.dashT = TUNE.dashTicks; r.dashAt = world.tick + TUNE.dashCool;
+    world.events.push({ type: 'dash', river: r.idx, tick: world.tick });
+  }
+  const dash = r.dashT > 0 ? 1 + TUNE.dashBoost : 1;
+  if (r.dashT > 0) r.dashT--;
+  const v = TUNE.glideSpeed * (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g) * dash;
+  const kick = (r.burstT > 0 ? 1 + TUNE.bumpBurst : 1) * (r.recoilT > 0 ? TUNE.bumpRecoil : 1);
+  if (r.burstT > 0) r.burstT--;
+  if (r.recoilT > 0) r.recoilT--;
+  r.glideV = v;
+  const kx = r.kx ?? 0, kz = r.kz ?? 0;
+  r.kx = kx * TUNE.bumpDecay; r.kz = kz * TUNE.bumpDecay;
+  const t = world.terrain, band = spawnBand(world);
+  let nx = r.x + (r.dx * v * kick + kx) * DT, nz = r.z + (r.dz * v * kick + kz) * DT;
+  // The sky over the ring: no further out than the ring's own reach plus a margin.
+  const reach = (world.ringReach ??= band.ring.reduce((m, k) => { const n = t.size; return Math.max(m, Math.hypot(((k % n) / (n - 1) - 0.5) * t.worldSize - t.centre.x, (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize - t.centre.z)); }, 0) + 800);
+  const ox = nx - t.centre.x, oz = nz - t.centre.z, ol = Math.hypot(ox, oz);
+  if (ol > reach) { nx = t.centre.x + (ox / ol) * reach; nz = t.centre.z + (oz / ol) * reach; }
+  r.x = nx; r.z = nz;
+  const heavy = 1 + TUNE.heavyFall * Math.max(0, r.size - 1);
+  const steady = (TUNE.dropAlt / TUNE.dropTicks) * (rule(world, 'fallRate') ?? 1), rate = steady * (1 + TUNE.diveRate * r.diveK) * heavy;
+  const under = Math.max(0, surfaceAt(world, r.x, r.z, r.idx) - band.target);
+  r.alt = Math.max(under + 30, r.alt - rate);
+  r.dropping = Math.max(1, Math.ceil((r.alt - under) / steady));
+  for (const c of skyClouds(world)) {
+    if (c.low || c.water <= 0 || (c.x - r.x) ** 2 + (c.z - r.z) ** 2 > (c.radius ?? TUNE.cloudRadius) ** 2 || Math.abs(c.alt - r.alt) > TUNE.cloudDepth) continue;
+    (c.inside ??= []).push(r);
+  }
+  r.fallT = (r.fallT ?? 0) + 1;
+  if (r.alt <= under + 30 + 1e-6 || r.fallT > 3 * TUNE.dropTicks) {
+    // Down on the ring: the nearest start cell to where it fell.
+    const k = landingCell(world, r.x, r.z), n = t.size;
+    r.x = ((k % n) / (n - 1) - 0.5) * t.worldSize; r.z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+    land(world, r);
+  }
+}
+
 // The rain clouds over the summits, seeded so every machine has the same sky:
 // near the start rings, at heights a fall passes through.
 export function skyClouds(world) {
   if (world.clouds) return world.clouds;
   const t = world.terrain, n = t.size, rng = stream(t.seed, 'sky-clouds'), ring = spawnBand(world).ring;
+  if (isSummit(world)) {
+    // Over the peak: clouds scattered round the sky above the ring, at every height the fall passes through.
+    world.clouds = Array.from({ length: Math.round(TUNE.skyClouds / 2) }, (_, id) => {
+      const k = ring[Math.floor(rng() * ring.length)], f = 0.3 + 0.9 * rng(), p = (id + rng()) / Math.round(TUNE.skyClouds / 2);
+      const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize;
+      return { id, x: t.centre.x + (x - t.centre.x) * f, z: t.centre.z + (z - t.centre.z) * f, alt: TUNE.dropAlt * (world.dropScale ?? 1) * (1 - p) * 0.9 + 150,
+        water: (TUNE.cloudWater[0] + rng() * (TUNE.cloudWater[1] - TUNE.cloudWater[0])) * TUNE.dropCloudShare, taken: -1 };
+    });
+    for (const c of world.clouds) { c.water0 = c.water; c.radius = TUNE.cloudRadius * Math.cbrt(c.water / (TUNE.cloudWater[1] * TUNE.dropCloudShare)) * 1.2; }
+    return world.clouds;
+  }
   // Along the comet path in: each cloud sits where a steady fall passes at
   // its height, spread wide early on and closing in toward the middle of the
   // start line near the end, packed closer there, so the drops converge and bump.
@@ -835,6 +919,11 @@ export function keepInZone(world, x, z, slack = TUNE.zoneSlack) {
 // cells' median (Brain flood#E14: a fixed tolerance, not one that widens to fit).
 export function startLine(world) {
   if (world.line) return world.line;
+  if (isSummit(world)) {
+    const ring = spawnBand(world).ring, reach = ring.map((k) => world.toBeach[k]).filter((v) => v < 1e8).sort((a, b) => a - b);
+    world.line = { L: reach[reach.length - 1] ?? 0, cells: ring, set: new Set(ring), t: 0 };
+    return world.line;
+  }
   const t = world.terrain, fair = spawnBand(world).cells, reach = fair.map((k) => world.toBeach[k]).sort((a, b) => a - b);
   const L = reach[reach.length >> 1], tol = L * TUNE.lineTol, cells = [];
   for (let k = 0; k < t.size * t.size; k++) if (t.mask?.[k] !== 0 && t.filled[k] > SEA_LEVEL && Math.abs(world.toBeach[k] - L) <= tol) cells.push(k);
@@ -847,6 +936,7 @@ export function startLine(world) {
 // drops are brought together near the end (owner, 2026-11-06). Its walls only
 // stop a drop pushing into them: it slides along them, nothing pulls it in.
 export function descentLane(world) {
+  if (isSummit(world)) return null; // the summit's drops come straight down: no lane
   if (world.lane) return world.lane;
   const t = world.terrain, n = t.size, ax = t.axis.x, az = t.axis.y, line = startLine(world);
   const lats = line.cells.map((k) => { const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize; return -x * az + z * ax; }).sort((a, b) => a - b);
@@ -859,12 +949,14 @@ export const laneHalf = (lane, d) => lane.end + (lane.entry - lane.end) * Math.m
 
 // Is (x, z) on or past the start line, on the course?
 export function pastLine(world, x, z) {
+  if (isSummit(world)) return false; // the summit's drops land by height, not by crossing a line
   const t = world.terrain, k = cellIndex(t, x, z);
   const line = startLine(world);
   return t.mask?.[k] !== 0 && t.filled[k] > SEA_LEVEL && world.toBeach[k] <= line.L * (1 + TUNE.lineTol); // anywhere on the drawn line counts
 }
 // Metres still to go to the start line: by water on the course, along the slope elsewhere.
 export function toLine(world, x, z) {
+  if (isSummit(world)) return 0;
   const t = world.terrain, k = cellIndex(t, x, z), line = startLine(world);
   if (t.mask?.[k] !== 0 && t.filled[k] > SEA_LEVEL && world.toBeach[k] < 1e8) return Math.max(0, world.toBeach[k] - line.L);
   return Math.max(0, (line.t - slopeT(world, x, z)) * 2 * t.long * (t.worldSize / 2));
@@ -912,7 +1004,7 @@ export function landingCell(world, x, z, zone = dropZone(world)) {
 
 // Holds a heading within 60 degrees of straight down the course.
 function clampToCourse(world, r) {
-  const ax = world.terrain.axis.x, az = world.terrain.axis.y, MAXC = 0.5; // cos 60
+  const f = courseDir(world, r.x, r.z), ax = f.x, az = f.z, MAXC = 0.5; // cos 60
   if (r.dx * ax + r.dz * az < MAXC) {
     const side = r.dx * az - r.dz * ax < 0 ? -1 : 1, sn = Math.sqrt(1 - MAXC * MAXC);
     r.dx = ax * MAXC + az * sn * side; r.dz = az * MAXC - ax * sn * side;
@@ -1498,12 +1590,14 @@ function resolveContacts(world) {
 
 // How far down the slope a point is: 0 at the summit end, 1 at the sea end.
 export function slopeT(world, x, z) {
+  if (isSummit(world)) { const t = world.terrain, k = cellIndex(t, x, z); return t.along[k]; } // 0 at the peak, 1 at the sea
   const t = world.terrain, u = (x * t.axis.x + z * t.axis.y) / (t.worldSize / 2) - t.shift;
   return (u + t.long) / (2 * t.long);
 }
 
 // Where the heat front stands (as slopeT), or -Infinity before it starts.
 export function heatFront(world) {
+  if (isSummit(world)) return -Infinity; // no heat wave down a peak with the sea all round
   const ticks = world.tick - TUNE.heatStart;
   if (ticks < 0) return -Infinity;
   const t = world.terrain;
@@ -1653,10 +1747,16 @@ function weather(world) {
     const mid = ts.length >= 5 ? ts.slice(2, ts.length - 2) : ts;
     const hi = mid[0], lo = mid[mid.length - 1], mean = mid.reduce((a, b) => a + b, 0) / mid.length;
     const tAt = Math.min(0.95, Math.max(0.25, Math.min(hi, Math.max(lo, mean + (rng() - 0.5) * (hi - lo)))));
-    const t = world.terrain, ax = t.axis.x, az = t.axis.y, half = t.worldSize / 2;
-    const u = (tAt * 2 * t.long - t.long + t.shift) * half, span = TUNE.stormSpan;
-    const side = (rng() * 2 - 1) * span * 0.7;
-    const x = ax * u - az * side, z = az * u + ax * side;
+    const t = world.terrain, ax = t.axis.x, az = t.axis.y, half = t.worldSize / 2, span = TUNE.stormSpan;
+    let x, z;
+    if (isSummit(world)) {
+      // Over the middle of the field: near a river from the middle of the standings.
+      const mids = standings(world).filter((r) => isRacing(r) && !r.dropping), m = mids[mids.length >> 1] ?? landed[0] ?? racing[0];
+      x = m.x + (rng() * 2 - 1) * 3000; z = m.z + (rng() * 2 - 1) * 3000;
+    } else {
+      const u = (tAt * 2 * t.long - t.long + t.shift) * half, side = (rng() * 2 - 1) * span * 0.7;
+      x = ax * u - az * side; z = az * u + ax * side;
+    }
     const heading = rng() * Math.PI * 2;
     const speed = TUNE.stormSpeed[0] + (TUNE.stormSpeed[1] - TUNE.stormSpeed[0]) * rng();
     const ticks = Math.ceil(((2 * span) / speed) * TICK_HZ);
@@ -1679,7 +1779,7 @@ function weather(world) {
     s.z += s.vz * DT;
     // Off the island (past the summit, the sea or the sides), it's gone.
     const st = slopeT(world, s.x, s.z), side = -s.x * t.axis.y + s.z * t.axis.x;
-    if (st < 0 || st > 1.05 || Math.abs(side) > TUNE.stormSpan * 1.1) s.until = world.tick;
+    if (isSummit(world) ? st >= 1 : st < 0 || st > 1.05 || Math.abs(side) > TUNE.stormSpan * 1.1) s.until = world.tick;
     const ledger = (world.water ??= { pumped: 0, sky: 0, ground: 0, sea: 0 });
     // It rains as it travels, onto the ground, and shrinks as it empties.
     const drizzle = Math.min(s.water, s.drizzle);
@@ -2025,7 +2125,7 @@ function pulses(world) {
 // there, for the whole interval since the last pulse. Big rivers on steep
 // ground carve canyons; small ones on the flats barely scour.
 // The mountain top is rock down to rockBelow metres (by water) under the start line: channels there never erode.
-const onRock = (world, k) => world.toBeach[k] > startLine(world).L - TUNE.rockBelow;
+const onRock = (world, k) => (isSummit(world) ? world.terrain.height[k] > spawnBand(world).target - 150 : world.toBeach[k] > startLine(world).L - TUNE.rockBelow);
 
 function erodeAt(world, r, c, flow, every) {
   const t = world.terrain, n = t.size, cx = c % n, cy = (c - cx) / n;
@@ -2122,6 +2222,7 @@ export function standings(world) {
 // Behind the start line: land whose water route to the beach is longer than the
 // line's. A landed river can never go there (owner, 2026-11-09).
 export function behindLine(world, x, z) {
+  if (isSummit(world)) return false; // water off a peak can't climb back up it anyway
   const t = world.terrain, k = cellIndex(t, x, z);
   if (!(t.filled[k] > SEA_LEVEL)) return false;
   const tb = world.toBeach[k], line = startLine(world);
@@ -2141,7 +2242,7 @@ function moveTo(world, r, nx, nz) {
     else {
       // Blocked both ways (heading along the line): turn down the slope and go that way, never
       // freeze on the line (a river landed facing along it stood still for 90 s).
-      const ax = world.terrain.axis.x, az = world.terrain.axis.y, d = Math.hypot(nx - r.x, nz - r.z);
+      const f = courseDir(world, r.x, r.z), ax = f.x, az = f.z, d = Math.hypot(nx - r.x, nz - r.z);
       if (!behindLine(world, r.x + ax * d, r.z + az * d)) { nx = r.x + ax * d; nz = r.z + az * d; r.dx = ax; r.dz = az; }
       // else: every way is 'behind' (the route twists right at the line): let it go rather than freeze it there.
     }
@@ -2351,6 +2452,18 @@ function finishBeach(t) {
     }
   }
   return { beach, beachLand, beachAt: { x: px, z: pz }, seaNext, toBeach: descentDistance(t, beach) };
+}
+
+// Summit Rush: the whole sea is the finish. beachLand marks where the course meets it (the breaches' mouths).
+function anySea(t) {
+  const n = t.size, f = t.filled, beach = new Uint8Array(n * n), beachLand = [];
+  for (let k = 0; k < n * n; k++) if (f[k] <= SEA_LEVEL) beach[k] = 1;
+  for (let k = 0; k < n * n; k++) {
+    if (beach[k] || !t.mask[k]) continue;
+    const kx = k % n, ky = (k - kx) / n;
+    if ((kx > 0 && beach[k - 1]) || (kx < n - 1 && beach[k + 1]) || (ky > 0 && beach[k - n]) || (ky < n - 1 && beach[k + n])) beachLand.push(k);
+  }
+  return { beach, beachLand, beachAt: { x: t.centre.x, z: t.centre.z }, seaNext: new Int32Array(n * n).fill(-1), toBeach: descentDistance(t, beach) };
 }
 
 function seaCurrent(world, r, k) {

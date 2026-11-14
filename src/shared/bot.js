@@ -4,7 +4,7 @@
 // randomness comes from its own id-keyed stream.
 
 import { stream } from './rng.js';
-import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, slopeT, descentLane, laneHalf, DT, TUNE } from './river.js';
+import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, slopeT, descentLane, laneHalf, courseDir, isSummit, spawnBand, DT, TUNE } from './river.js';
 import { downhill } from './terrain.js';
 
 // Each bot has a personality: what it weighs, besides running downhill.
@@ -225,7 +225,8 @@ export function botSteer(world, bot) {
     if (tb0 < 1e8 && tb1 < 1e8) score += 1.5 * P.down * Math.max(-1, Math.min(1, (tb0 - tb1) / travelled));
     if (sight.beach >= 0) score += 3 * (1 - sight.beach / TUNE_BOT.view); // the finish beach in sight: go for it
     // Which way the course runs (the way every drop flew in, down the mountain), not where it ends.
-    score += TUNE_BOT.course * (hx * t.axis.x + hz * t.axis.y);
+    const fwd = courseDir(world, r.x, r.z); // the ski slope's axis, or on the summit this spot's own way to the sea
+    score += TUNE_BOT.course * (hx * fwd.x + hz * fwd.z);
     // Lakes only while there is race left to use their water: none in the last third.
     const lakeK = slopeT(world, r.x, r.z) > 0.67 ? 0 : 1;
     if (sight.lake >= 0) score += lakeK * P.lake * 0.5 * Math.max(-1, Math.min(1, (sight.full - 0.6) * 3)) * (1 - sight.lake / TUNE_BOT.view); // a full lake in sight pays, a low one costs
@@ -297,6 +298,7 @@ function sightAlong(world, r, hx, hz) {
 
 // Falling: drift away from the nearest other drop, so bots land spread out.
 function botGlide(world, bot) {
+  if (isSummit(world)) return summitBotGlide(world, bot);
   const r = bot.river, ax = world.terrain.axis.x, az = world.terrain.axis.y;
   // A drop it can beat close by: ram it (the harder hitter wins the spill). An
   // aggressive bot also takes on drops its own size and a little heavier, and
@@ -369,6 +371,22 @@ function botGlide(world, bot) {
   // Cruising, it lets the dash sit ready for one more cooldown before using it (half as often as it
   // could): a player who dashes keeps up, one who never does is not left far behind.
   return { s: turnTo(r, ax * u - az * want, az * u + ax * want), f: now >= (r.dashAt ?? 0) + TUNE.dashCool ? -1 : 0, g: 1 };
+}
+// Summit Rush's fall: pick a spot on the ring (its own, seeded) and fly there, taking a cloud on the way if one is
+// close; dive once over the spot. The landing spot is the ravine, so bots spread round the mountain.
+function summitBotGlide(world, bot) {
+  const r = bot.river, t = world.terrain, ring = spawnBand(world).ring, n = t.size;
+  if (bot.spot == null) bot.spot = ring[Math.floor(stream(t.seed, `bot-spot:${r.id}`)() * ring.length)];
+  const sx = ((bot.spot % n) / (n - 1) - 0.5) * t.worldSize, sz = (Math.floor(bot.spot / n) / (n - 1) - 0.5) * t.worldSize;
+  let cloud = null, cd = 900;
+  for (const c of skyClouds(world)) {
+    if (c.low || !(c.water > 0) || c.alt > r.alt + TUNE.cloudDepth || c.alt < r.alt - 400) continue;
+    const d = Math.hypot(c.x - r.x, c.z - r.z);
+    if (d < cd) { cd = d; cloud = c; }
+  }
+  if (cloud) return { s: turnTo(r, cloud.x, cloud.z), f: r.alt > cloud.alt + TUNE.cloudDepth * 0.5 ? 1 : 0, g: 1 };
+  const d = Math.hypot(sx - r.x, sz - r.z);
+  return { s: d > 150 ? turnTo(r, sx, sz) : 0, f: d < 600 ? 1 : 0, g: d > 300 ? 1 : -1 };
 }
 const turnTo = (r, x, z) => {
   const d = Math.hypot(x - r.x, z - r.z) || 1, cross = r.dx * (z - r.z) - r.dz * (x - r.x);

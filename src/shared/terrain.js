@@ -11,48 +11,8 @@ const FILL_EPS = 0.01; // metres; keeps every filled cell strictly above its out
 // Defaults: a 64 km square map, a ski-slope island about 40 km long, a summit near 3 km.
 export const DEFAULTS = { size: 640, worldSize: 64000, maxHeight: 2400, seaDepth: 220 };
 
-const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
-const lerp = (a, b, t) => a + (b - a) * t;
-const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x);
-const smooth = (e0, e1, x) => {
-  const t = clamp01((x - e0) / (e1 - e0));
-  return t * t * (3 - 2 * t);
-};
-
-function valueNoise(x, y, seed) {
-  const xi = Math.floor(x), yi = Math.floor(y);
-  const u = fade(x - xi), v = fade(y - yi);
-  const a = hash2(xi, yi, seed), b = hash2(xi + 1, yi, seed);
-  const c = hash2(xi, yi + 1, seed), d = hash2(xi + 1, yi + 1, seed);
-  return lerp(lerp(a, b, u), lerp(c, d, u), v);
-}
-
-function fbm(x, y, seed, octaves) {
-  let sum = 0, amp = 0.5, norm = 0;
-  for (let o = 0; o < octaves; o++) {
-    sum += amp * valueNoise(x, y, seed + o * 1013);
-    norm += amp;
-    x = x * 2.03 + 17.1;
-    y = y * 2.03 - 9.7;
-    amp *= 0.5;
-  }
-  return sum / norm;
-}
-
-function ridged(x, y, seed, octaves) {
-  let sum = 0, amp = 0.5, norm = 0, prev = 1;
-  for (let o = 0; o < octaves; o++) {
-    let n = 1 - Math.abs(2 * valueNoise(x, y, seed + o * 7919) - 1);
-    n *= n;
-    sum += amp * n * prev;
-    norm += amp;
-    prev = n;
-    x = x * 2.11 + 3.3;
-    y = y * 2.11 + 41.9;
-    amp *= 0.5;
-  }
-  return sum / norm;
-}
+import { lerp, clamp01, smooth, fbm, ridged } from './noise.js';
+import { generateSummit } from './summit.js';
 
 // Island shape, drawn from the seed: a long, walled ski slope with three
 // summits side by side across its top end. Which way it points, its length, its width and how it
@@ -297,100 +257,6 @@ const SUMMIT = { top: 1.2, grade: 7500, at: 0.1, room: 0.06 };
 // The land behind the start line (scenery): how far back it runs (in slope lengths) and how much wider it spreads.
 const BACK = { len: 0.45, spread: 0.8 }; // (len 0.2 until 2026-11-14: with the faster glide the comets started over the sea; with 0.45 and ISLAND.shift every one starts over the mountain)
 let inCourse = true, lastT = 0, lastSide = 0, lastFast = 0, lastQ = 0, lastRidge = 0, lastRidgeD = 0; // set by rawHeight for the cell it just made
-// Summit Rush (docs/summit-rush.md): a short course. Three or four valley heads stand side by side at the
-// top; from each a valley fans out and they rejoin at one gorge, then a short run to the sea. The rivers
-// land on the heads' rings, so the landing picks the valley; the valleys differ in width, bends and lakes.
-// Lengths in metres, measured along the course from its back wall (a) and across it (w).
-export const RUSH = {
-  // Lengths measured, not assumed: bots average about 300 m/s here (Surge, dash and the fall's carry), so a
-  // two-minute race needs about 36 km of route from the start line, not the 16 km the design first guessed.
-  slope: 40000, // back wall to the sea
-  headAt: 2200, headGap: 2400, top: 2600, // heads: how far down, how far apart, how high
-  gorgeLen: 1600, runOut: 3000, gorgeHalf: 260, mouthHalf: 1600, // the gorge, the run-out after it, and its half-width at the sea
-  wall: 260, wallRun: 500, // dividers and outer walls: metres over the floor, and over how far they rise
-  fan: 1.6, // how far the valleys spread before they rejoin (1: straight in)
-  back: 14000, // the mountain's far side behind the heads, down to the shore (the comets fly in over it)
-  kinds: { narrow: { half: 300, bends: 0, amp: 0, lakes: 0 }, mid: { half: 450, bends: 2, amp: 600, lakes: 2 }, wide: { half: 680, bends: 3, amp: 1000, lakes: 5 } },
-};
-RUSH.gorgeAt = RUSH.slope - RUSH.runOut - RUSH.gorgeLen;
-const U = 32000; // metres per unit of map half-width (the default 64 km map)
-function rushShape(seed) {
-  const r = stream(seed, 'rush');
-  let ax = r() * 2 - 1, ay = r() * 2 - 1;
-  const len = Math.sqrt(ax * ax + ay * ay) || 1;
-  ax /= len; ay /= len;
-  const count = r() < 0.5 ? 3 : 4, kinds = count === 3 ? ['narrow', 'mid', 'wide'] : ['narrow', 'mid', 'mid', 'wide'];
-  for (let i = kinds.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [kinds[i], kinds[j]] = [kinds[j], kinds[i]]; }
-  const valleys = kinds.map((kind, i) => {
-    const K = RUSH.kinds[kind];
-    return { kind, s: (i - (count - 1) / 2) * RUSH.headGap, half: K.half, bends: K.bends, amp: K.amp * (r() < 0.5 ? -1 : 1),
-      lakes: Array.from({ length: K.lakes }, (_, j) => ({ q: 0.2 + 0.6 * (j + 0.3 + 0.4 * r()) / K.lakes, rad: 380 + 120 * r() })) };
-  });
-  return { kind: 'rush', ax, ay, long: RUSH.slope / 2 / U, shift: 0.2, valleys }; // shift: toward the sea end, for the comets' run in behind
-}
-// A smooth wave through 0 at whole q, peaks of +1 and -1 between (parabolic arches, no trig).
-const wave = (q) => { const f = fract(q), h = fract(2 * q); return (f < 0.5 ? 1 : -1) * 4 * h * (1 - h); };
-// Valley i's centre across the course and its half-width, at a metres down; q runs 0 at its head to 1 at the gorge.
-function valleyAt(V, a) {
-  const q = clamp01((a - RUSH.headAt) / (RUSH.gorgeAt - RUSH.headAt));
-  const c = V.s * (1 - q) * (1 + RUSH.fan * q) + V.amp * wave(q * V.bends / 2) * 4 * q * (1 - q);
-  return { q, c, half: lerp(V.half, RUSH.gorgeHalf, smooth(0.8, 1, q)) };
-}
-const rushHalf = (a) => (a < RUSH.gorgeAt + RUSH.gorgeLen ? RUSH.gorgeHalf : lerp(RUSH.gorgeHalf, RUSH.mouthHalf, smooth(RUSH.gorgeAt + RUSH.gorgeLen, RUSH.slope, a)));
-function rushHeight(x, y, seed, seaDepth, S) {
-  const u = x * S.ax + y * S.ay - S.shift, v = -x * S.ay + y * S.ax;
-  const a = (u + S.long) * U, w = v * U, t = a / RUSH.slope;
-  lastFast = 0; lastRidge = 0;
-  const top = RUSH.top, crest = top * 0.995;
-  const hills = fbm(x * 14, y * 14, seed + 59, 4) - 0.5, rough = ridged(x * 9, y * 9, seed + 47, 5);
-  // The floor falls from just under the heads to the sea, steeper near the top.
-  const fall = clamp01((RUSH.slope - a) / (RUSH.slope - RUSH.headAt));
-  const floor = top * 0.86 * fall * (0.6 + 0.4 * fall) - 40 * smooth(0.97, 1.05, t) + 25 * hills * fall;
-  // Each valley's own ground: a gentle trough inside its banks, walls beyond; the course is the lowest of them.
-  let best = Infinity, near = Infinity, envelope = 0;
-  const bank = (e, half) => (e < 1 ? 30 * e * e : 30 + (RUSH.wall * (0.8 + 0.4 * rough)) * smooth(1, 1 + RUSH.wallRun / half, e));
-  const take = (c, half, lakeDip) => {
-    const e = Math.abs(w - c) / half;
-    best = Math.min(best, floor + bank(e, half) - lakeDip);
-    near = Math.min(near, e);
-    envelope = Math.max(envelope, Math.abs(c) + half + RUSH.wallRun);
-  };
-  if (a < RUSH.gorgeAt + 200) for (const V of S.valleys) {
-    const { q, c, half } = valleyAt(V, a);
-    let dip = 0;
-    for (const L of V.lakes) {
-      const du = (q - L.q) * (RUSH.gorgeAt - RUSH.headAt), dw = w - c, qq = (du * du + dw * dw) / (L.rad * L.rad);
-      if (qq < 1) dip = Math.max(dip, (30 + 0.08 * L.rad) * (1 - qq) * (1 - qq));
-    }
-    take(c, half, dip);
-  }
-  if (a > RUSH.gorgeAt - 600) take(0, rushHalf(a), 0); // the gorge and the run-out to the sea
-  // Behind the heads the ground is the crest, easing into the valleys below them.
-  const into = smooth(RUSH.headAt - 700, RUSH.headAt + 300, a);
-  let h = lerp(crest, Math.min(best, crest), into) + 18 * hills; // no wall stands above the heads' rings' crest
-  // The heads: an even cone on each, the start rings round them.
-  for (const V of S.valleys) {
-    const da = a - RUSH.headAt, dw = w - V.s;
-    h = Math.max(h, top - SUMMIT.grade / U * Math.sqrt(da * da + dw * dw));
-  }
-  const side = Math.abs(w) / Math.max(envelope, 1);
-  inCourse = a > RUSH.headAt - 900 && t < 1.08 && near < 1.6;
-  lastT = t; lastSide = near < 1 ? near : 1;
-  if (a > RUSH.headAt - 900 && t < 1.08 && side <= 1) return h; // the course, its walls and the dividers
-  // Behind the heads: the mountain's far side, falling to the shore (scenery the comets fly over).
-  const edge = 1 - smooth(0.82, 0.95, Math.max(Math.abs(x), Math.abs(y)));
-  const bt = clamp01((RUSH.headAt - 900 - a) / RUSH.back), spread = Math.max(envelope, RUSH.headGap * 2.5) * (1 + 0.8 * bt);
-  const across = 1 - smooth(0.9, 1.5, Math.abs(w) / spread);
-  if (a < RUSH.headAt && a > RUSH.headAt - 900 - RUSH.back) {
-    const land = (crest * (1 - bt) * (1 - bt) * lerp(1, 0.75 + 0.3 * rough, bt) * across + 120 * (rough - 0.5) * across) * edge - 30 * (1 - edge);
-    if (land > 0) return land;
-  }
-  // Beside the course: the walls' outer faces drop into the sea.
-  const out = Math.max((side - 1) * envelope / 2000, t - 1.08, 0);
-  if (a > RUSH.headAt - 900 && t < 1.08 && out < 1) { const land = h * (1 - smooth(0, 1, out)) - 20 * smooth(0.7, 1, out); if (land > 0) return land; }
-  return -seaDepth * lerp(0.35, 1, smooth(0, 0.25, out));
-}
-
 // Boulder outcrops down the course: rock no river passes over, Gouge or not
 // (taller than any boosted head reaches). Baked into the ground before the
 // fill, so water's routes, the map's distances and the bots all go round them.
@@ -400,7 +266,6 @@ export const BOULDERS = { count: 40, gap: 1100, from: 0.2, to: 0.93, side: 0.6, 
 
 // The three peaks' cells, where each summit cone stands highest.
 function summitCells(height, n, S) {
-  if (S.kind === 'rush') return S.valleys.map((V) => peakNear(height, n, S, (RUSH.headAt / U) - S.long + S.shift, V.s / U));
   const so = S.gap;
   const u = -S.long + SUMMIT.at * 2 * S.long + (S.shift ?? 0);
   return [-so, 0, so].map((v) => peakNear(height, n, S, u, v));
@@ -422,7 +287,7 @@ function peakNear(height, n, S, u, v) {
 // Priority-flood (Barnes 2014) with epsilon: raises every inland pit to its
 // spill level so steepest descent from any land cell reaches the sea.
 // Sea connected to the map edge keeps its depth.
-function fillDepressions(h, n) {
+export function fillDepressions(h, n) {
   const filled = new Float32Array(h);
   const done = new Uint8Array(n * n);
   const heap = new MinHeap(n * 4);
@@ -481,13 +346,13 @@ export function generateIsland(seed = 1, opts = {}) {
   const along = new Float32Array(n * n), across = new Float32Array(n * n);
   const fast = new Uint8Array(n * n), mouths = []; // fast: canyon floor (which spine's, from 1); mouths: where each canyon opens
   const ridge = new Float32Array(n * n), ridgeFace = new Int8Array(n * n); // metres of ridge bank; -1 its uphill face, 1 its lee
-  const rush = course === 'summit';
-  const shape = course === 'tutorial' ? tutorialShape() : rush ? rushShape(seed) : shapeOf(seed);
+  if (course === 'summit') return generateSummit(seed, { n, worldSize, seaDepth });
+  const shape = course === 'tutorial' ? tutorialShape() : shapeOf(seed);
   for (let y = 0; y < n; y++) {
     const v = (y / (n - 1)) * 2 - 1;
     for (let x = 0; x < n; x++) {
       const u = (x / (n - 1)) * 2 - 1;
-      height[y * n + x] = rush ? rushHeight(u, v, seed, seaDepth, shape) : rawHeight(u, v, seed, maxHeight, seaDepth, shape);
+      height[y * n + x] = rawHeight(u, v, seed, maxHeight, seaDepth, shape);
       mask[y * n + x] = inCourse ? 1 : 0;
       along[y * n + x] = lastT; across[y * n + x] = lastSide;
       if (inCourse && lastRidge > 0.5) { ridge[y * n + x] = lastRidge; ridgeFace[y * n + x] = lastRidgeD < -0.25 ? -1 : lastRidgeD > 0.25 ? 1 : 0; }
@@ -497,11 +362,11 @@ export function generateIsland(seed = 1, opts = {}) {
       }
     }
   }
-  const boulders = course === 'tutorial' || rush || opts.boulders === false ? [] : placeBoulders(seed, n, worldSize / (n - 1), height, mask, along, across);
+  const boulders = course === 'tutorial' || opts.boulders === false ? [] : placeBoulders(seed, n, worldSize / (n - 1), height, mask, along, across);
   const filled = fillDepressions(height, n);
   // Where each canyon opens, in world metres (bots and the map aim for it from far off, as a player's eye does).
   const canyons = mouths.filter(Boolean).map((m) => ({ x: (m.x / m.n / (n - 1) - 0.5) * worldSize, z: (m.y / m.n / (n - 1) - 0.5) * worldSize }));
-  return { seed, course, valleys: rush ? shape.valleys.map((V) => V.kind) : undefined, mask, boulders, fast, canyons, ridge, ridgeFace, ridgeTurf: RIDGE.turf, size: n, worldSize, cell: worldSize / (n - 1), maxHeight: rush ? RUSH.top : maxHeight, height, filled,
+  return { seed, course, mask, boulders, fast, canyons, ridge, ridgeFace, ridgeTurf: RIDGE.turf, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
     summits: summitCells(height, n, shape), axis: { x: shape.ax, y: shape.ay }, long: shape.long, shift: shape.shift ?? 0 };
 }
 

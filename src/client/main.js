@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { generateIsland, stats, fingerprint, findLakes, TUTORIAL as COURSE } from '../shared/terrain.js';
-import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, startLine, pastLine, descentLane, laneHalf, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, DT, TICK_HZ, TUNE } from '../shared/river.js';
+import { createWorld, rollIsland, addRiver, isLive, step, predictPath, gougeReady, gougeTarget, gougeCost, surgeReady, surfaceAt, cellIndex, riverFingerprint, standings, isRacing, dropZone, landingCell, keepInZone, skyBase, startLine, pastLine, descentLane, laneHalf, dischargeOf, headOf, widthOf, spawnBand, heatFront, slopeT, lakeLevel, lakeVolAt, skyClouds, isSummit, DT, TICK_HZ, TUNE } from '../shared/river.js';
 import { createBot, botSteer, flowFrom } from '../shared/bot.js';
 import { decodeFrame, FP_EVERY, FINISH_WINDOW } from '../shared/protocol.js';
 import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, highlightZone, markBeach, castTrees, VERT } from './terrainMesh.js';
@@ -372,6 +372,7 @@ function showAltimeter() {
 // start line, shown while you fall, so being stopped at an edge reads as a wall.
 let laneMesh = null, laneWorld = null;
 function updateLane() {
+  if (!descentLane(world)) { if (laneMesh) laneMesh.visible = false; return; } // Summit Rush: straight down, no lane
   if (laneWorld !== world) {
     if (laneMesh) { scene.remove(laneMesh); laneMesh.geometry.dispose(); laneMesh.material.dispose(); }
     laneWorld = world;
@@ -450,10 +451,10 @@ function updateSkyClouds() {
 // whole slope in view (it was a far orbit: the island filled a tenth of it).
 const mapFog = scene.fog;
 function frameMap() {
-  const top = spawnBand(world).top, n = terrain.size;
+  const top = spawnBand(world).top, n = terrain.size, round = isSummit(world);
   const sx = ((top % n) / (n - 1) - 0.5) * W, sz = (Math.floor(top / n) / (n - 1) - 0.5) * W;
-  const bx = world.beachAt.x, bz = world.beachAt.z, cx = (sx + bx) / 2, cz = (sz + bz) / 2;
-  const half = Math.hypot(bx - sx, bz - sz) / 2 * 1.35, ax = (bx - sx) / (2 * half / 1.35 || 1), az = (bz - sz) / (2 * half / 1.35 || 1);
+  const bx = world.beachAt.x, bz = world.beachAt.z, cx = round ? terrain.centre.x : (sx + bx) / 2, cz = round ? terrain.centre.z : (sz + bz) / 2;
+  const half = round ? 29000 : Math.hypot(bx - sx, bz - sz) / 2 * 1.35, ax = (bx - sx) / (2 * half / 1.35 || 1), az = (bz - sz) / (2 * half / 1.35 || 1);
   const fov = (camera.fov * Math.PI) / 180, aspect = camera.aspect || 1;
   const fit = Math.max(half, (half * 0.6) / Math.min(1, aspect)); // the run is long; leave the width room on tall screens
   const h = fit / Math.tan(fov / 2);
@@ -494,7 +495,7 @@ function placeFinishFlags() {
     finishFlags.add(inst);
   }
   scene.add(finishFlags);
-  finishDisc.scale.setScalar(TUNE.beachRadius * 1.1);
+  finishDisc.scale.setScalar(isSummit(world) ? 0.001 : TUNE.beachRadius * 1.1); // the summit's finish is the whole sea
   finishDisc.position.set(world.beachAt.x, 60, world.beachAt.z);
 }
 
@@ -1230,7 +1231,8 @@ function advance(inputs) {
       if (en) burstSpray(en.spray, lr.x, surfaceAt(world, lr.x, lr.z) * VERT, lr.z, 1.2, 70);
       if (river && e.river === river.idx) {
         highlightZone(terrainMesh, startLine(world).set, false); audio.splash(1.2);
-        teach('beach', 'The finish', 'You landed, and now you are a <b>river</b>. Race downhill to <b>the gold beach</b>: it is the only finish. Other beaches just carry you here on the current.', world.beachAt.x, world.beachAt.z);
+        if (isSummit(world)) teach('summit-sea', 'The finish', 'You landed, and now you are a <b>river</b>. Run down your ravine, over the falls into the <b>moat</b> round the mountain, and out through a <b>gorge</b> to the sea. Any sea finishes.', river.x, river.z);
+        else teach('beach', 'The finish', 'You landed, and now you are a <b>river</b>. Race downhill to <b>the gold beach</b>: it is the only finish. Other beaches just carry you here on the current.', world.beachAt.x, world.beachAt.z);
         teach('ribbon', 'Your route', 'The <b>white ribbon</b> ahead of you shows where your water will run if you hold this heading. Steer to change it.', lr.x, lr.z);
       }
     } else if (e.type === 'offcourse') {
@@ -1745,7 +1747,8 @@ function showMarker(now, hx, hy, hz) {
   // Fly on straight on this heading until it crosses the start line: that's where it touches down.
   let q = { x: river.x, z: river.z };
   const stepM = (river.glideV ?? TUNE.glideSpeed) * DT * 4;
-  for (let i = 0; i < 400 && !pastLine(world, q.x, q.z); i++) q = { x: q.x + river.dx * stepM, z: q.z + river.dz * stepM };
+  if (isSummit(world)) { const k = landingCell(world, river.x, river.z); q = { x: ((k % n) / (n - 1) - 0.5) * W, z: (Math.floor(k / n) / (n - 1) - 0.5) * W }; } // straight down onto the ring
+  else for (let i = 0; i < 400 && !pastLine(world, q.x, q.z); i++) q = { x: q.x + river.dx * stepM, z: q.z + river.dz * stepM };
   const px = q.x, pz = q.z, x = px, z = pz;
   const gy = surfaceAt(world, x, z) * VERT;
   marker.position.set(x, gy + 30, z);
@@ -1925,9 +1928,17 @@ renderer.setAnimationLoop(() => {
     const tx = ((top % n) / (n - 1) - 0.5) * W, tz = (Math.floor(top / n) / (n - 1) - 0.5) * W, th = terrain.height[top] * VERT;
     const ax = terrain.axis.x, az = terrain.axis.y; // down the slope
     const t = 1 - (introUntil - now) / ((TUNE.dropCalm / TICK_HZ) * 1000), run = TUNE.cometRun * TUNE.glideSpeed * TUNE.dropTicks / TICK_HZ * (world.dropScale ?? 1);
-    const back = run + 5000 - 3500 * t, above = skyY() + TUNE.dropAlt + 2600 - 1600 * t;
-    camera.position.set(tx - ax * back, above, tz - az * back);
-    camera.lookAt(tx + ax * 2000, th, tz + az * 2000);
+    if (isSummit(world)) {
+      // Summit Rush: from low on the mountain's flank, looking up at the comets raining onto the peak (the trailer's shot).
+      const px = terrain.centre.x, pz = terrain.centre.z, d = 16000 - 5000 * t, a = 0.6 + 0.25 * t;
+      const cx = px + Math.cos(a) * d, cz = pz + Math.sin(a) * d;
+      camera.position.set(cx, surfaceAt(world, cx, cz) * VERT + 900, cz);
+      camera.lookAt(px, th + 2200 - 1200 * t, pz);
+    } else {
+      const back = run + 5000 - 3500 * t, above = skyY() + TUNE.dropAlt + 2600 - 1600 * t;
+      camera.position.set(tx - ax * back, above, tz - az * back);
+      camera.lookAt(tx + ax * 2000, th, tz + az * 2000);
+    }
     camTarget.set(tx, th, tz);
   } else if (focus.dropping) {
     // Falling: a comet chase. Behind the drop and a little above it, always
@@ -2008,20 +2019,23 @@ renderer.setAnimationLoop(() => {
     // of the screen and the ground rushes past faster.
     // On the ground it sits low (about 10 degrees down) so the land recedes to the horizon.
     // (Closer than it was, 1.2 km: the ground near the river now slides past fast enough to read as speed.)
-    const back = (falling ? 1300 : done ? 700 : 330 + 40 * sz) + 900 * camRise, up = (falling ? 1100 : done ? 2600 : 110 + 25 * sz) + 2400 * camRise;
+    // Summit Rush sits down among the water (docs/summit-rush.md): about 150 m behind and 40 m up, kept clear
+    // of the ground by a smaller margin; the ski race keeps its high chase.
+    const low = isSummit(world) && !falling && !done;
+    const back = (falling ? 1300 : done ? 700 : low ? 200 + 30 * sz : 330 + 40 * sz) + 900 * camRise, up = (falling ? 1100 : done ? 2600 : low ? (55 + 12 * sz) * VERT : 110 + 25 * sz) + 2400 * camRise;
     const want = new THREE.Vector3(fx - view.x * back, Math.max(fy, 0) + up, fz - view.y * back);
     // Stay above the ground along the whole sightline, not just at the camera.
     for (let f = 0.25; f <= 1; f += 0.25) {
       const g = surfaceAt(world, fx - view.x * back * f, fz - view.y * back * f) * VERT;
-      want.y = Math.max(want.y, g + 45 + 70 * f);
+      want.y = Math.max(want.y, g + (low ? 15 + 25 * f : 45 + 70 * f) * (low ? VERT : 1));
     }
     const kXZ = cut ? 1 : 1 - Math.exp(-frameDt * 5);
     camera.position.x += (want.x - camera.position.x) * kXZ;
     camera.position.z += (want.z - camera.position.z) * kXZ;
     const kY = cut ? 1 : 1 - Math.exp(-frameDt * (want.y > camera.position.y ? 3 : 0.6));
     camera.position.y += (want.y - camera.position.y) * kY;
-    camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + 150);
-    const ahead = (falling ? 600 : done ? 2200 : 420 + 60 * sz) + 2600 * camRise;
+    camera.position.y = Math.max(camera.position.y, surfaceAt(world, camera.position.x, camera.position.z) * VERT + (low ? 12 * VERT : 150));
+    const ahead = (falling ? 600 : done ? 2200 : low ? 260 + 40 * sz : 420 + 60 * sz) + 2600 * camRise;
     camTarget.lerp(new THREE.Vector3(fx + view.x * ahead, fy, fz + view.y * ahead), cut ? 1 : 1 - Math.exp(-frameDt * 6));
     camera.lookAt(camLook.copy(camTarget));
     // Trees standing between the camera and the head fade out (not while falling or finished).
@@ -2030,7 +2044,7 @@ renderer.setAnimationLoop(() => {
     treeFade.radius.value = falling || done ? 0 : 220 + 60 * sz;
     // Power: the view widens with speed, and a big, fast river shakes it.
     const fast = falling || done ? 0 : Math.min(1, (focus.speed ?? 0) / 260);
-    const fov = baseFov * (1 + 0.22 * fast);
+    const fov = baseFov * (1 + (low ? 0.15 : 0.22) * fast); // low down, a smaller widening: about 10 degrees
     if (Math.abs(camera.fov - fov) > 0.05) { camera.fov += (fov - camera.fov) * (cut ? 1 : 1 - Math.exp(-frameDt * 3)); camera.updateProjectionMatrix(); }
     const jolt = gougeShakeAt ? Math.max(0, 1 - (now - gougeShakeAt) / 500) : 0;
     const shake = falling || done ? 0 : Math.max(Math.min(18, 14 * Math.max(0, sz - 1) * fast + 3 * fast * fast), 45 * jolt * jolt);
@@ -2057,7 +2071,7 @@ renderer.setAnimationLoop(() => {
   const toSea = world.toBeach[cellIndex(terrain, focus.x, focus.z)];
   const distHtml = focus !== river ? `<small>WATCHING</small> ${escapeHtml(nameOf(focus))}`
     : river.dropping ? `FALLING<small> · ${Math.ceil(river.dropping / TICK_HZ)} S</small>`
-    : toSea >= 1e8 ? `<small>FIND A WAY DOWN</small>` : `${(toSea / 1000).toFixed(2)}<small> KM TO THE BEACH</small>`;
+    : toSea >= 1e8 ? `<small>FIND A WAY DOWN</small>` : `${(toSea / 1000).toFixed(2)}<small> KM TO THE ${isSummit(world) ? 'SEA' : 'BEACH'}</small>`;
   if (hud.dist.innerHTML !== distHtml) hud.dist.innerHTML = distHtml;
   const secs = (river?.finished ? river.finishTick : world.tick) / TICK_HZ;
   hud.time.textContent = fmtTime(secs);

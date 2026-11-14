@@ -1,8 +1,20 @@
 # Summit Rush — a second mode, from the trailer
 
-Status: redesigned (owner, 2026-11-14), not built. Replaces the first design, whose course (built and on `main`
-as Course: Summit Rush) was the ski slope again: walled valleys side by side, all running one way. The ski race
+Status: built (owner, 2026-11-14) as Course: Summit Rush on the start screen (`?course=summit`). The ski race
 stays as it is.
+
+## What is built, and what measured
+- `src/shared/summit.js`: the peak and its ravines carved by stream-power erosion (stochastic flow directions and
+  hillslope creep, so ravines branch instead of running down grid lines), the moat with a waterfall lip, three
+  breaches of three kinds, sea stacks. Generates in about 1.1 to 1.4 s on a desktop.
+- The sim reads each spot's own way to the sea (`courseDir`), the whole sea is the finish, the start ring goes all
+  the way round the peak, comets fall straight down over it (about 36 s), no heat wave, storms follow the field.
+- Low chase camera (200 m back, 55 m up), rock colouring on the peak, an opening shot looking up at the comets.
+- Bot races (`node tools/bot-race.mjs --course summit --rivers 30 --drop 1 2 3`): fastest finish 87 to 91 s, not
+  the two minutes asked for; the island already fills the 64 km map, so longer needs a bigger map. A rival within
+  400 m 8 to 10% of the time, LESS than the ski map's 16 to 19%: the moat does not bring rivers together as this
+  design claimed, they spread round a 110 km ring and meet only in the breaches. That is the open problem.
+- Not built: the camera-following detail patch and scattered rocks (the ground is still the 100 m grid up close).
 
 ## What the owner asked for
 "It should look more like this" (the trailer "Playing as a River in a Battle Royale"): comets rain onto one jagged
