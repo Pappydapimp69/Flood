@@ -308,6 +308,12 @@ export function lakeGain(lake) {
 }
 
 // The game surface: filled terrain minus every carved channel.
+// Rules a course changes from TUNE (docs/summit-rush.md). Summit Rush seats about 20 rivers on each valley
+// head's ring, so starts sit closer; its landing lane stays the full width of the start line, so the drop picks
+// the valley; and its spawn grace is capped, or 80 rivers would have no contact for a sixth of a two-minute race.
+export const COURSE_RULES = { summit: { spawnGap: 250, laneEnd: 1, graceMax: 140 } };
+export const rule = (world, key) => world.rules?.[key] ?? TUNE[key];
+
 export function createWorld(terrain, { forest = true, lava = true } = {}) {
   const n = terrain.size;
   // owner: which river last dug each cell. A river never feels its own channel
@@ -315,6 +321,7 @@ export function createWorld(terrain, { forest = true, lava = true } = {}) {
   const { label: lakeOf, lakes } = findLakes(terrain);
   const world = {
     terrain,
+    rules: COURSE_RULES[terrain.course] ?? {},
     dist: distanceToSea(terrain, downhill), // along the fill's downhill tree
     reach: descentDistance(terrain), // shortest route water can take to any sea (spawn fairness, forest lanes)
     ...finishBeach(terrain), // beach (sea cells that end the race), beachLand, seaNext, toBeach
@@ -508,7 +515,7 @@ export function spawnBand(world) {
 // index order), split evenly over the three summits. A map that can't seat
 // everyone gets rerolled.
 export function seats(world) {
-  const t = world.terrain, n = t.size, gap2 = TUNE.spawnGap * TUNE.spawnGap;
+  const t = world.terrain, n = t.size, gap2 = rule(world, 'spawnGap') ** 2;
   const per = spawnBand(world).groups.map((cells) => {
     const placed = [];
     for (const c of cells) {
@@ -522,10 +529,10 @@ export function seats(world) {
 
 // The island for a race: from `seed`, the next seed and the next until the
 // summit ring seats every river. Returns the seed used and its fresh world.
-export function rollIsland(seed, rivers, tries = 40) {
+export function rollIsland(seed, rivers, tries = 40, course) {
   let world;
   for (let i = 0; i < tries; i++, seed = (seed % 1_000_000) + 1) {
-    world = createWorld(generateIsland(seed), { forest: false });
+    world = createWorld(generateIsland(seed, course ? { course } : {}), { forest: false });
     if (seats(world) >= rivers) break;
   }
   return { seed: world.terrain.seed, world: addForest(world) };
@@ -546,7 +553,7 @@ export function spawnPoint(world, id) {
     const p = { x: ((i % n) / (n - 1) - 0.5) * t.worldSize, z: (Math.floor(i / n) / (n - 1) - 0.5) * t.worldSize };
     let gap = Infinity;
     for (const o of others) gap = Math.min(gap, (o.x - p.x) ** 2 + (o.z - p.z) ** 2);
-    if (gap >= TUNE.spawnGap * TUNE.spawnGap) return p;
+    if (gap >= rule(world, 'spawnGap') ** 2) return p;
     if (gap > bestGap) { bestGap = gap; best = p; }
   }
   return best;
@@ -844,7 +851,7 @@ export function descentLane(world) {
   const t = world.terrain, n = t.size, ax = t.axis.x, az = t.axis.y, line = startLine(world);
   const lats = line.cells.map((k) => { const x = ((k % n) / (n - 1) - 0.5) * t.worldSize, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize; return -x * az + z * ax; }).sort((a, b) => a - b);
   const lo = lats[Math.floor(lats.length * 0.02)], hi = lats[Math.floor(lats.length * 0.98)];
-  world.lane = { c: (lo + hi) / 2, entry: ((hi - lo) / 2) * TUNE.laneEntry, end: ((hi - lo) / 2) * TUNE.laneEnd, run: cometRun(world), uLine: (line.t * 2 * t.long - t.long + t.shift) * (t.worldSize / 2) };
+  world.lane = { c: (lo + hi) / 2, entry: ((hi - lo) / 2) * TUNE.laneEntry, end: ((hi - lo) / 2) * rule(world, 'laneEnd'), run: cometRun(world), uLine: (line.t * 2 * t.long - t.long + t.shift) * (t.worldSize / 2) };
   return world.lane;
 }
 // The lane's half-width with `d` metres of flight still to go to the line.
@@ -1373,7 +1380,7 @@ const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 const biggerFirst = (a, b) => b.volume - a.volume || byId(a, b);
 
 function resolveContacts(world) {
-  const grace = TUNE.graceTicks + TUNE.gracePerRiver * world.rivers.length;
+  const grace = Math.min(rule(world, 'graceMax') ?? Infinity, TUNE.graceTicks + TUNE.gracePerRiver * world.rivers.length);
   const rs = world.rivers.filter((r) => isRacing(r) && !r.dropping && world.tick - r.born >= grace);
   if (rs.length < 2) return;
   const { carve, owner } = world;

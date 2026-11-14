@@ -134,7 +134,7 @@ scene.add(skyDome);
 // The island changes per race online, so its meshes are rebuilt on demand.
 let terrain, terrainMesh, seabed, sea, lakesMesh, W;
 function useIsland(seed, made) {
-  if (terrain?.seed === seed) return;
+  if (terrain?.seed === seed && terrain.course === made?.course) return;
   for (const m of [terrainMesh, seabed, sea, lakesMesh]) if (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); }
   terrain = made ?? generateIsland(seed);
   W = terrain.worldSize;
@@ -292,6 +292,12 @@ const RIVER_STEPS = [12, 20, 30, 40, 60, 80];
 let riversWanted = 12;
 try { riversWanted = Number(localStorage.getItem('flood.rivers')) || 12; } catch { /* no storage */ }
 if (!RIVER_STEPS.includes(riversWanted)) riversWanted = 12;
+// The course (owner, 2026-11-14): the ski slope, or Summit Rush (docs/summit-rush.md); ?course=summit overrides.
+const COURSES = [['ski', 'Ski slope'], ['summit', 'Summit Rush']];
+let courseWanted = 'ski';
+try { courseWanted = localStorage.getItem('flood.course') || 'ski'; } catch { /* no storage */ }
+if (params.has('course')) courseWanted = params.get('course');
+if (!COURSES.some(([k]) => k === courseWanted)) courseWanted = 'ski';
 const botCount = () => (params.has('bots') ? Math.max(0, Math.min(79, Number(params.get('bots')))) : riversWanted - 1);
 
 // A race: the world plus what draws it. `river` is null when spectating.
@@ -594,7 +600,7 @@ function beginRace(seed, raceIds, me, rolled) {
   if (river?.dropping) highlightZone(terrainMesh, startLine(world).set, true);
   hud.banner.hidden = true;
   hud.feed.textContent = '';
-  fb?.raceStart({ seed, kind: tutorial ? 'tutorial' : 'race', of: world.rivers.length });
+  fb?.raceStart({ seed, kind: tutorial ? 'tutorial' : 'race', course: world.terrain.course ?? 'ski', of: world.rivers.length });
   audio.track('race');
   finishShown = false;
   finishEl.classList.remove('on');
@@ -615,7 +621,7 @@ function newRun() {
   const all = [PLAYER, ...Array.from({ length: botCount() }, (_, i) => `bot${String(i + 1).padStart(2, '0')}`)].sort();
   names = Object.fromEntries(all.filter((id) => id !== PLAYER).map((id, i) => [id, BOT_NAMES[i % BOT_NAMES.length]]));
   // Reroll until the summit ring seats everyone (the ski map seats 15-18 at spawnGap: past 12, the drops spread the rest).
-  const { seed, world: rolled } = rollIsland(want, Math.min(all.length, 12));
+  const { seed, world: rolled } = rollIsland(want, Math.min(all.length, 12), 40, courseWanted === 'ski' ? undefined : courseWanted);
   beginRace(seed, all, PLAYER, rolled);
   bots = world.rivers.filter((r) => r !== river).map((r) => createBot(world, r));
   startPlanner();
@@ -2154,6 +2160,14 @@ riversBtn.onclick = () => {
   riversWanted = RIVER_STEPS[(RIVER_STEPS.indexOf(riversWanted) + 1) % RIVER_STEPS.length];
   try { localStorage.setItem('flood.rivers', String(riversWanted)); } catch { /* no storage */ }
   showRivers();
+};
+const courseBtn = document.getElementById('course');
+const showCourse = () => { courseBtn.textContent = `Course: ${COURSES.find(([k]) => k === courseWanted)[1]}`; };
+showCourse();
+courseBtn.onclick = () => {
+  courseWanted = COURSES[(COURSES.findIndex(([k]) => k === courseWanted) + 1) % COURSES.length][0];
+  try { localStorage.setItem('flood.course', courseWanted); } catch { /* no storage */ }
+  showCourse();
 };
 document.getElementById('play-solo').onclick = () => {
   if (fresh()) return; goLandscape(); tutorial = false; hud.menu.hidden = true; newRun(); };

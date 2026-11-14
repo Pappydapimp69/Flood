@@ -1,7 +1,19 @@
 # Summit Rush — a second mode, from the trailer
 
-Status: designed (owner, 2026-11-14), audited the same day, not built. The ski-slope race stays as it
-is; Summit Rush is a choice beside it on the start screen.
+Status: designed (owner, 2026-11-14), audited the same day; the course is built (Course on the start screen,
+`?course=summit`), the rest is not. The ski-slope race stays as it is; Summit Rush is a choice beside it.
+
+## Built so far: the course
+- `rushShape` / `rushHeight` in `src/shared/terrain.js`: three or four valley heads side by side, a valley from
+  each (one narrow and straight, one wide with bends and lakes, the rest between), fanning out and rejoining at one
+  gorge, then a short run-out to the sea. A start ring round each head; the landing lane spans all of them.
+- Per-course rules (`COURSE_RULES` in `src/shared/river.js`): starts 250 m apart, the full-width landing lane, and
+  spawn grace capped at 7 s.
+- Measured, not assumed (`node tools/bot-race.mjs --course summit --rivers 30 --drop <seeds>`): bots average about
+  300 m/s, so the 16 km first guessed gave a 55 s race. The course is now about 39 km of route: fastest finish
+  125 to 137 s on seeds 1 to 3 at 30 rivers, a rival within 400 m 22 to 26% of the time (the ski map: 16 to 19%).
+- Still the old drain: at 30 rivers 14 to 18 are knocked out, at 80 rivers 57. That is the draining this design
+  and docs/collisions.md change; not built yet. `tools/course-map.mjs --course summit <seed>` draws the island.
 
 ## What it takes from the trailer, and what it doesn't
 The trailer ("Playing as a River in a Battle Royale") was already tried as a game, as the open island
