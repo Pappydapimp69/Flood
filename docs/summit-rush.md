@@ -144,8 +144,19 @@ break is untested; the dam's own look is plain dark rock.
   right stick turns and tilts, triggers lower and raise (keys: arrows or WASD, IJKL, Q E). Select again flies back
   over 2 s and the race resumes. Y keeps the map elsewhere; Select no longer opens it.
 
-### To build next (owner's list, 2026-11-14)
-- Triggered, not timed: the slope comes down only when a river cuts into its toe (cracks mark it), which starts a 3 s countdown; the pond fills from the water held rivers pour in and the dam bursts when it overtops the saddle, or when a river wears the saddle through. No timers.
-- Some bots target events like anything else (cutting the toe, breaking the saddle).
-- The slide in the shared sim: seeded blocks break off one scar and fall, bounce and roll down the real slope (bs flood-116); where they stop they become the dam, a ridged, hummocky tongue that runs up the far wall (flood-117), drawn as those same blocks. After the burst its remains narrow the river: a fast rapid beside them and a slow eddy behind (flood-118).
+### Built, unchecked (owner, 2026-11-14: "no checks, no tests")
+- Triggered, not timed: a cracked slope stands on one side of the valley (dark cracks mark it); a river's head
+  within 350 m of its toe sets it off, which starts a 3 s countdown of flickering cracks. No river, no slide.
+- The slide in the shared sim (`river.js` releaseBlocks, stepBlocks, settle): 120 seeded blocks let go of the
+  scar top first over 1.5 s, are pushed down the real ground and slowed by friction, bounce on slopes steeper than
+  45 degrees (an impact keeps 40% of the speed), roll on gentler ones, and stop when slow on gentle ground; each
+  stopped block piles rock on world.rock (34 m at its middle over 230 m, adding up to 170 m), so the dam is the
+  debris where it came to rest, and blocks ride up on earlier piles. The client draws the same blocks, turning as
+  they travel, with dust behind them; they stay on the dam.
+- The dam's low point is wherever the debris on the floor is lowest (no seeded saddle). The pond fills with the
+  water held rivers pour in (40,000 L per metre of the low point's height); it bursts when full, or when rivers
+  pressing the debris wash the low point down to 15 m above the floor (the river nearest is named). The burst
+  washes out 300 m either side of the low point; the rest of the debris stays and narrows the river.
+- Bots: the boldest (aggression over 0.65) go for the toe before it falls; the bold (over 0.4) for the low point
+  while it holds.
 Ideas, not on the list: a glacier outburst, a river jumping course, a valley stolen through a ridge, a log jam.

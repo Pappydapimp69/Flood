@@ -2723,28 +2723,37 @@ export function riverFingerprint(world) {
 // downstream when it fails). The dam is ordinary rock on world.rock, so it is shared in lockstep, rivers wear
 // it as they wear any rise, and the client draws it like cooled lava.
 export const SLIDE = {
-  at: 0.55, // where along the course the slope comes down (share of the course)
-  height: 150, // metres of rock at the dam's crest
-  thick: 160, // metres: the dam's half-thickness along the valley (a smooth bump, not a wall)
-  trigger: 1800, // metres of route ahead of the leader when it starts to fall (about 6 s: it lands in view)
-  fallTicks: 40, // 2 s from the first rocks to the full dam
-  holdTicks: 260, // 13 s from the first river reaching it until the pond overtops it, if no river breaks it first
-  arrive: 500, // metres of route above the dam that count as reaching it
-  breach: 0.25, // the dam breaks once its crest is worn below this share of its full height anywhere
-  loose: 0.3, // metres a tick a river pressing against it washes off the crest near it, times its size: the rubble is
-  // loose, so one river at the saddle breaks it in about 6 s, a few together in 2, and one on the high crest not in time
-  burstTicks: 16, // the dam washes out in 0.8 s
+  at: 0.55, // where along the course the slope stands (share of the course)
+  // The trigger (owner, 2026-11-14: events are triggered, not timed): a cracked slope on one side of the valley
+  // comes down when a river cuts into its toe (bs flood-113: rivers set off landslides by eroding a slope's foot).
+  toeR: 350, // metres from the toe's middle a river's head must come
+  crackTicks: 60, // the countdown from the cut to the fall: 3 s of widening cracks
+  // The slide itself: blocks break off the scar and fall, bounce and roll down the real ground (bs flood-116),
+  // and where each stops it piles up; the piles are the dam (a hummocky tongue that runs up the far wall, flood-117).
+  blocks: 120,
+  release: 30, // ticks over which the scar lets go, top first
+  grav: 70, // m/s2 along the slope: game time, so the slide crosses the valley in a few seconds
+  rest: 10, // m/s: a block on gentle ground slower than this stops
+  maxTicks: 220, // a block still moving after 11 s stops where it is
+  pile: 34, // metres of rock a stopped block leaves at its middle...
+  pileR: 230, // ...falling to nothing this far out
+  cap: 170, // metres: piles add up to at most this
+  // The pond and the burst (flood-113: a landslide dam fails by overtopping at its lowest point, when the inflow has
+  // filled it): the pond fills with the water held rivers pour in; it bursts when it reaches the crest's low point,
+  // or when rivers pressing the low point wash it down near the valley floor.
+  pondPerMetre: 40_000, // litres the pond holds per metre of the low point's height above the floor
+  pondArea: 2500, // metres of route above the dam that count as in the pond
+  loose: 0.6, // metres a tick a river pressing the dam washes off the debris near it, times its size
+  breachLeft: 15, // metres: the low point worn to this above the floor breaks it
+  breachR: 300, // metres either side of the low point that wash out when it bursts; the rest stays and narrows the river
+  burstTicks: 16, // the breach opens in 0.8 s
   waveSpeed: 420, // m/s down the route
   waveTicks: 200, // the wave runs 10 s (about 8 km)
   waveBand: 700, // metres behind the front that still catch it
-  pond: 2500, // metres of route above the dam the pond reaches: rivers there ride from the start
   rideTicks: 70, // a ride lasts 3.5 s...
   rideSpeed: 520, // ...at least this fast
   rideFromPond: 1.4, // a river that waited in the pond rides this much faster and longer
   gift: 0.25, // of the start volume: the pond's water each rider takes with it
-  saddle: 0.45, // the crest dips by this share of its height at one seeded spot across the valley (real dams breach at
-  saddleWide: 450, // their low point): water pressing there wears it through in seconds, and Gouge tops it at once
-  sweep: 0.6, // share of the fall spent sweeping across: the slope comes down from one side of the valley to the other
 };
 
 const wxOf = (t, k) => ((k % t.size) / (t.size - 1) - 0.5) * t.worldSize, wzOf = (t, k) => (Math.floor(k / t.size) / (t.size - 1) - 0.5) * t.worldSize;
@@ -2754,96 +2763,170 @@ function makeSlide(world) {
   const len = t.long * t.worldSize, W = t.worldSize;
   const wx = (k) => ((k % n) / (n - 1) - 0.5) * W, wz = (k) => (Math.floor(k / n) / (n - 1) - 0.5) * W;
   const centre = (a) => { let x = 0, z = 0, m = 0; for (let k = 0; k < n * n; k++) if (t.mask[k] && Math.abs(along[k] - a) * len < t.cell * 0.6) { x += wx(k); z += wz(k); m++; } return m ? { x: x / m, z: z / m } : null; };
-  // A straight wall across the valley's own direction there (the course winds, so not across its axis), at the
-  // first spot from SLIDE.at on with no standing water under it: rock is not laid on a lake, which would leave a hole.
+  const ground = (x, z) => sampleFilled(t, x, z);
+  // Where: the valley's own direction there (it winds), at the first spot from SLIDE.at on with no lake across it.
   let site = null;
   for (let i = 0; i < 80 && !site; i++) {
-    const a = SLIDE.at + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.005; // outward from SLIDE.at, either way
+    const a = SLIDE.at + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.005;
     const c = centre(a), p = centre(a - 0.012), q = centre(a + 0.012);
     if (!c || !p || !q) continue;
     let dx = q.x - p.x, dz = q.z - p.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
-    const offOf = (k) => (wx(k) - c.x) * dx + (wz(k) - c.z) * dz, sideOf = (k) => -(wx(k) - c.x) * dz + (wz(k) - c.z) * dx;
-    let half = 0;
-    for (let k = 0; k < n * n; k++) if (t.mask[k] && Math.abs(offOf(k)) < t.cell && Math.abs(sideOf(k)) < 5000) half = Math.max(half, Math.abs(sideOf(k)));
-    half = Math.min(4000, half + 300);
     let wet = false;
-    for (let k = 0; k < n * n && !wet; k++) if (Math.abs(offOf(k)) < SLIDE.thick * 1.6 && Math.abs(sideOf(k)) < half && world.lakeOf[k] >= 0) wet = true;
-    if (!wet) site = { c, dx, dz, half, offOf, sideOf };
+    for (let o = -400; o <= 400 && !wet; o += 100) for (let sd = -2500; sd <= 2500 && !wet; sd += 100) if (world.lakeOf[cellIndex(t, c.x + dx * o - dz * sd, c.z + dz * o + dx * sd)] >= 0) wet = true;
+    if (!wet) site = { c, dx, dz };
   }
   if (!site) return null;
-  const { c, dx, dz, half, offOf, sideOf } = site;
-  const r = stream(t.seed, 'slide'), saddleAt = (r() * 2 - 1) * half * 0.45, from = r() < 0.5 ? -1 : 1;
-  const cells = [], peak = [], crest = [], fallAt = [];
-  let d = 0, m = 0, low = Infinity;
-  for (let k = 0; k < n * n; k++) {
-    const o = offOf(k), sd = sideOf(k);
-    if (Math.abs(o) > SLIDE.thick * 2.2 || Math.abs(sd) > half || t.filled[k] <= SEA_LEVEL || world.lakeOf[k] >= 0) continue;
-    const dip = 1 - SLIDE.saddle * Math.exp(-(((sd - saddleAt) / SLIDE.saddleWide) ** 2));
-    const h = SLIDE.height * dip * Math.exp(-((o / SLIDE.thick) ** 2) * 2) * Math.min(1, (half - Math.abs(sd)) / 300 + 0.3);
-    if (h < 3) continue;
-    cells.push(k); peak.push(h); crest.push(Math.abs(o) < SLIDE.thick * 0.35 && h > SLIDE.height * 0.4 ? 1 : 0);
-    fallAt.push(SLIDE.sweep * Math.min(1, Math.max(0, (from * sd / half + 1) / 2))); // 0 on the side it falls from
-    if (Math.abs(o) < t.cell && t.mask[k] && world.toBeach[k] < 1e8) { d += world.toBeach[k]; m++; }
-    if (o < -SLIDE.thick * 1.4 && o > -SLIDE.thick * 2.2 && t.mask[k]) low = Math.min(low, t.filled[k]); // the floor just behind it, where the pond starts
+  const { c, dx, dz } = site, r = stream(t.seed, 'slide'), from = r() < 0.5 ? -1 : 1; // from: the side the slope stands on
+  const px = -dz * from, pz = dx * from; // across the valley, toward the slope
+  const floor = ground(c.x, c.z);
+  // The toe: where the valley side starts to rise. The scar: up the side, where it stands well above the floor.
+  let toe = 0, scar = 0;
+  for (let d = 0; d < 4000; d += 50) { const g = ground(c.x + px * d, c.z + pz * d); if (!toe && g > floor + 40) toe = d; if (g > floor + 320) { scar = d; break; } }
+  if (!toe) toe = 600;
+  if (!scar) scar = toe + 900;
+  let d = 0, m = 0;
+  for (let o = -t.cell; o <= t.cell; o += t.cell) for (let sd = -1500; sd <= 1500; sd += 100) { const k = cellIndex(t, c.x + dx * o - dz * sd, c.z + dz * o + dx * sd); if (t.mask[k] && world.toBeach[k] < 1e8) { d += world.toBeach[k]; m++; } }
+  // The floor just above it, where the pond starts.
+  let base = Infinity;
+  for (let sd = -1500; sd <= 1500; sd += 100) base = Math.min(base, ground(c.x - dx * 400 - dz * sd, c.z - dz * 400 + dx * sd));
+  return { state: 'armed', tick: 0, x: c.x, z: c.z, axis: { x: dx, z: dz }, across: { x: px, z: pz }, from,
+    toe: { x: c.x + px * toe, z: c.z + pz * toe }, scar: { x: c.x + px * scar, z: c.z + pz * scar }, scarAt: scar,
+    reach: m ? d / m : world.toBeach[cellIndex(t, c.x, c.z)], base, level: 0, pondVol: 0, front: 0, rode: new Set(), by: -1, blocks: [], saddle: null, seedR: r() * 1e9 };
+}
+
+// The blocks, from the scar: a patch along the valley side, top first; sizes and friction seeded.
+function releaseBlocks(world, s) {
+  const t = world.terrain, r = stream(t.seed, `slide-blocks:${s.seedR | 0}`), ax = s.axis.x, az = s.axis.z, px = s.across.x, pz = s.across.z;
+  for (let i = 0; i < SLIDE.blocks; i++) {
+    const along = (r() - 0.5) * 900, up = (r() - 0.3) * 500; // up: further up the side (positive) or nearer the floor
+    const x = s.scar.x + ax * along + px * up, z = s.scar.z + az * along + pz * up;
+    s.blocks.push({ x, z, y: sampleFilled(t, x, z) + 20, vx: -px * 20, vz: -pz * 20, vy: 0, size: 25 + r() * r() * 70, mu: 0.35 + r() * 0.9, at: 0, moving: true, air: false });
   }
-  if (!m) return null;
-  return { state: 'armed', tick: 0, cells, peak: Float32Array.from(peak), crest: Uint8Array.from(crest), fallAt: Float32Array.from(fallAt),
-    x: c.x, z: c.z, reach: d / m, base: low, level: 0, front: 0, rode: new Set(), by: -1, from, half,
-    saddle: { x: c.x - dz * saddleAt, z: c.z + dx * saddleAt }, axis: { x: dx, z: dz } };
+  // Top first: the higher a block sits, the sooner it goes.
+  s.blocks.sort((a, b) => b.y - a.y).forEach((b, i) => { b.at = Math.round((i / s.blocks.length) * SLIDE.release); });
+}
+
+// One tick of the blocks. On the ground a block is pushed down the slope and slowed by friction; on steep ground it
+// bounces (most of its speed goes in each impact), on gentle ground it rolls; it stops when slow on gentle ground,
+// and its pile goes on world.rock, so the dam grows where the debris comes to rest. Ground here is the
+// starting terrain plus rock already piled (so blocks ride up on earlier ones), not rivers' channels.
+function stepBlocks(world, s, age) {
+  const t = world.terrain, g = SLIDE.grav, h = (x, z) => sampleFilled(t, x, z) + world.rock[cellIndex(t, x, z)];
+  let moving = 0;
+  for (const b of s.blocks) {
+    if (!b.moving || age < b.at) { if (b.moving) moving++; continue; }
+    moving++;
+    const e = 40, gx = (h(b.x + e, b.z) - h(b.x - e, b.z)) / (2 * e), gz = (h(b.x, b.z + e) - h(b.x, b.z - e)) / (2 * e), steep = Math.hypot(gx, gz);
+    const floorY = h(b.x, b.z);
+    if (b.air) {
+      b.vy -= g * DT;
+      b.y += b.vy * DT;
+      if (b.y <= floorY) { b.y = floorY; b.air = false; b.vx *= 0.4; b.vz *= 0.4; b.vy = 0; } // an impact takes most of its speed
+    } else {
+      b.vx -= gx * g * DT; b.vz -= gz * g * DT;
+      const k = Math.max(0, 1 - b.mu * DT * (steep > 1 ? 0.5 : 1)); b.vx *= k; b.vz *= k;
+      // Steep ground throws it: a bounce, higher the faster and steeper.
+      if (steep > 1 && Math.hypot(b.vx, b.vz) > 40) { b.air = true; b.vy = Math.min(60, Math.hypot(b.vx, b.vz) * 0.35 * Math.min(2, steep - 0.5)); }
+    }
+    b.x += b.vx * DT; b.z += b.vz * DT;
+    if (!b.air) b.y = h(b.x, b.z);
+    const speed = Math.hypot(b.vx, b.vz);
+    if ((!b.air && steep < 0.45 && speed < SLIDE.rest) || age - b.at > SLIDE.maxTicks || t.filled[cellIndex(t, b.x, b.z)] <= SEA_LEVEL) { b.moving = false; settle(world, b); }
+  }
+  return moving;
+}
+
+function settle(world, b) {
+  const t = world.terrain, n = t.size, R = SLIDE.pileR * (0.7 + b.size / 100), H = SLIDE.pile * (0.6 + b.size / 60);
+  const gx = (b.x / t.worldSize + 0.5) * (n - 1), gy = (b.z / t.worldSize + 0.5) * (n - 1), reach = Math.ceil(R / t.cell);
+  for (let y = Math.round(gy) - reach; y <= Math.round(gy) + reach; y++) for (let x = Math.round(gx) - reach; x <= Math.round(gx) + reach; x++) {
+    if (x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
+    const k = y * n + x, d = Math.hypot((x - gx) * t.cell, (y - gy) * t.cell);
+    if (d > R || world.lakeOf[k] >= 0 || t.filled[k] <= SEA_LEVEL) continue;
+    const add = H * (1 - (d / R) ** 2), now = Math.min(SLIDE.cap, Math.max(0, world.rock[k]) + add);
+    if (now > world.rock[k]) { world.treeRock[k] += now - world.rock[k]; world.rock[k] = now; world.dirty.push(k); }
+  }
+  b.y = sampleFilled(t, b.x, b.z) + world.rock[cellIndex(t, b.x, b.z)];
+}
+
+// The dam's low point: across the valley along its line, the lowest top of the debris on the floor (where the pond
+// spills first). Only where debris lies: open ground beside it is valley wall or a gap water already runs through.
+function lowPoint(world, s) {
+  const t = world.terrain;
+  let best = null;
+  for (let sd = -3000; sd <= 3000; sd += 100) {
+    let top = -Infinity, rock = 0, fx = 0, fz = 0;
+    for (let o = -500; o <= 500; o += 100) {
+      const x = s.x + s.axis.x * o + s.across.x * sd, z = s.z + s.axis.z * o + s.across.z * sd, k = cellIndex(t, x, z), v = t.filled[k] + world.rock[k];
+      if (v > top) { top = v; fx = x; fz = z; }
+      rock = Math.max(rock, world.rock[k]);
+    }
+    if (rock < 8 || t.filled[cellIndex(t, fx, fz)] > s.base + 150) continue; // no debris here, or up the valley side
+    if (!best || top < best.top) best = { top, x: fx, z: fz };
+  }
+  return best;
 }
 
 function slideStep(world) {
   const s = world.slide, t = world.terrain;
   if (!s || s.state === 'done') return;
   const age = world.tick - s.tick, set = (state) => { s.state = state; s.tick = world.tick; world.events.push({ type: 'slide', phase: state, x: s.x, z: s.z, by: s.by, tick: world.tick }); };
-  if (s.state === 'armed') { if (world.leadReach !== undefined && world.leadReach < s.reach + SLIDE.trigger) set('falling'); return; }
+  if (s.state === 'armed') {
+    // A river cutting into the toe sets it off.
+    for (const r of world.rivers) if (isRacing(r) && !r.dropping && (r.x - s.toe.x) ** 2 + (r.z - s.toe.z) ** 2 < SLIDE.toeR ** 2) { s.by = r.idx; set('cracking'); break; }
+    return;
+  }
+  if (s.state === 'cracking') { if (age >= SLIDE.crackTicks) { releaseBlocks(world, s); s.by = -1; set('falling'); } return; }
   if (s.state === 'falling') {
-    const u = Math.min(1, (age + 1) / SLIDE.fallTicks);
-    for (let i = 0; i < s.cells.length; i++) {
-      const v = Math.min(1, Math.max(0, (u - s.fallAt[i]) / (1 - SLIDE.sweep))), k = s.cells[i], want = s.peak[i] * v * v * (3 - 2 * v);
-      if (want > world.rock[k]) { world.treeRock[k] += want - world.rock[k]; world.rock[k] = want; world.dirty.push(k); }
-    }
-    if (u >= 1) set('dammed');
+    if (!stepBlocks(world, s, age)) { s.saddle = lowPoint(world, s); set('dammed'); }
     return;
   }
   if (s.state === 'dammed') {
-    // Rivers against the dam wash its loose crest away near them.
+    // Rivers against the debris wash it away near them, fastest where they press together.
     if (age % 2 === 0) for (const r of world.rivers) {
       if (!isRacing(r) || r.dropping) continue;
-      for (let i = 0; i < s.cells.length; i++) {
-        if (!s.crest[i]) continue;
-        const k = s.cells[i], q = (wxOf(t, k) - r.x) ** 2 + (wzOf(t, k) - r.z) ** 2;
-        if (q > 220 * 220) continue;
-        const was = world.rock[k], now = Math.max(0, was - SLIDE.loose * 2 * Math.max(1, r.size));
-        if (now < was) { world.rock[k] = now; world.treeRock[k] += now - was; world.dirty.push(k); }
+      const n = t.size, gx = (r.x / t.worldSize + 0.5) * (n - 1), gy = (r.z / t.worldSize + 0.5) * (n - 1), reach = 3;
+      for (let y = Math.round(gy) - reach; y <= Math.round(gy) + reach; y++) for (let x = Math.round(gx) - reach; x <= Math.round(gx) + reach; x++) {
+        if (x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
+        const k = y * n + x, was = world.rock[k];
+        if (was <= 0 || Math.hypot((x - gx) * t.cell, (y - gy) * t.cell) > 220) continue;
+        const now = Math.max(0, was - SLIDE.loose * 2 * Math.max(1, r.size));
+        world.rock[k] = now; world.treeRock[k] += now - was; world.dirty.push(k);
       }
     }
-    if (s.arrived === undefined) for (const r of world.rivers) if (isRacing(r) && !r.dropping && world.toBeach[cellIndex(t, r.x, r.z)] < s.reach + SLIDE.arrive) { s.arrived = world.tick; break; }
-    const held = s.arrived === undefined ? 0 : world.tick - s.arrived;
-    s.level = Math.min(1, (age * 0.5 + held * 1.5) / SLIDE.holdTicks) * SLIDE.height * 0.85; // the pond backing up behind it (full before it overtops)
-    let worn = held >= SLIDE.holdTicks, at = -1;
-    if (!worn && age % 2 === 0) for (let i = 0; i < s.cells.length && !worn; i++) if (s.crest[i] && world.rock[s.cells[i]] < SLIDE.height * SLIDE.breach) { worn = true; at = s.cells[i]; }
-    if (worn) {
-      // Who broke it: the river nearest the breach (none when the pond overtopped it).
-      if (at >= 0) {
-        const n = t.size, bx = ((at % n) / (n - 1) - 0.5) * t.worldSize, bz = (Math.floor(at / n) / (n - 1) - 0.5) * t.worldSize;
-        let best = 1500 ** 2;
-        for (const r of world.rivers) { const q = (r.x - bx) ** 2 + (r.z - bz) ** 2; if (isRacing(r) && q < best) { best = q; s.by = r.idx; } }
-        s.breach = { x: bx, z: bz };
-      }
+    if (age % 10 === 0) s.saddle = lowPoint(world, s) ?? s.saddle;
+    const lip = s.saddle ? Math.max(5, s.saddle.top - s.base) : 0;
+    // The pond fills with the water held rivers pour in.
+    for (const r of world.rivers) {
+      if (!isRacing(r) || r.dropping) continue;
+      const at = world.toBeach[cellIndex(t, r.x, r.z)], up = (r.x - s.x) * s.axis.x + (r.z - s.z) * s.axis.z;
+      if (up < 0 && at >= s.reach - 300 && at <= s.reach + SLIDE.pondArea) s.pondVol += dischargeOf(r) * DT;
+    }
+    const cap = SLIDE.pondPerMetre * lip;
+    s.level = lip ? Math.min(1, s.pondVol / cap) * lip : 0;
+    const over = !s.saddle || s.pondVol >= cap, worn = s.saddle && s.saddle.top - s.base <= SLIDE.breachLeft;
+    if (over || worn) {
+      if (worn) { let best = 1500 ** 2; for (const r of world.rivers) { const q = (r.x - s.saddle.x) ** 2 + (r.z - s.saddle.z) ** 2; if (isRacing(r) && q < best) { best = q; s.by = r.idx; } } }
+      s.breach = s.saddle ? { x: s.saddle.x, z: s.saddle.z } : { x: s.x, z: s.z };
       set('burst'); s.front = s.reach; ridePond(world, s);
     }
     return;
   }
-  // Bursting: the dam washes out and the wave runs down the route.
+  // Bursting: the breach at the low point washes out; the rest of the debris stays and narrows the river (a rapid
+  // through the gap, slack water behind the remains: flood-118). The wave runs down the route.
   if (age <= SLIDE.burstTicks) {
-    const keep = 1 - age / SLIDE.burstTicks;
-    for (let i = 0; i < s.cells.length; i++) {
-      const k = s.cells[i], want = Math.min(world.rock[k], s.peak[i] * keep * 0.6);
-      if (want < world.rock[k]) { world.treeRock[k] += want - world.rock[k]; world.rock[k] = want; world.dirty.push(k); }
+    const n = t.size, b = s.breach, gx = (b.x / t.worldSize + 0.5) * (n - 1), gy = (b.z / t.worldSize + 0.5) * (n - 1), reach = Math.ceil((SLIDE.breachR + 600) / t.cell);
+    for (let y = Math.round(gy) - reach; y <= Math.round(gy) + reach; y++) for (let x = Math.round(gx) - reach; x <= Math.round(gx) + reach; x++) {
+      if (x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
+      const k = y * n + x, wxk = (x / (n - 1) - 0.5) * t.worldSize - b.x, wzk = (y / (n - 1) - 0.5) * t.worldSize - b.z;
+      const side = Math.abs(wxk * s.across.x + wzk * s.across.z), was = world.rock[k];
+      if (side > SLIDE.breachR || was <= 0) continue;
+      const now = was * (1 - (age + 1) / (SLIDE.burstTicks + 1));
+      world.rock[k] = now; world.treeRock[k] += now - was; world.dirty.push(k);
     }
+    for (const bl of s.blocks) if (Math.abs((bl.x - b.x) * s.across.x + (bl.z - b.z) * s.across.z) < SLIDE.breachR) bl.gone = true;
   }
-  s.level = Math.max(0, s.level - SLIDE.height * 0.85 / SLIDE.burstTicks);
+  s.level = Math.max(0, s.level * (1 - 1 / SLIDE.burstTicks));
   s.front = s.reach - SLIDE.waveSpeed * age * DT;
   for (const r of world.rivers) {
     if (!isRacing(r) || r.dropping || s.rode.has(r.idx)) continue;
@@ -2858,7 +2941,7 @@ function ridePond(world, s) {
   for (const r of world.rivers) {
     if (!isRacing(r) || r.dropping) continue;
     const at = world.toBeach[cellIndex(world.terrain, r.x, r.z)];
-    if (at >= s.reach - 300 && at <= s.reach + SLIDE.pond) ride(world, s, r, SLIDE.rideFromPond);
+    if (at >= s.reach - 300 && at <= s.reach + SLIDE.pondArea) ride(world, s, r, SLIDE.rideFromPond);
   }
 }
 

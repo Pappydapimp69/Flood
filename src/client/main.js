@@ -1290,80 +1290,91 @@ const roundDot = (() => { const c = document.createElement('canvas'); c.width = 
   return new THREE.CanvasTexture(c); })();
 function clearSlideFx() {
   if (!slideFx) return;
-  for (const o of [slideFx.rocks, slideFx.dust, slideFx.wave]) if (o) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); }
+  for (const o of [slideFx.rocks, slideFx.dust, slideFx.wave, slideFx.cracks]) if (o) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); }
   slideFx = null;
 }
-function startSlideFx() {
-  clearSlideFx();
+// Built once a race has a slide: the cracks that mark the slope, the blocks (drawn where the sim has them), their
+// dust, and the wave's white water.
+function makeSlideFx() {
   const s = world.slide, t = world.terrain, n = t.size;
-  if (!s) return;
-  const at = (k) => ({ x: ((k % n) / (n - 1) - 0.5) * W, z: (Math.floor(k / n) / (n - 1) - 0.5) * W });
-  const sx = -s.axis.z, sz = s.axis.x; // across the valley
-  const N = 140, rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5b524a', flatShading: true }), N);
-  const fall = [];
-  for (let i = 0; i < N; i++) {
-    const j = Math.floor(Math.random() * s.cells.length), p = at(s.cells[j]), g = surfaceAt(world, p.x, p.z);
-    const back = -s.from * (500 + Math.random() * 900), gb = surfaceAt(world, p.x + sx * back, p.z + sz * back); // each falls from just up the slope above where it lands
-    fall.push({ x0: p.x + sx * back, z0: p.z + sz * back, y0: Math.max(g, gb) + 150 + Math.random() * 250, x1: p.x, z1: p.z, y1: g + s.peak[j] * 0.6, r: 60 + Math.random() * 120,
-      t0: s.fallAt[j] * SLIDE.fallTicks * DT * 1000, spin: Math.random() * 6 });
+  // Cracks: jagged dark lines across the slope between its toe and its scar, along the valley.
+  const r = (() => { let v = s.seedR | 1; return () => ((v = Math.imul(v ^ (v >>> 15), 0x2c1b3c6d) ^ (v + 0x6d2b79f5)) >>> 0) / 4294967296; })();
+  const seg = [];
+  for (let c = 0; c < 9; c++) {
+    const up = s.scarAt * (0.35 + 0.6 * (c / 8)) * 1, along0 = -450 + r() * 200;
+    let px = s.x + s.across.x * up + s.axis.x * along0, pz = s.z + s.across.z * up + s.axis.z * along0;
+    for (let j = 0; j < 8; j++) {
+      const nx = px + s.axis.x * (90 + r() * 60) + s.across.x * (r() - 0.5) * 70, nz = pz + s.axis.z * (90 + r() * 60) + s.across.z * (r() - 0.5) * 70;
+      seg.push(px, surfaceAt(world, px, pz) * VERT + 6, pz, nx, surfaceAt(world, nx, nz) * VERT + 6, nz);
+      px = nx; pz = nz;
+    }
   }
-  scene.add(rocks);
-  const D = 600, dpos = new Float32Array(D * 3), dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(dpos, 3)),
-    new THREE.PointsMaterial({ color: '#a8927a', size: 420, map: roundDot, transparent: true, opacity: 0.8, depthWrite: false }));
-  const seeds = Array.from({ length: D }, () => { const j = Math.floor(Math.random() * s.cells.length), p = at(s.cells[j]); return { ...p, g: surfaceAt(world, p.x, p.z), t0: s.fallAt[j] * SLIDE.fallTicks * DT * 1000, v: 40 + Math.random() * 120, dx: Math.random() - 0.5, dz: Math.random() - 0.5 }; });
-  scene.add(dust);
-  // The wave: valley cells below the dam, ordered by route left, drawn where the front is.
+  const cracks = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(seg, 3)),
+    new THREE.LineBasicMaterial({ color: '#2a1d14', transparent: true, opacity: 0.9 }));
+  const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5e554c', flatShading: true }), SLIDE.blocks);
+  rocks.frustumCulled = false; rocks.count = 0;
+  const D = SLIDE.blocks * 3, dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(D * 3), 3)),
+    new THREE.PointsMaterial({ color: '#a8927a', size: 380, map: roundDot, transparent: true, opacity: 0.7, depthWrite: false }));
+  dust.frustumCulled = false;
   const below = [];
   for (let k = 0; k < n * n; k++) { const tb = world.toBeach[k]; if (t.mask[k] && tb < s.reach && tb > s.reach - SLIDE.waveSpeed * SLIDE.waveTicks * DT - 500) below.push(k); }
   below.sort((a, b) => world.toBeach[a] - world.toBeach[b]);
-  const WN = 4000, wpos = new Float32Array(WN * 3), wave = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(wpos, 3)),
+  const WN = 4000, wave = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(WN * 3), 3)),
     new THREE.PointsMaterial({ color: '#f2fbff', size: 170, map: roundDot, transparent: true, opacity: 0.95, depthWrite: false }));
-  wave.frustumCulled = false; dust.frustumCulled = false;
-  scene.add(wave);
-  slideFx = { tick0: world.tick, rocks, fall, dust, seeds, wave, below, at };
+  wave.frustumCulled = false;
+  scene.add(cracks, rocks, dust, wave);
+  const at = (k) => ({ x: ((k % n) / (n - 1) - 0.5) * W, z: (Math.floor(k / n) / (n - 1) - 0.5) * W });
+  slideFx = { slide: s, cracks, rocks, dust, wave, below, at, spin: [], puff: [] };
 }
-const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler();
+const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler(), tmpP = new THREE.Vector3(), tmpS = new THREE.Vector3();
 function tickSlideFx(now) {
-  const f = slideFx, s = world?.slide;
-  if (!f || !s) return;
-  const ms = (world.tick - f.tick0 + (freeCam ? 0 : Math.min(1, acc / DT))) * DT * 1000; // race time: a pause freezes it mid-fall
-  // Boulders: 1.2 s from the valley side to the dam line, staggered with the sweep, then gone under the rock.
-  let shown = 0;
-  f.fall.forEach((b, i) => {
-    const u = (ms - b.t0) / 1200;
-    if (u < 0 || u > 1.15) { tmpM.makeScale(0, 0, 0); f.rocks.setMatrixAt(i, tmpM); return; }
-    const v = Math.min(1, u), x = b.x0 + (b.x1 - b.x0) * v, z = b.z0 + (b.z1 - b.z0) * v, y = (b.y0 + (b.y1 - b.y0) * v * v) * VERT + Math.sin(Math.PI * v) * 200;
-    tmpQ.setFromEuler(tmpE.set(b.spin * u * 3, b.spin * u * 2, 0));
-    tmpM.compose(new THREE.Vector3(x, y, z), tmpQ, new THREE.Vector3(b.r, b.r, b.r));
-    f.rocks.setMatrixAt(i, tmpM); shown++;
+  const s = world?.slide;
+  if (!s) { if (slideFx) clearSlideFx(); return; }
+  if (slideFx?.slide !== s) { clearSlideFx(); makeSlideFx(); }
+  const f = slideFx, show = !mapView;
+  // Cracks: there from the start; widening (darker, flickering) through the countdown; gone once it falls.
+  f.cracks.visible = show && (s.state === 'armed' || s.state === 'cracking');
+  f.cracks.material.opacity = s.state === 'cracking' ? 0.6 + 0.4 * Math.sin(now / 60) : 0.55;
+  // Blocks: where the sim has them, turning as they travel; gone where the breach washed them out.
+  let m = 0;
+  s.blocks.forEach((b, i) => {
+    const sp = (f.spin[i] ??= { x: b.x, z: b.z, a: 0 });
+    sp.a += Math.hypot(b.x - sp.x, b.z - sp.z) / Math.max(10, b.size); sp.x = b.x; sp.z = b.z;
+    if (b.gone || (b.moving && world.tick - s.tick < b.at)) return;
+    tmpQ.setFromEuler(tmpE.set(sp.a, sp.a * 0.7, i));
+    tmpP.set(b.x, b.y * VERT + b.size * 0.6, b.z); tmpS.set(b.size, b.size * 0.8, b.size * 1.1);
+    f.rocks.setMatrixAt(m++, tmpM.compose(tmpP, tmpQ, tmpS));
   });
-  f.rocks.instanceMatrix.needsUpdate = true;
-  // Dust: rises where the rock lands and thins out over five seconds.
+  f.rocks.count = m; f.rocks.instanceMatrix.needsUpdate = true; f.rocks.visible = show && m > 0;
+  // Dust: puffs behind each moving block, thinning once everything has stopped.
   const dp = f.dust.geometry.attributes.position;
-  f.seeds.forEach((d, i) => {
-    const age = Math.max(0, (ms - d.t0) / 1000);
-    dp.setXYZ(i, d.x + d.dx * age * 160, (d.g + 20 + d.v * age) * VERT, d.z + d.dz * age * 160);
+  let movingN = 0;
+  s.blocks.forEach((b, i) => {
+    if (b.moving && world.tick - s.tick >= b.at) movingN++;
+    for (let j = 0; j < 3; j++) {
+      const q = (f.puff[i * 3 + j] ??= { x: b.x, z: b.z, y: b.y, age: 9 });
+      q.age += 1 / 60;
+      if (b.moving && world.tick - s.tick >= b.at && q.age > 0.8 + j * 0.3) Object.assign(q, { x: b.x, z: b.z, y: b.y, age: 0 });
+      dp.setXYZ(i * 3 + j, q.x, q.y * VERT + 30 + q.age * 140, q.z);
+    }
   });
   dp.needsUpdate = true;
-  f.dust.material.opacity = 0.8 * Math.max(0, 1 - Math.max(0, ms - 2500) / 6000);
-  f.dust.visible = f.dust.material.opacity > 0.01 && !mapView;
-  // The wave's front: white water across the valley, a band 350 m deep.
+  f.dustK = Math.max(0, Math.min(1, (f.dustK ?? 0) + (movingN ? 0.05 : -0.01)));
+  f.dust.material.opacity = 0.7 * f.dustK; f.dust.visible = show && f.dustK > 0.01 && s.state !== 'armed';
+  // The wave's front: white water across the valley, low on the ground.
   const wp = f.wave.geometry.attributes.position;
-  let m = 0;
+  let w = 0;
   if (s.state === 'burst' && world.tick - s.tick < SLIDE.waveTicks) {
     const lo = s.front - 120, hi = s.front + 230;
     let a = 0, b = f.below.length;
     while (a < b) { const c = (a + b) >> 1; if (world.toBeach[f.below[c]] < lo) a = c + 1; else b = c; }
-    for (let i = a; i < f.below.length && m < wp.count; i++) {
+    for (let i = a; i < f.below.length && w < wp.count; i++) {
       const k = f.below[i]; if (world.toBeach[k] > hi) break;
       const p = f.at(k);
-      for (let j = 0; j < 4 && m < wp.count; j++) { const jx = p.x + (Math.random() - 0.5) * 100, jz = p.z + (Math.random() - 0.5) * 100; wp.setXYZ(m++, jx, surfaceAt(world, jx, jz) * VERT + 8 + Math.random() * 30, jz); } // low on the ground: water, not cloud
+      for (let j = 0; j < 4 && w < wp.count; j++) { const jx = p.x + (Math.random() - 0.5) * 100, jz = p.z + (Math.random() - 0.5) * 100; wp.setXYZ(w++, jx, surfaceAt(world, jx, jz) * VERT + 8 + Math.random() * 30, jz); }
     }
   }
-  f.wave.geometry.setDrawRange(0, m);
-  wp.needsUpdate = true;
-  f.wave.visible = m > 0;
-  if (ms > 8000 && s.state === 'done') clearSlideFx();
+  f.wave.geometry.setDrawRange(0, w); wp.needsUpdate = true; f.wave.visible = show && w > 0;
 }
 
 // The Landslide's pond: a flat sheet above the dam that the valley's own sides cut to shape as it rises.
@@ -1372,7 +1383,7 @@ function showSlidePond() {
   const s = world.slide;
   if (!s) { if (slidePond) slidePond.visible = false; return; }
   if (!slidePond) {
-    const g = new THREE.PlaneGeometry(9000, SLIDE.pond, 1, 1).rotateX(-Math.PI / 2).translate(0, 0, -SLIDE.pond / 2);
+    const g = new THREE.PlaneGeometry(9000, SLIDE.pondArea, 1, 1).rotateX(-Math.PI / 2).translate(0, 0, -SLIDE.pondArea / 2);
     slidePond = new THREE.Mesh(g, new THREE.MeshPhongMaterial({ color: '#2a9fb4', transparent: true, opacity: 0.88, shininess: 80, specular: '#bfefff' }));
     slidePond.renderOrder = 2;
     scene.add(slidePond);
@@ -1477,8 +1488,13 @@ function advance(inputs) {
         teach('bump', 'Bumping', 'Drops that collide knock each other off course. Whoever hits with more momentum (more water, more speed into the other) <b>wins</b>: the loser spills water and the winner soaks most of it up. Ram lighter drops; dodge heavier ones.', e.x, e.z);
       }
     } else if (e.type === 'slide') {
-      if (e.phase === 'falling') { showPop('LANDSLIDE AHEAD — the valley is closing'); feed('A slope is coming down across the valley'); audio.splash(1); startSlideFx(); }
-      else if (e.phase === 'dammed') feed('The landslide has dammed the valley: break it at its low point, or wait and ride the flood');
+      if (e.phase === 'cracking') {
+        const who = e.by >= 0 ? world.rivers[e.by] : null;
+        showPop(who === river ? 'YOU CUT THE SLOPE — it is coming down' : 'THE SLOPE IS CRACKING');
+        feed(`${who ? nameOf(who) : 'A river'} cut into the foot of the cracked slope: it comes down in 3 s`);
+        audio.splash(0.6);
+      } else if (e.phase === 'falling') { showPop('LANDSLIDE — the valley is closing'); feed('The slope is coming down across the valley'); audio.splash(1); }
+      else if (e.phase === 'dammed') feed('The landslide has dammed the valley: the pond fills with every river held behind it. Wear down its low point, or wait and ride the flood');
       else if (e.phase === 'burst') {
         const who = e.by >= 0 ? world.rivers[e.by] : null;
         showPop(who === river ? 'YOU BROKE THE DAM — ride the flood' : 'THE DAM BURST — ride the flood');
