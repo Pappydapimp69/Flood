@@ -129,3 +129,8 @@ down the valley as a wave: every river it passes rides it (a free surge plus wat
 ride furthest. Measured (12 bots, seeds 7001-7003): it falls 24-28 s in, holds the pack, and 8-9 of 12 ride
 the burst. Not yet: no river breaks the dam before it overtops (bots don't Gouge a 150 m dam), so the early
 break is untested; the dam's own look is plain dark rock.
+
+### To build next (owner's list)
+- Training maps start on the start line: no descent (drop off, as `?nodrop`).
+- A river can break the landslide dam early (Gouge or wear), and bots try it.
+- The slide coming down and the flood wave running down the valley are visible as they happen.
