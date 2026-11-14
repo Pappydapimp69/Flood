@@ -22,7 +22,7 @@ export const SUMMIT_ISLAND = {
   breachHalf: { slot: 180, lakes: 480, wide: 340, stacks: 360 }, // each breach's half-width, by its kind
   wall: 140, // a breach's walls over its floor
   grid: 150, steps: 120, // the erosion grid across the basin, and how many steps it runs
-  lakes: 36, bars: 10, fields: 9, // what is laid along the channels: lake bowls, rock bars, boulder fields
+  lakes: 30, bars: 10, fields: 9, // what is laid along the channels: lake bowls, rock bars, boulder fields
   barHeights: [18, 45, 30], barTurf: 2, // a rock bar's crest over the channel (Surge clears the low one, the tall needs Gouge or a grind)
 };
 const S = SUMMIT_ISLAND;
@@ -224,43 +224,67 @@ function heightAt(E, Sh, seed, seaDepth, px, py) {
   return h;
 }
 
-// Where things go along the carved channels: sites picked from the erosion's own drainage (cells that gather
-// enough ground to be a ravine or a trunk), far enough apart, each with the way its water runs.
-function channelSites(E, seed) {
-  const { m, c, A, rec, off } = E, r = stream(seed, 'summit-sites'), cand = [];
-  for (let k = 0; k < m * m; k++) {
-    if (off[k] || A[k] < 25) continue;
-    const px = (k % m) * c - S.cone, py = Math.floor(k / m) * c - S.cone, q = Math.sqrt(px * px + py * py) / S.cone;
-    if (q < 0.2 || q > 0.88) continue;
-    // Which way the water runs here: four cells down the channel.
+// Where things go: on the paths water actually takes from the start ring, counted on the fine grid. (Sites from
+// the erosion grid's own drainage put most lakes in the ditch at the ring's foot, which the coarse grid's biggest
+// channels follow and no river in a race does: 30 bot rivers crossed 3 of 50 lakes there.) Each site is where many
+// start paths run, with the way the water runs there.
+function flowSites(height, n, worldSize, seed) {
+  const filled = fillDepressions(height, n), cell = worldSize / (n - 1), r = stream(seed, 'summit-sites');
+  let top = 0;
+  for (let k = 0; k < n * n; k++) if (height[k] > height[top]) top = k;
+  const ring = height[top] * 0.7, count = new Uint16Array(n * n), next = new Int32Array(n * n).fill(-1);
+  const down = (k) => {
+    if (next[k] >= 0 || filled[k] <= 0) return next[k];
+    const x = k % n, y = (k - x) / n;
+    let best = k;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const xx = x + dx, yy = y + dy;
+      if (xx < 0 || yy < 0 || xx >= n || yy >= n) continue;
+      const q = yy * n + xx;
+      if (filled[q] < filled[best]) best = q;
+    }
+    return (next[k] = best);
+  };
+  for (let y = 2; y < n - 2; y++) for (let x = 2; x < n - 2; x++) {
+    const k = y * n + x;
+    if (Math.abs(height[k] - ring) > 15 || (x + y) % 2) continue; // start cells on the ring, every other one
+    for (let c = k, i = 0; i < 4000; i++) { count[c]++; const d = down(c); if (d < 0 || d === c) break; c = d; }
+  }
+  const cand = [];
+  for (let k = 0; k < n * n; k++) {
+    if (count[k] < 3) continue;
+    const px = ((k % n) / (n - 1) - 0.5) * worldSize, py = (Math.floor(k / n) / (n - 1) - 0.5) * worldSize, q = Math.sqrt(px * px + py * py) / S.cone;
+    if (q < 0.25 || q > 0.93) continue;
     let d = k;
-    for (let i = 0; i < 4; i++) d = rec[d];
-    const dx = (d % m) - (k % m), dy = Math.floor(d / m) - Math.floor(k / m), l = Math.sqrt(dx * dx + dy * dy);
+    for (let i = 0; i < 4 && next[d] >= 0; i++) d = next[d];
+    const dx = (d % n) - (k % n), dy = Math.floor(d / n) - Math.floor(k / n), l = Math.sqrt(dx * dx + dy * dy);
     if (l < 2) continue;
-    cand.push({ x: px, y: py, dx: dx / l, dy: dy / l, area: A[k], q });
+    cand.push({ x: px, y: py, dx: dx / l, dy: dy / l, area: count[k], q });
   }
   for (let i = cand.length - 1; i > 0; i--) { const j = Math.floor(r() * (i + 1)); [cand[i], cand[j]] = [cand[j], cand[i]]; }
-  const take = (count, gap, taken, ok = () => true) => {
+  const busiest = cand.slice().sort((a, b) => b.area - a.area || a.x - b.x || a.y - b.y);
+  const take = (list, count, gap, taken, ok = () => true) => {
     const out = [];
-    for (const s of cand) {
+    for (const s of list) {
       if (out.length >= count) break;
       if (!ok(s) || [...taken, ...out].some((o) => (o.x - s.x) ** 2 + (o.y - s.y) ** 2 < gap * gap)) continue;
       out.push(s);
     }
     return out;
   };
-  // Lakes go where the most water runs (a trunk or a big ravine), so most rivers meet several on the way down:
-  // dropped on any channel, most sat on side ravines few rivers took (2 swallowed a race against the ski slope's 6).
-  const lakes = take(S.lakes, 1250, [], (s) => s.area >= 80);
-  const bars = take(S.bars, 2000, lakes, (s) => s.q > 0.3);
-  const fields = take(S.fields, 2400, [...lakes, ...bars], (s) => s.q > 0.3);
-  return { lakes, bars, fields, r };
+  // Lakes spread down the whole descent (a third in each band of distance from the peak), in each band where the
+  // most paths run first: taken busiest-first over the whole basin, they all went to the ditch at the ring's foot.
+  const lakes = [];
+  for (const [lo, hi] of [[0.25, 0.5], [0.5, 0.75], [0.75, 0.93]]) lakes.push(...take(busiest, Math.round(S.lakes / 3), 1300, lakes, (s) => s.q >= lo && s.q < hi));
+  const bars = take(cand, S.bars, 2000, lakes, (s) => s.q > 0.3);
+  const fields = take(cand, S.fields, 2400, [...lakes, ...bars], (s) => s.q > 0.3);
+  return { lakes, bars, fields, r, cell };
 }
 
 // Lay the features on the fine grid. Lake bowls are sunk (the fill makes them lakes); rock bars are raised
 // across the channel to one crest height, with a gap at one end; boulders are rock domes in fields.
-function layFeatures(E, seed, n, worldSize, height, mask, ridge, ridgeFace) {
-  const { lakes, bars, fields, r } = channelSites(E, seed), cell = worldSize / (n - 1), boulders = [];
+function layFeatures(seed, n, worldSize, height, mask, ridge, ridgeFace) {
+  const { lakes, bars, fields, r, cell } = flowSites(height, n, worldSize, seed), boulders = [];
   const at = (m) => Math.round((m / worldSize + 0.5) * (n - 1));
   const stamp = (x, y, radM, fn) => {
     const cx = at(x), cy = at(y), R = Math.ceil(radM / cell);
@@ -271,16 +295,17 @@ function layFeatures(E, seed, n, worldSize, height, mask, ridge, ridgeFace) {
     }
   };
   for (const s of lakes) {
-    const big = s.area > 400, rad = (big ? 430 : 270) + 150 * r(), depth = (big ? 45 : 32) + 12 * r();
-    // A tarn: a bowl cut level into the slope, longer along the valley than across it. Its floor hangs from the
+    const big = s.area > 25, rad = (big ? 430 : 270) + 150 * r(), depth = (big ? 45 : 32) + 12 * r();
+    // A tarn: a bowl cut level into the slope, wider across the valley than along it, so it fills the valley floor
+    // and a river coming down cannot slip past it (paternoster lakes fill their valley floor between rock steps). Its floor hangs from the
     // lowest point of its own edge (the lip the water leaves over), so the uphill side becomes a headwall and the
     // bowl holds water on any slope (a bowl merely sunk into a slope drains straight out of its low side).
-    const ex = (a, b) => [s.x + a * rad * 1.4 * s.dx - b * rad * s.dy, s.y + a * rad * 1.4 * s.dy + b * rad * s.dx];
+    const ex = (a, b) => [s.x + a * rad * 0.9 * s.dx - b * rad * 1.6 * s.dy, s.y + a * rad * 0.9 * s.dy + b * rad * 1.6 * s.dx];
     let lip = Infinity;
     for (let i = 0; i < 16; i++) { const [x, y] = ex(RING[i][0], RING[i][1]); lip = Math.min(lip, height[at(y) * n + at(x)]); }
-    stamp(s.x, s.y, rad * 1.5, (k, ox, oy) => {
+    stamp(s.x, s.y, rad * 1.7, (k, ox, oy) => {
       if (!mask[k]) return;
-      const a = (ox * s.dx + oy * s.dy) / (rad * 1.4), b = (-ox * s.dy + oy * s.dx) / rad, d2 = a * a + b * b;
+      const a = (ox * s.dx + oy * s.dy) / (rad * 0.9), b = (-ox * s.dy + oy * s.dx) / (rad * 1.6), d2 = a * a + b * b;
       if (d2 < 1) height[k] = Math.min(height[k], lip - depth * (1 - d2) * (1 - d2));
     });
   }
@@ -329,7 +354,7 @@ export function generateSummit(seed, { n, worldSize, seaDepth }) {
     mask[k] = info.course ? 1 : 0;
     along[k] = info.along;
   }
-  const boulders = layFeatures(E, seed, n, worldSize, height, mask, ridge, ridgeFace);
+  const boulders = layFeatures(seed, n, worldSize, height, mask, ridge, ridgeFace);
   // The peak: the highest ground near the middle (the ring's crags can't take it).
   let top = (n >> 1) * n + (n >> 1);
   const R = Math.round(4000 / (worldSize / (n - 1)));

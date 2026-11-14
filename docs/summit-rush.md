@@ -12,15 +12,12 @@ sections below this one describe the first design; where they speak of a moat, r
   together (a rival within 400 m 8 to 10% of the time): they spread round it.
 - `src/shared/summit.js` now: the erosion's base level is open only at the three breaches and the starting ground
   tilts toward each, so the ravines gather into three trunk valleys, each leaving through its own gorge. No moat.
-  Along the channels: 36 tarns on the big channels (bowls cut level into the slope, so they hold water), 10 rock
-  bars (18, 30 or 45 m, a gap at one end), 9 boulder fields. Puddles of six cells or fewer are levelled. The valleys
-  are narrow (the divides between them rise from a third of the way off a breach's bearing), so ravines join early. The start ring is at 70% of the
-  peak's height (90% left room for too few seats on the sharper peak).
-- Measured after (30 bots, seeds 1 to 3): a rival within 400 m 14 to 17% of the time (the ski slope: 16 to 19%);
-  the water's own path from a start crosses 4 to 5 lakes, but bots enter only 2.4 to 2.9 a race (the ski slope: 6),
-  and soak about 10 times (ski: 55 to 90); fastest finish 73 to 87 s, median 95 to 110 s. (An earlier count of 5 to
-  6 lakes was inflated by puddles of a few cells, since levelled.) Open: why bots leave half the lakes on their
-  water's path.
+  Lakes, rock bars and boulder fields are placed on the paths water takes from the start ring, counted on the fine
+  grid, a third of the lakes in each band of the descent (placed from the erosion grid's own drainage they went to
+  the ditch at the ring's foot, which no river in a race follows). Tarns are cut level into the slope, wider across
+  the valley than along it. Puddles of six cells or fewer are levelled.
+- Measured (30 bots, seeds 1 to 3): a rival within 400 m 11 to 23% of the time, 16% on average (the ski slope: 16
+  to 19%); lakes entered 3.3 to 5.0 a race (the ski slope: 5.4 to 6); fastest finish 79 to 83 s, median 96 to 104 s.
 - The look (`src/client/scenery.js` buildCrags, buildArch; the rugged rock in `terrainMesh.js`): crags in outcrops
   along the crests and round the peak, buttresses on walls, scree under them and in ravine floors, block piles on the
   boulder fields and rock bars, standing stones on spurs, a rock arch over one gorge; darker jointed rock shading.
