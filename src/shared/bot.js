@@ -4,7 +4,7 @@
 // randomness comes from its own id-keyed stream.
 
 import { stream } from './rng.js';
-import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, descentLane, laneHalf, DT, TUNE } from './river.js';
+import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, slopeT, descentLane, laneHalf, DT, TUNE } from './river.js';
 import { downhill } from './terrain.js';
 
 // Each bot has a personality: what it weighs, besides running downhill.
@@ -131,6 +131,14 @@ export function flowFrom(world, r, hx, hz) {
 // order rivers were added, and the race must not).
 const idPhase = (id) => { let h = 0; for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 10; return h; };
 
+// Metres the ground just ahead along the heading stands above what the head can climb (<= 0: none).
+function riseAhead(world, r) {
+  const t = world.terrain, ceiling = r.low + TUNE.climb + liftOf(r);
+  let top = -Infinity;
+  for (let i = 1; i <= TUNE.gougeLook; i++) top = Math.max(top, surfaceAt(world, r.x + r.dx * t.cell * i, r.z + r.dz * t.cell * i, r.idx));
+  return top - ceiling;
+}
+
 export function createBot(world, river, skill) {
   const rng = stream(world.terrain.seed, `bot:${river.id}`);
   return {
@@ -154,7 +162,14 @@ export function botSteer(world, bot) {
   // (Not with a deeper rival beside it: the wind-up holds the head still, and
   // a rival in reach siphons 23% of its water while it waits (Brain G2).)
   const exposed = world.tick % 5 === 0 && world.rivers.some((o) => o !== r && isRacing(o) && !o.dropping && o.depth > r.depth && (o.x - r.x) ** 2 + (o.z - r.z) ** 2 < 400 * 400);
-  if (!exposed && world.tick % 10 === idPhase(r.id) && r.gougeT < 0 && r.speed < TUNE.climbSpeed && gougeUsable(world, r)) {
+  // A rise ahead it can't climb (a ridge): fire before reaching it, not after it has stopped the head
+  // (owner, 2026-11-14: bots ran into ridges, slowed, and only then pressed Gouge). A rise Surge's hop
+  // clears takes the cheaper Surge; a taller one, Gouge.
+  const over = riseAhead(world, r);
+  if (!exposed && world.tick % 10 === idPhase(r.id) && over > 0 && over <= TUNE.surgeHop && r.inLake < 0 && surgeReady(world, r)) {
+    return { s: bot.steer ?? 0, f: 0, u: 1 };
+  }
+  if (!exposed && world.tick % 10 === idPhase(r.id) && r.gougeT < 0 && gougeUsable(world, r)) {
     return { s: bot.steer ?? 0, f: 0, k: 1 };
   }
   // Surge on the flat, where the water has slowed and nothing rises ahead.
@@ -203,11 +218,17 @@ export function botSteer(world, bot) {
     // Downhill: how far the water drops along what it can see, per metre (a 4% grade scores 1).
     // (The ground it can see, out to the end of its sight along this heading, filled level over pits.)
     const far = t.filled[cellIndex(t, r.x + hx * seen, r.z + hz * seen)];
-    score += P.down * Math.max(-1, Math.min(2, (t.filled[cellIndex(t, r.x, r.z)] - far) / seen / 0.04));
+    score += 0.5 * P.down * Math.max(-1, Math.min(2, (t.filled[cellIndex(t, r.x, r.z)] - far) / seen / 0.04));
+    // Progress: how much nearer the finish (by the course's own route, round ridges through their gaps)
+    // the water's path ends, per metre run. A dead end at a ridge or a detour to a lake scores low.
+    const tb0 = world.toBeach[cellIndex(t, r.x, r.z)], tb1 = world.toBeach[cellIndex(t, end.x, end.z)];
+    if (tb0 < 1e8 && tb1 < 1e8) score += 1.5 * P.down * Math.max(-1, Math.min(1, (tb0 - tb1) / travelled));
     if (sight.beach >= 0) score += 3 * (1 - sight.beach / TUNE_BOT.view); // the finish beach in sight: go for it
     // Which way the course runs (the way every drop flew in, down the mountain), not where it ends.
     score += TUNE_BOT.course * (hx * t.axis.x + hz * t.axis.y);
-    if (sight.lake >= 0) score += P.lake * 0.5 * Math.max(-1, Math.min(1, (sight.full - 0.6) * 3)) * (1 - sight.lake / TUNE_BOT.view); // a full lake in sight pays, a low one costs
+    // Lakes only while there is race left to use their water: none in the last third.
+    const lakeK = slopeT(world, r.x, r.z) > 0.67 ? 0 : 1;
+    if (sight.lake >= 0) score += lakeK * P.lake * 0.5 * Math.max(-1, Math.min(1, (sight.full - 0.6) * 3)) * (1 - sight.lake / TUNE_BOT.view); // a full lake in sight pays, a low one costs
     if (end.blocked) score -= 0.6;
     // A canyon mouth ahead and within reach: its water runs fast (it shows on the map and from far off).
     for (const c of t.canyons ?? []) {
@@ -225,7 +246,7 @@ export function botSteer(world, bot) {
         // A full lake pays (its stored water drains out to you through your
         // outlet); a low one costs, since your water goes into filling it first.
         const full = world.lakeVol[lake] / world.lakeCap[lake];
-        score += (P.lake * (0.6 + bot.skill) * w * Math.max(-1, Math.min(1, (full - 0.85) * 6))) / path.length * 3;
+        score += (lakeK * P.lake * (0.6 + bot.skill) * w * Math.max(-1, Math.min(1, (full - 0.85) * 6))) / path.length * 3;
       }
       if (world.lava[k]) score -= (3 * w) / path.length * 3; // lava boils water off
       const o = world.owner[k];
