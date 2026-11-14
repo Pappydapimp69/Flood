@@ -188,7 +188,7 @@ export const TUNE = {
   stormMaxWater: 5_000_000, // ...carrying at most this much, rained out until it's empty
   cloudWater: [150_000, 450_000],
   slopeCloudAlt: 350, // metres above the ground a low slope cloud hangs
-  glideSpeed: 95, // m/s across the ground while falling (owner 2026-11-14: a longer descent, not a slower one; was 82.5, cut 25% from 110 on 2026-11-09) (stick all the way: x1.8, stick let go: x0.4)
+  glideSpeed: 130, // m/s across the ground while falling (owner 2026-11-14: start further back on the longer island, same 120 s: drops now start about 15 km behind the summits; was 95, before that 82.5, cut 25% from 110 on 2026-11-09) (stick all the way: x1.8, stick let go: x0.4)
   // Bumps between falling drops: touching (within bumpRadius across and
   // bumpDepth up or down) and closing, they knock each other off course and
   // both lose water to spray, the one hit harder (the lighter, or the one rammed) more.
