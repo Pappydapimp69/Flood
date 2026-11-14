@@ -134,3 +134,4 @@ break is untested; the dam's own look is plain dark rock.
 - Training maps start on the start line: no descent (drop off, as `?nodrop`).
 - A river can break the landslide dam early (Gouge or wear), and bots try it.
 - The slide coming down and the flood wave running down the valley are visible as they happen.
+- Training: Select pauses and frees the camera (left stick moves, right stick turns and tilts, triggers lower and raise), no HUD boxes; Select again flies back to your river over 2 s, then resumes. Elsewhere Select still opens the map.
