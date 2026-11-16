@@ -201,7 +201,7 @@ export function botSteer(world, bot) {
     let p = null, d = 2500;
     for (const b of sl.basins) {
       const q = Math.hypot(b.x - r.x, b.z - r.z);
-      if (q < d && world.lakeVol[b.id] < world.lakeCap[b.id] * 0.9 && (b.x - r.x) * sl.axis.x + (b.z - r.z) * sl.axis.z > -200) { p = b; d = q; }
+      if (q < d && !b.filled && (b.x - r.x) * sl.axis.x + (b.z - r.z) * sl.axis.z > -200) { p = b; d = q; }
     }
     if (p) {
       const cross = r.dx * (p.z - r.z) - r.dz * (p.x - r.x);

@@ -2727,9 +2727,11 @@ export const SLIDE = {
   // The trigger (owner, 2026-11-16): dry basins spread over the course above the dam. Rivers fill them as they fill
   // any lake, the water seeps into the hill, and once the basins together hold enough the slope gives way (water in
   // a slope is a main driver of landslides, bs flood-113). Several rivers, several spots; no timer.
-  basins: 4, // dry basins above the dam that feed the hill
+  basins: 6, // dry basins above the dam that feed the hill
+  need: 4, // basins that must have been filled to bring it down (owner, 2026-11-16: four of six)
+  full: 0.9, // a basin counts once it is this full, and stays counted: rivers drain lakes through their outlets and
+  // the heat front dries them, so counting the water they hold now never added up
   basinFrom: 1500, basinTo: 12000, // metres of route above the dam they lie between
-  seep: 0.4, // share of the basins' combined capacity that brings the slope down
   crackTicks: 140, // then 7 s of widening cracks and trickling stones before the mass comes down
   slopeLong: 2500, // metres along the valley the cracked slope runs (it marks itself across the whole stretch)
   // The slide itself: blocks break off the scar and fall, bounce and roll down the real ground (bs flood-116),
@@ -2901,13 +2903,17 @@ function slideStep(world) {
   if (!s || s.state === 'done') return;
   const age = world.tick - s.tick, set = (state) => { s.state = state; s.tick = world.tick; world.events.push({ type: 'slide', phase: state, x: s.x, z: s.z, by: s.by, tick: world.tick }); };
   if (s.state === 'armed') {
-    // The basins' water soaks the hill; enough of it and the slope gives way.
-    let held = 0;
-    for (const b of s.basins) held += world.lakeVol[b.id];
-    s.wet = s.seepCap ? Math.min(1, held / (s.seepCap * SLIDE.seep)) : 0;
-    const step4 = Math.floor(s.wet * 4);
-    if (step4 > (s.wetStep ?? 0) && step4 < 4) { s.wetStep = step4; world.events.push({ type: 'slide', phase: 'soaking', wet: step4 / 4, x: s.x, z: s.z, by: -1, tick: world.tick }); }
-    if (s.wet >= 1 || !s.basins.length) set('cracking');
+    // Each basin filled once counts for good; enough of them and the slope gives way.
+    const need = Math.min(SLIDE.need, s.basins.length);
+    for (const b of s.basins) {
+      if (b.filled || world.lakeVol[b.id] < world.lakeCap[b.id] * SLIDE.full) continue;
+      b.filled = true; s.filled = (s.filled ?? 0) + 1;
+      let by = -1, best = 3000 ** 2;
+      for (const r of world.rivers) { const q = (r.x - b.x) ** 2 + (r.z - b.z) ** 2; if (isRacing(r) && q < best) { best = q; by = r.idx; } }
+      if (s.filled < need) world.events.push({ type: 'slide', phase: 'soaking', filled: s.filled, need, basin: b.id, x: b.x, z: b.z, by, tick: world.tick });
+    }
+    s.wet = need ? Math.min(1, (s.filled ?? 0) / need) : 1;
+    if (s.wet >= 1) set('cracking');
     return;
   }
   if (s.state === 'cracking') { if (age >= SLIDE.crackTicks) { releaseBlocks(world, s); s.by = -1; set('falling'); } return; }

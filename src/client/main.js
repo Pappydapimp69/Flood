@@ -1341,7 +1341,7 @@ function makeSlideFx() {
     return { m, b };
   });
   scene.add(split, slabs, trickle);
-  if (s.basins.length) feed(`Fill the ${s.basins.length} dry basins (orange rings) to soak the cracked slope and bring it down`);
+  if (s.basins.length) feed(`Fill ${Math.min(SLIDE.need, s.basins.length)} of the ${s.basins.length} dry basins (orange rings) to bring the cracked slope down`);
   const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5e554c', flatShading: true }), SLIDE.blocks);
   rocks.frustumCulled = false; rocks.count = 0;
   const D = SLIDE.blocks * 3, dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(D * 3), 3)),
@@ -1370,7 +1370,11 @@ function tickSlideFx(now) {
   f.split.visible = show && before;
   f.split.material.opacity = cracking ? 0.7 + 0.3 * Math.sin(now / 45) : 0.25 + 0.6 * wet + 0.1 * Math.sin(now / 300);
   f.slabs.visible = show && before;
-  for (const g of f.rings) { const full = world.lakeVol[g.b.id] >= world.lakeCap[g.b.id] * 0.9; g.m.visible = show && s.state === 'armed' && !full; g.m.material.opacity = 0.35 + 0.3 * Math.sin(now / 250); }
+  // Rings: pulsing orange while a basin waits to be filled; solid gold once it has counted.
+  for (const g of f.rings) {
+    g.m.visible = show && s.state === 'armed';
+    if (g.b.filled) { g.m.material.color.set('#ffd23f'); g.m.material.opacity = 0.9; } else g.m.material.opacity = 0.35 + 0.3 * Math.sin(now / 250);
+  }
   // Trickling stones: a few at first, more as it soaks, all of them and fast while it cracks.
   let tn = 0;
   if (before) {
@@ -1535,7 +1539,11 @@ function advance(inputs) {
         teach('bump', 'Bumping', 'Drops that collide knock each other off course. Whoever hits with more momentum (more water, more speed into the other) <b>wins</b>: the loser spills water and the winner soaks most of it up. Ram lighter drops; dodge heavier ones.', e.x, e.z);
       }
     } else if (e.type === 'slide') {
-      if (e.phase === 'soaking') feed(`The basins are soaking the cracked slope: ${Math.round(e.wet * 100)}% of what brings it down`);
+      if (e.phase === 'soaking') {
+        const who = e.by >= 0 ? world.rivers[e.by] : null;
+        feed(`${who ? nameOf(who) : 'A river'} filled a basin: ${e.filled} of ${e.need} to bring the slope down`);
+        if (who === river) showPop(`BASIN FILLED — ${e.filled} of ${e.need}`);
+      }
       else if (e.phase === 'cracking') {
         showPop('THE SLOPE IS GIVING WAY — 7 seconds');
         feed('The basins have soaked the hill: the slope comes down in 7 seconds');

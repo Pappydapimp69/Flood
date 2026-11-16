@@ -169,3 +169,7 @@ Ideas, not on the list: a glacier outburst, a river jumping course, a valley sto
 - The cracked slope is marked along 2.5 km of the valley: dark cracks, pale broken slabs, a glowing orange split at
   its foot that brightens as the hill soaks, and stones trickling down its face, more as it soaks.
 - Bots over 0.55 aggression make for the nearest basin ahead with room.
+- Reworked again (owner, 2026-11-16): six basins, each a latch. A basin counts the first time it is 90% full and
+  stays counted (rivers drain lakes through their outlets and the heat front dries them, so the water they held at
+  any moment never added up); its ring turns solid gold and the feed names who filled it. Four of six bring the
+  slope down after its 7 s countdown. Bots go for basins not yet counted.
