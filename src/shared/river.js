@@ -127,7 +127,7 @@ export const TUNE = {
   lakeCoolPer: 0.001, lakeCoolLitres: 10_000, lakeCoolMin: 0.25, // lakes are buffs: cooldowns 0.1% shorter per 10k L of lake water taken in (never under a quarter)
   // Skills unlock as a river grows (litres; once unlocked, kept), and share one
   // cooldown: using either restarts it for both, at the length of the one used.
-  surgeUnlock: 1_200_000,
+  surgeUnlock: 1_200_000, // (no longer used: Surge comes on landing)
   // Skills build up with weight (owner, 2026-11-13): the speed builds over skillBuild seconds for a river of
   // skillBuildAt litres, longer as it grows, by (size / that size)^1.5 (computed as q * sqrt q: no pow).
   // The full boost then runs its whole length, and the cooldown starts only once it ends.
@@ -137,7 +137,7 @@ export const TUNE = {
   stormAim: 'pack', // 'pack': storms blow in just ahead of the middle of the field; 'tail': over its back
   catchUp: 0, // extra trickle share for rivers more than catchUpGap behind the leader
   catchUpGap: 3000, // metres behind the leader that count as far behind
-  tailUnlock: true, // far behind, Surge unlocks whatever your size
+  tailUnlock: false, // (no longer used: Surge comes to everyone on landing)
   massEase: 0.04, // share of the way a river's momentum moves to its new size each tick
   stallTicks: 20, stallMin: 30, stallNet: 0.35,
   routeHold: 10, // ticks a head keeps to the way out once it takes it
@@ -1159,10 +1159,9 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
     normalize(r);
   }
   // Skills unlock as the river grows, and stay unlocked.
-  // A river far behind the leader gets Surge before it has grown enough for it: a way
-  // back by speed, not handed water (Brain flood#E112; 36 bot races: tail comebacks 11 -> 20 of 108).
-  const behind = TUNE.tailUnlock && world.leadReach !== undefined && world.toBeach[cellIndex(world.terrain, r.x, r.z)] - world.leadReach > TUNE.catchUpGap;
-  if (!r.surgeOn && (r.volume >= TUNE.surgeUnlock || behind)) { r.surgeOn = true; world.events.push({ type: 'unlock', skill: 'surge', river: r.idx, why: r.volume >= TUNE.surgeUnlock ? 'size' : 'behind', tick: world.tick }); }
+  // Surge comes to every river as it lands, the same for all (owner, 2026-11-16: the tail unlock, Surge for any river
+  // 3 km behind the leader, gave bots Surge before a player who landed first and led). Gouge still comes by size.
+  if (!r.surgeOn) { r.surgeOn = true; world.events.push({ type: 'unlock', skill: 'surge', river: r.idx, why: 'land', tick: world.tick }); }
   if (!r.gougeOn && r.volume >= TUNE.gougeUnlock) { r.gougeOn = true; world.events.push({ type: 'unlock', skill: 'gouge', river: r.idx, tick: world.tick }); }
   // A player's Gouge fires whenever it is ready; bots press it only facing a
   // rise the boost can carry them over (see bot.js).

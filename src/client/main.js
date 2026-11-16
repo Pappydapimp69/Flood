@@ -944,7 +944,7 @@ const STATIONS = [
   { key: 'lake', at: COURSE.lake, trig: COURSE.lake - 0.07, title: 'Station 1 · The lake',
     html: () => 'Straight ahead is a <b>lake</b>. Flow into it: your water pours in and raises it until it spills over the far bank. Cut the outlet and <b>everything that drains through it feeds you</b>. Lakes are the biggest source of water.' },
   { key: 'unlock:surge', at: COURSE.surge, trig: COURSE.surge - 0.04, unlock: 'surge', title: 'Station 2 · Surge',
-    html: () => `On the flat, water slows down. <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}) builds up for a moment (longer the bigger you are), then gives a 2 s burst of speed on top of what you have. It costs a little water. Out on the real course it unlocks once you hold ${(TUNE.surgeUnlock / 1e6).toFixed(1)}M L, or as soon as you fall far behind the leader; here it's yours now. <b>Use it now.</b>` },
+    html: () => `On the flat, water slows down. <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}) builds up for a moment (longer the bigger you are), then gives a 2 s burst of speed on top of what you have. It costs a little water. Out on the real course every river gets it as it lands. <b>Use it now.</b>` },
   { key: 'unlock:gouge', at: COURSE.ridge, trig: COURSE.ridge - 0.05, unlock: 'gouge', title: 'Station 3 · Gouge',
     html: () => `A <b>rock ridge</b> blocks the run. Its only gap is far off by the left wall. <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}) lets you climb over rises for 3 s. Press it <b>as you reach the ridge</b>. Using either skill puts <b>both</b> on cooldown, so time it. (Real course: it unlocks at ${(TUNE.gougeUnlock / 1e6).toFixed(1)}M L.)` },
   { key: 'storm', at: COURSE.storm, trig: COURSE.storm - 0.06, storm: true, title: 'Station 4 · A storm',
@@ -1644,7 +1644,7 @@ function advance(inputs) {
       if (river && e.river === river.idx) { showPop(e.pond ? 'RIDING THE FLOOD — the basin carries you out' : 'CARRIED BY THE FLOOD — 150% top speed'); buzz(1, 600); }
       else feed(`${nameOf(world.rivers[e.river])} ${e.pond ? 'rides the lake out' : 'is caught by the wave'}`);
     } else if (e.type === 'unlock') {
-      if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `${e.why === 'behind' ? "You're far behind the leader, so you get" : "You're big enough for"} <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): it builds up for a moment (longer the bigger you are), then gives a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
+      if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `You've landed: you have <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): it builds up for a moment (longer the bigger you are), then gives a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
       if (river && e.river === river.idx) { showPop(e.skill === 'gouge' ? 'GOUGE unlocked — A / SPACE to boost over a rise' : 'SURGE unlocked — RB / Q for a speed burst'); audio.splash(1); }
     } else if (e.type === 'cloud') {
       // A cloud drains a little every tick: add it up, say it twice a second.
@@ -1726,7 +1726,7 @@ function updateSkill() {
   hud.surge.hidden = !show || !TUNE.surgeOn;
   hud.surge.dataset.state = sState;
   hud.surge.style.setProperty('--cool', river.surgeOn && sLeft && !sBusy ? Math.min(1, sLeft / (river.coolLen ?? TUNE.surgeCool)).toFixed(3) : 0);
-  const sNote = !river.surgeOn ? `unlocks at ${fmtL(TUNE.surgeUnlock)}` : sBusy ? 'surging!' : sState === 'cool' ? `ready in ${Math.ceil(sLeft / TICK_HZ)} s`
+  const sNote = !river.surgeOn ? 'unlocks on landing' : sBusy ? 'surging!' : sState === 'cool' ? `ready in ${Math.ceil(sLeft / TICK_HZ)} s`
     : sState === 'dry' ? 'need more water' : `speed burst · −${Math.round(Math.max(TUNE.gougeMinCost, river.volume * TUNE.surgeShare) / 1000)}k L`;
   if (hud.surgeNote.textContent !== sNote) hud.surgeNote.textContent = sNote;
   // A rise the boost would carry you over: say so, the moment it stops you.
