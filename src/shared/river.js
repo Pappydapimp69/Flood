@@ -2143,7 +2143,9 @@ function pulses(world) {
       // full lake passes it straight on to the head (what flows into a full
       // reservoir flows out), so the head still swells and surges.
       const L = r.inLake;
-      if (sl?.state === 'dammed' && inBasin(world, sl, r.x, r.z)) sl.pondVol += p.flow + p.amount; // trapped: it fills the basin
+      // Behind the dam: all the water upstream drains into the basin (owner, 2026-11-16: counting only heads inside the
+      // basin's cells filled it too slowly and held the valley shut for 30-80 s).
+      if (sl?.state === 'dammed' && world.toBeach[cellIndex(t, r.x, r.z)] >= sl.reach) sl.pondVol += p.flow + p.amount;
       else if (L >= 0 && lakeLevel(world, L) < world.lakeBrim[L]) { world.lakePending[L] += p.flow + p.amount; world.lakeFlow[L] += p.flow; }
       else if (p.amount > 0) {
         grow(r, p.amount);
@@ -2794,7 +2796,7 @@ export const SLIDE = {
   // point, holding pondPerCell litres per metre of depth (a lake holds 25k a cell). It fills only with water: the
   // pulses of rivers whose heads are trapped in it, and the pulses of rivers already past the dam, whose channels the
   // debris cut (their water stops at the dam). It breaks only when full; wearing the crest no longer breaks it.
-  pondPerCell: 300,
+  pondPerCell: 120, // (300 held the valley shut 24-38 s after the fall; 120 fills in about 10-15 s)
   pondArea: 2500, // metres of the drawn pond plane above the dam (the client's sheet, clipped by the valley sides)
   pondCells: 900, // the basin is at most this many cells, nearest the dam first (a wide floor ran to 3,000 and took minutes)
   cutRock: 15, // metres of debris over a channel that cut it
