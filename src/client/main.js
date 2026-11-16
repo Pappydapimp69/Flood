@@ -303,7 +303,7 @@ try { courseWanted = localStorage.getItem('flood.course') || 'ski'; } catch { /*
 if (params.has('course')) courseWanted = params.get('course');
 // Training's test maps (owner, 2026-11-14): not in the Course list, started from the menu's Training entries.
 // The Landslide: a small map where a slope comes down ahead of the leader, dams the valley and bursts.
-const TRAINING = { slide: { seed: 11 } }; // 11 on the full-size map: most finishers and fewest knockouts of 12 seeds with six ringed lakes (bot races, 2026-11-16), and its dam fills in about 34 s
+const TRAINING = { slide: { seed: 11 } }; // 11 on the full-size map: most finishers and fewest knockouts of 12 seeds with six ringed lakes (bot races, 2026-11-16), and its dam fills in about 10 s
 let trainingCourse = TRAINING[params.get('course')] ? params.get('course') : null;
 if (!COURSES.some(([k]) => k === courseWanted)) courseWanted = 'ski';
 const botCount = () => (params.has('bots') ? Math.max(0, Math.min(79, Number(params.get('bots')))) : riversWanted - 1);

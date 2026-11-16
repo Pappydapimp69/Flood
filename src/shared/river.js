@@ -2774,7 +2774,9 @@ export const SLIDE = {
   // Once enough lakes are reached the hill gives way by the water above it, not a timer (owner, 2026-11-16): every tick
   // it takes in the volume of every river still upstream of the dam, and comes down once it has taken hillLoad. Eight
   // rivers of 700k bring it down in about 5 s; a lone small river takes about a minute.
-  hillLoad: 6e8,
+  // Eight rivers of 700k now take about 10 s (it was 6e8, about 4.5 s: owner 2026-11-16, the slide triggered too quickly
+  // to get clear of it; a hazard is fair when its warning gives time to see it and act).
+  hillLoad: 1.3e9,
   slopeLong: 2500, // metres along the valley the cracked slope runs (it marks itself across the whole stretch)
   // The slide itself: blocks break off the scar and fall, bounce and roll down the real ground (bs flood-116),
   // and where each stops it piles up; the piles are the dam (a hummocky tongue that runs up the far wall, flood-117).
@@ -2795,6 +2797,12 @@ export const SLIDE = {
   // pulses of rivers whose heads are trapped in it, and the pulses of rivers already past the dam, whose channels the
   // debris cut (their water stops at the dam). It breaks only when full; wearing the crest no longer breaks it.
   pondPerCell: 300,
+  // The valley's own inflow (owner 2026-11-16: the basin filled too slowly; a landslide lake fills at its volume over
+  // the inflow, as Baige 2018 filled 2.9e8 m3 in two days at 1,680 m3/s): once the dam closes, the latched lakes above it drain down the valley into the basin
+  // at the rate that fills it in fillSeconds, down to lakeKeep of their brim; trapped rivers' pulses come on top.
+  // Before, only those pulses filled it, so the fewer rivers it held the longer they sat (two trapped waited 40 s).
+  fillSeconds: 12,
+  lakeKeep: 0.3,
   pondArea: 2500, // metres of the drawn pond plane above the dam (the client's sheet, clipped by the valley sides)
   pondCells: 900, // the basin is at most this many cells, nearest the dam first (a wide floor ran to 3,000 and took minutes)
   cutRock: 15, // metres of debris over a channel that cut it
@@ -3015,7 +3023,14 @@ function slideStep(world) {
     return;
   }
   if (s.state === 'dammed') {
-    // The basin fills only with the water pulses pour into it (pulses()); full, it bursts at the low point.
+    // The basin fills with the valley's inflow, the lakes above draining into it, and the water pulses pour into it
+    // (pulses()); full, it bursts at the low point.
+    if (s.cap && s.pondVol < s.cap) {
+      let want = Math.min(s.cap / (SLIDE.fillSeconds * TICK_HZ), s.cap - s.pondVol);
+      const feeders = s.basins.filter((b) => b.filled), spare = (b) => Math.max(0, world.lakeVol[b.id] - world.lakeCap[b.id] * SLIDE.lakeKeep);
+      const pool = feeders.reduce((a, b) => a + spare(b), 0);
+      if (pool > 0) for (const b of feeders) { const take = Math.min(spare(b), want * spare(b) / pool); world.lakeVol[b.id] -= take; s.pondVol += take; }
+    }
     const lip = s.saddle ? Math.max(0, s.saddle.top - s.base) : 0;
     s.level = s.cap ? Math.min(1, s.pondVol / s.cap) * lip : 0;
     if (!s.cap || s.pondVol >= s.cap) {
