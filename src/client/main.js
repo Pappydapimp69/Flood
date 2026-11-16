@@ -1290,27 +1290,58 @@ const roundDot = (() => { const c = document.createElement('canvas'); c.width = 
   return new THREE.CanvasTexture(c); })();
 function clearSlideFx() {
   if (!slideFx) return;
-  for (const o of [slideFx.rocks, slideFx.dust, slideFx.wave, slideFx.cracks]) if (o) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); }
+  for (const o of [slideFx.rocks, slideFx.dust, slideFx.wave, slideFx.cracks, slideFx.split, slideFx.slabs, slideFx.trickle, ...slideFx.rings.map((g) => g.m)]) if (o) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); }
   slideFx = null;
 }
 // Built once a race has a slide: the cracks that mark the slope, the blocks (drawn where the sim has them), their
 // dust, and the wave's white water.
 function makeSlideFx() {
   const s = world.slide, t = world.terrain, n = t.size;
-  // Cracks: jagged dark lines across the slope between its toe and its scar, along the valley.
+  // The cracked slope, marked along its whole 2.5 km (bs flood-120: readable by colour, light and motion): dark
+  // cracks running along it, pale broken slabs on its face, and a glowing split at its foot that brightens as the
+  // hill soaks up the basins' water.
   const r = (() => { let v = s.seedR | 1; return () => ((v = Math.imul(v ^ (v >>> 15), 0x2c1b3c6d) ^ (v + 0x6d2b79f5)) >>> 0) / 4294967296; })();
-  const seg = [];
-  for (let c = 0; c < 9; c++) {
-    const up = s.scarAt * (0.35 + 0.6 * (c / 8)) * 1, along0 = -450 + r() * 200;
-    let px = s.x + s.across.x * up + s.axis.x * along0, pz = s.z + s.across.z * up + s.axis.z * along0;
-    for (let j = 0; j < 8; j++) {
-      const nx = px + s.axis.x * (90 + r() * 60) + s.across.x * (r() - 0.5) * 70, nz = pz + s.axis.z * (90 + r() * 60) + s.across.z * (r() - 0.5) * 70;
-      seg.push(px, surfaceAt(world, px, pz) * VERT + 6, pz, nx, surfaceAt(world, nx, nz) * VERT + 6, nz);
-      px = nx; pz = nz;
+  const L = SLIDE.slopeLong, onSlope = (up, along) => ({ x: s.x + s.across.x * up + s.axis.x * along, z: s.z + s.across.z * up + s.axis.z * along });
+  const seg = [], glow = [];
+  for (let c = 0; c < 14; c++) {
+    const up = s.scarAt * (0.3 + 0.65 * (c / 13));
+    let p = onSlope(up, -L * 0.8 + r() * 200);
+    for (let j = 0; j < Math.round(L / 120); j++) {
+      const q = onSlope(up + (r() - 0.5) * 80, ((p.x - s.x) * s.axis.x + (p.z - s.z) * s.axis.z) + 90 + r() * 60);
+      seg.push(p.x, surfaceAt(world, p.x, p.z) * VERT + 6, p.z, q.x, surfaceAt(world, q.x, q.z) * VERT + 6, q.z);
+      p = q;
     }
+  }
+  const toeUp = Math.max(200, s.scarAt * 0.55);
+  for (let along = -L * 0.8; along < L * 0.2; along += 70) {
+    const p = onSlope(toeUp + Math.sin(along / 90) * 30, along), q = onSlope(toeUp + Math.sin((along + 70) / 90) * 30, along + 70);
+    glow.push(p.x, surfaceAt(world, p.x, p.z) * VERT + 10, p.z, q.x, surfaceAt(world, q.x, q.z) * VERT + 10, q.z);
   }
   const cracks = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(seg, 3)),
     new THREE.LineBasicMaterial({ color: '#2a1d14', transparent: true, opacity: 0.9 }));
+  const split = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(glow, 3)),
+    new THREE.LineBasicMaterial({ color: '#ff8a2a', transparent: true, opacity: 0.4, depthWrite: false }));
+  const SL = 40, slabs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: '#cfc6b6', flatShading: true }), SL);
+  for (let i = 0; i < SL; i++) {
+    const p = onSlope(s.scarAt * (0.4 + r() * 0.55), -L * 0.8 + r() * L), y = surfaceAt(world, p.x, p.z) * VERT;
+    tmpM.compose(tmpP.set(p.x, y + 15, p.z), tmpQ.setFromEuler(tmpE.set(r() * 0.6, r() * 6, r() * 0.6)), tmpS.set(160 + r() * 200, 40 + r() * 50, 90 + r() * 120));
+    slabs.setMatrixAt(i, tmpM);
+  }
+  // Stones trickling down the face, more as the hill soaks: a stream once it cracks.
+  const TN = 36, trickle = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#6d6358', flatShading: true }), TN);
+  trickle.frustumCulled = false;
+  const drips = Array.from({ length: TN }, (_, i) => ({ along: -L * 0.8 + r() * L, phase: r(), size: 8 + r() * 14 }));
+  // The basins: a ring on each rim, pulsing while it has room.
+  const rings = s.basins.map((b) => {
+    let cells = 0; for (let k = 0; k < n * n; k++) if (world.lakeOf[k] === b.id) cells++;
+    const rad = Math.sqrt(cells / Math.PI) * t.cell + 60;
+    const m = new THREE.Mesh(new THREE.RingGeometry(rad, rad + 45, 48).rotateX(-Math.PI / 2), new THREE.MeshBasicMaterial({ color: '#ff9a3a', transparent: true, opacity: 0.6, depthWrite: false, side: THREE.DoubleSide }));
+    m.position.set(b.x, world.lakeBrim[b.id] * VERT + 12, b.z); m.renderOrder = 3;
+    scene.add(m);
+    return { m, b };
+  });
+  scene.add(split, slabs, trickle);
+  if (s.basins.length) feed(`Fill the ${s.basins.length} dry basins (orange rings) to soak the cracked slope and bring it down`);
   const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5e554c', flatShading: true }), SLIDE.blocks);
   rocks.frustumCulled = false; rocks.count = 0;
   const D = SLIDE.blocks * 3, dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(D * 3), 3)),
@@ -1324,7 +1355,7 @@ function makeSlideFx() {
   wave.frustumCulled = false;
   scene.add(cracks, rocks, dust, wave);
   const at = (k) => ({ x: ((k % n) / (n - 1) - 0.5) * W, z: (Math.floor(k / n) / (n - 1) - 0.5) * W });
-  slideFx = { slide: s, cracks, rocks, dust, wave, below, at, spin: [], puff: [] };
+  slideFx = { slide: s, cracks, rocks, dust, wave, below, at, spin: [], puff: [], split, slabs, trickle, drips, rings, onSlope, toeUp };
 }
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler(), tmpP = new THREE.Vector3(), tmpS = new THREE.Vector3();
 function tickSlideFx(now) {
@@ -1333,8 +1364,24 @@ function tickSlideFx(now) {
   if (slideFx?.slide !== s) { clearSlideFx(); makeSlideFx(); }
   const f = slideFx, show = !mapView;
   // Cracks: there from the start; widening (darker, flickering) through the countdown; gone once it falls.
-  f.cracks.visible = show && (s.state === 'armed' || s.state === 'cracking');
-  f.cracks.material.opacity = s.state === 'cracking' ? 0.6 + 0.4 * Math.sin(now / 60) : 0.55;
+  const before = s.state === 'armed' || s.state === 'cracking', cracking = s.state === 'cracking', wet = cracking ? 1 : s.wet ?? 0;
+  f.cracks.visible = show && before;
+  f.cracks.material.opacity = cracking ? 0.6 + 0.4 * Math.sin(now / 60) : 0.5 + 0.4 * wet;
+  f.split.visible = show && before;
+  f.split.material.opacity = cracking ? 0.7 + 0.3 * Math.sin(now / 45) : 0.25 + 0.6 * wet + 0.1 * Math.sin(now / 300);
+  f.slabs.visible = show && before;
+  for (const g of f.rings) { const full = world.lakeVol[g.b.id] >= world.lakeCap[g.b.id] * 0.9; g.m.visible = show && s.state === 'armed' && !full; g.m.material.opacity = 0.35 + 0.3 * Math.sin(now / 250); }
+  // Trickling stones: a few at first, more as it soaks, all of them and fast while it cracks.
+  let tn = 0;
+  if (before) {
+    const live = cracking ? f.drips.length : Math.max(4, Math.round(f.drips.length * wet * 0.6)), speed = cracking ? 0.9 : 0.35;
+    for (let i = 0; i < live; i++) {
+      const d = f.drips[i], u = (now / 1000 * speed + d.phase) % 1, up = s.scarAt * (0.95 - 0.5 * u) , p = f.onSlope(up, d.along);
+      tmpQ.setFromEuler(tmpE.set(u * 20, u * 13, 0));
+      f.trickle.setMatrixAt(tn++, tmpM.compose(tmpP.set(p.x, surfaceAt(world, p.x, p.z) * VERT + d.size, p.z), tmpQ, tmpS.set(d.size, d.size, d.size)));
+    }
+  }
+  f.trickle.count = tn; f.trickle.instanceMatrix.needsUpdate = true; f.trickle.visible = show && tn > 0;
   // Blocks: where the sim has them, turning as they travel; gone where the breach washed them out.
   let m = 0;
   s.blocks.forEach((b, i) => {
@@ -1488,10 +1535,10 @@ function advance(inputs) {
         teach('bump', 'Bumping', 'Drops that collide knock each other off course. Whoever hits with more momentum (more water, more speed into the other) <b>wins</b>: the loser spills water and the winner soaks most of it up. Ram lighter drops; dodge heavier ones.', e.x, e.z);
       }
     } else if (e.type === 'slide') {
-      if (e.phase === 'cracking') {
-        const who = e.by >= 0 ? world.rivers[e.by] : null;
-        showPop(who === river ? 'YOU CUT THE SLOPE — it is coming down' : 'THE SLOPE IS CRACKING');
-        feed(`${who ? nameOf(who) : 'A river'} cut into the foot of the cracked slope: it comes down in 3 s`);
+      if (e.phase === 'soaking') feed(`The basins are soaking the cracked slope: ${Math.round(e.wet * 100)}% of what brings it down`);
+      else if (e.phase === 'cracking') {
+        showPop('THE SLOPE IS GIVING WAY — 7 seconds');
+        feed('The basins have soaked the hill: the slope comes down in 7 seconds');
         audio.splash(0.6);
       } else if (e.phase === 'falling') { showPop('LANDSLIDE — the valley is closing'); feed('The slope is coming down across the valley'); audio.splash(1); }
       else if (e.phase === 'dammed') feed('The landslide has dammed the valley: the pond fills with every river held behind it. Wear down its low point, or wait and ride the flood');

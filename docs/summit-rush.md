@@ -160,3 +160,12 @@ break is untested; the dam's own look is plain dark rock.
 - Bots: the boldest (aggression over 0.65) go for the toe before it falls; the bold (over 0.4) for the low point
   while it holds.
 Ideas, not on the list: a glacier outburst, a river jumping course, a valley stolen through a ridge, a log jam.
+
+### The trigger, reworked (owner, 2026-11-16; built unchecked)
+- No single trigger spot: four dry basins on the course 1.5 to 12 km above the dam (orange rings on their rims).
+  Rivers fill them as any lake; the water soaks the hill, and once they hold 40% of their combined capacity the
+  slope gives way: 7 s of flaring cracks and a stream of stones, then the mass comes down. The feed reports the
+  soaking at 25, 50 and 75%.
+- The cracked slope is marked along 2.5 km of the valley: dark cracks, pale broken slabs, a glowing orange split at
+  its foot that brightens as the hill soaks, and stones trickling down its face, more as it soaks.
+- Bots over 0.55 aggression make for the nearest basin ahead with room.

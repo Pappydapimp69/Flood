@@ -2724,10 +2724,14 @@ export function riverFingerprint(world) {
 // it as they wear any rise, and the client draws it like cooled lava.
 export const SLIDE = {
   at: 0.55, // where along the course the slope stands (share of the course)
-  // The trigger (owner, 2026-11-14: events are triggered, not timed): a cracked slope on one side of the valley
-  // comes down when a river cuts into its toe (bs flood-113: rivers set off landslides by eroding a slope's foot).
-  toeR: 350, // metres from the toe's middle a river's head must come
-  crackTicks: 60, // the countdown from the cut to the fall: 3 s of widening cracks
+  // The trigger (owner, 2026-11-16): dry basins spread over the course above the dam. Rivers fill them as they fill
+  // any lake, the water seeps into the hill, and once the basins together hold enough the slope gives way (water in
+  // a slope is a main driver of landslides, bs flood-113). Several rivers, several spots; no timer.
+  basins: 4, // dry basins above the dam that feed the hill
+  basinFrom: 1500, basinTo: 12000, // metres of route above the dam they lie between
+  seep: 0.4, // share of the basins' combined capacity that brings the slope down
+  crackTicks: 140, // then 7 s of widening cracks and trickling stones before the mass comes down
+  slopeLong: 2500, // metres along the valley the cracked slope runs (it marks itself across the whole stretch)
   // The slide itself: blocks break off the scar and fall, bounce and roll down the real ground (bs flood-116),
   // and where each stops it piles up; the piles are the dam (a hummocky tongue that runs up the far wall, flood-117).
   blocks: 120,
@@ -2790,7 +2794,21 @@ function makeSlide(world) {
   // The floor just above it, where the pond starts.
   let base = Infinity;
   for (let sd = -1500; sd <= 1500; sd += 100) base = Math.min(base, ground(c.x - dx * 400 - dz * sd, c.z - dz * 400 + dx * sd));
-  return { state: 'armed', tick: 0, x: c.x, z: c.z, axis: { x: dx, z: dz }, across: { x: px, z: pz }, from,
+  // The basins: mid-size lakes above the dam, emptied; spread out (no two within 1.5 km).
+  const basins = [];
+  const reachHere = m ? d / m : world.toBeach[cellIndex(t, c.x, c.z)];
+  const cand = world.lakes.filter((l) => l.cells >= TUNE.basinMinCells && l.cells <= TUNE.basinMaxCells && world.lakeOutlet[l.id] >= 0).map((l) => {
+    let x = 0, z = 0, k0 = -1, nn = 0;
+    for (let k = 0; k < n * n; k++) if (world.lakeOf[k] === l.id) { x += wx(k); z += wz(k); nn++; if (k0 < 0) k0 = k; }
+    return { id: l.id, x: x / nn, z: z / nn, at: world.toBeach[k0] };
+  }).filter((b) => b.at > reachHere + SLIDE.basinFrom && b.at < reachHere + SLIDE.basinTo);
+  while (basins.length < SLIDE.basins && cand.length) {
+    const b = cand.splice(Math.floor(r() * cand.length), 1)[0];
+    if (basins.some((o) => Math.hypot(o.x - b.x, o.z - b.z) < 1500)) continue;
+    basins.push(b); world.lakeVol[b.id] = 0;
+  }
+  const cap = basins.reduce((a, b) => a + world.lakeCap[b.id], 0);
+  return { state: 'armed', tick: 0, x: c.x, z: c.z, axis: { x: dx, z: dz }, across: { x: px, z: pz }, from, basins, seepCap: cap, wet: 0,
     toe: { x: c.x + px * toe, z: c.z + pz * toe }, scar: { x: c.x + px * scar, z: c.z + pz * scar }, scarAt: scar,
     reach: m ? d / m : world.toBeach[cellIndex(t, c.x, c.z)], base, level: 0, pondVol: 0, front: 0, rode: new Set(), by: -1, blocks: [], saddle: null, seedR: r() * 1e9 };
 }
@@ -2883,8 +2901,13 @@ function slideStep(world) {
   if (!s || s.state === 'done') return;
   const age = world.tick - s.tick, set = (state) => { s.state = state; s.tick = world.tick; world.events.push({ type: 'slide', phase: state, x: s.x, z: s.z, by: s.by, tick: world.tick }); };
   if (s.state === 'armed') {
-    // A river cutting into the toe sets it off.
-    for (const r of world.rivers) if (isRacing(r) && !r.dropping && (r.x - s.toe.x) ** 2 + (r.z - s.toe.z) ** 2 < SLIDE.toeR ** 2) { s.by = r.idx; set('cracking'); break; }
+    // The basins' water soaks the hill; enough of it and the slope gives way.
+    let held = 0;
+    for (const b of s.basins) held += world.lakeVol[b.id];
+    s.wet = s.seepCap ? Math.min(1, held / (s.seepCap * SLIDE.seep)) : 0;
+    const step4 = Math.floor(s.wet * 4);
+    if (step4 > (s.wetStep ?? 0) && step4 < 4) { s.wetStep = step4; world.events.push({ type: 'slide', phase: 'soaking', wet: step4 / 4, x: s.x, z: s.z, by: -1, tick: world.tick }); }
+    if (s.wet >= 1 || !s.basins.length) set('cracking');
     return;
   }
   if (s.state === 'cracking') { if (age >= SLIDE.crackTicks) { releaseBlocks(world, s); s.by = -1; set('falling'); } return; }

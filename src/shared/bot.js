@@ -193,12 +193,17 @@ export function botSteer(world, bot) {
   const t = world.terrain;
   // The Landslide's dam (Training): a bold bot near it makes for the saddle, the crest's low point, to break
   // through first; the rest wait in the pond to ride the flood.
-  // Before it comes down, the boldest go for the slope's toe to bring it down on the pack (events are targets like
-  // anything else, owner 2026-11-14).
+  // Before it comes down, the bold go for the dry basins that feed the slope, to bring it down on the pack (events
+  // are targets like anything else, owner 2026-11-14).
   const sl = world.slide;
-  if (sl?.state === 'armed' && bot.aggression > 0.65) {
-    const p = sl.toe, d = Math.hypot(p.x - r.x, p.z - r.z);
-    if (d < 3000 && (p.x - r.x) * sl.axis.x + (p.z - r.z) * sl.axis.z > -200) {
+  if (sl?.state === 'armed' && bot.aggression > 0.55) {
+    // The nearest basin ahead that still has room: fill it and bring the slope down.
+    let p = null, d = 2500;
+    for (const b of sl.basins) {
+      const q = Math.hypot(b.x - r.x, b.z - r.z);
+      if (q < d && world.lakeVol[b.id] < world.lakeCap[b.id] * 0.9 && (b.x - r.x) * sl.axis.x + (b.z - r.z) * sl.axis.z > -200) { p = b; d = q; }
+    }
+    if (p) {
       const cross = r.dx * (p.z - r.z) - r.dz * (p.x - r.x);
       bot.steer = Math.abs(cross) < d * 0.08 ? 0 : cross < 0 ? -1 : 1;
       return bot.steer;
