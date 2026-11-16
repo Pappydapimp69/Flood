@@ -639,7 +639,9 @@ function newRun() {
   const all = [PLAYER, ...Array.from({ length: botCount() }, (_, i) => `bot${String(i + 1).padStart(2, '0')}`)].sort();
   names = Object.fromEntries(all.filter((id) => id !== PLAYER).map((id, i) => [id, BOT_NAMES[i % BOT_NAMES.length]]));
   // Reroll until the summit ring seats everyone (the ski map seats 15-18 at spawnGap: past 12, the drops spread the rest).
-  const { seed, world: rolled } = rollIsland(want, Math.min(all.length, 12), 40, trainingCourse ?? (courseWanted === 'ski' ? undefined : courseWanted));
+  const course = trainingCourse ?? (courseWanted === 'ski' ? undefined : courseWanted);
+  // Every solo ski race has the Landslide (owner, 2026-11-16); multiplayer does not yet.
+  const { seed, world: rolled } = rollIsland(want, Math.min(all.length, 12), 40, course, { slide: !course });
   beginRace(seed, all, PLAYER, rolled);
   bots = world.rivers.filter((r) => r !== river).map((r) => createBot(world, r));
   startPlanner();
@@ -1377,7 +1379,7 @@ function makeSlideFx() {
   slumpDust.frustumCulled = false;
   const slumpRocks = Array.from({ length: SN }, () => ({ along: (r() - 0.5) * 700, up: 0.85 + r() * 0.15, delay: r() * 0.5, speed: 0.55 + r() * 0.5, size: 30 + r() * 50, drift: (r() - 0.5) * 120 }));
   scene.add(split, slabs, trickle, fresh, slump, slumpDust);
-  if (s.basins.length) feed(`Reach ${Math.min(SLIDE.need, s.basins.length)} of the ${s.basins.length} ringed lakes (orange rings) to bring the cracked slope down`);
+  if (s.basins.length) feed(`Reach ${Math.min(SLIDE.need, Math.ceil(s.basins.length * 2 / 3))} of the ${s.basins.length} ringed lakes (orange rings) to bring the cracked slope down`);
   const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5e554c', flatShading: true }), SLIDE.blocks);
   rocks.frustumCulled = false; rocks.count = 0;
   const D = SLIDE.blocks * 3, dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(D * 3), 3)),
@@ -1635,8 +1637,11 @@ function advance(inputs) {
         feed(who ? `${nameOf(who)} broke the dam: a flood wave is running down the valley` : 'The basin behind the dam filled and burst: its water is running down the valley, into every lake and channel below');
         audio.splash(1);
       }
+    } else if (e.type === 'flood-gouge') {
+      if (river && e.river === river.idx) { showPop('THE FLOOD LIFTS YOU — free GOUGE'); buzz(0.9, 400); }
+      else feed(`The flood wave lifts ${nameOf(world.rivers[e.river])} over the ground ahead`);
     } else if (e.type === 'flood-ride') {
-      if (river && e.river === river.idx) { showPop(e.pond ? 'RIDING THE FLOOD — the whole lake goes with you' : 'CAUGHT BY THE FLOOD WAVE'); buzz(1, 600); }
+      if (river && e.river === river.idx) { showPop(e.pond ? 'RIDING THE FLOOD — the basin carries you out' : 'CARRIED BY THE FLOOD — 150% top speed'); buzz(1, 600); }
       else feed(`${nameOf(world.rivers[e.river])} ${e.pond ? 'rides the lake out' : 'is caught by the wave'}`);
     } else if (e.type === 'unlock') {
       if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `${e.why === 'behind' ? "You're far behind the leader, so you get" : "You're big enough for"} <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): it builds up for a moment (longer the bigger you are), then gives a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);

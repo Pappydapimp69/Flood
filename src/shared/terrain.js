@@ -368,7 +368,7 @@ export function generateIsland(seed = 1, opts = {}) {
   const filled = fillDepressions(height, n);
   // Where each canyon opens, in world metres (bots and the map aim for it from far off, as a player's eye does).
   const canyons = mouths.filter(Boolean).map((m) => ({ x: (m.x / m.n / (n - 1) - 0.5) * worldSize, z: (m.y / m.n / (n - 1) - 0.5) * worldSize }));
-  return { seed, course, mask, boulders, ...(course === 'slide' ? { along } : {}), fast, canyons, ridge, ridgeFace, ridgeTurf: RIDGE.turf, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
+  return { seed, course, mask, boulders, along, fast, canyons, ridge, ridgeFace, ridgeTurf: RIDGE.turf, size: n, worldSize, cell: worldSize / (n - 1), maxHeight, height, filled,
     summits: summitCells(height, n, shape), axis: { x: shape.ax, y: shape.ay }, long: shape.long, shift: shape.shift ?? 0 };
 }
 

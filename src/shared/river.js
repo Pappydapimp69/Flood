@@ -334,7 +334,7 @@ export function courseDir(world, x, z) {
 }
 export const rule = (world, key) => world.rules?.[key] ?? TUNE[key];
 
-export function createWorld(terrain, { forest = true, lava = true } = {}) {
+export function createWorld(terrain, { forest = true, lava = true, slide = false } = {}) {
   const n = terrain.size;
   // owner: which river last dug each cell. A river never feels its own channel
   // (it would sit at the bottom of its own trench and stall), only rivals'.
@@ -367,8 +367,9 @@ export function createWorld(terrain, { forest = true, lava = true } = {}) {
   world.cooled = []; // cells that turned from lava to rock, for presentation
   world.rock = new Float32Array(n * n); // metres of cooled rock on top of the ground
   world.basins = makeBasins(world);
-  if (lava && terrain.course !== 'slide') makeLava(world);
-  if (terrain.course === 'slide') world.slide = makeSlide(world);
+  // The Landslide: Training's map, and every solo ski race (owner, 2026-11-16); it replaces the lava where it runs.
+  if (terrain.course === 'slide' || (slide && terrain.along)) world.slide = makeSlide(world);
+  if (lava && !world.slide) makeLava(world);
   if (forest) addForest(world);
   return world;
 }
@@ -551,10 +552,10 @@ export function seats(world) {
 
 // The island for a race: from `seed`, the next seed and the next until the
 // summit ring seats every river. Returns the seed used and its fresh world.
-export function rollIsland(seed, rivers, tries = 40, course) {
+export function rollIsland(seed, rivers, tries = 40, course, opts = {}) {
   let world;
   for (let i = 0; i < tries; i++, seed = (seed % 1_000_000) + 1) {
-    world = createWorld(generateIsland(seed, course ? { course } : {}), { forest: false });
+    world = createWorld(generateIsland(seed, course ? { course } : {}), { forest: false, ...opts });
     if (seats(world) >= rivers) break;
   }
   return { seed: world.terrain.seed, world: addForest(world) };
@@ -1079,8 +1080,8 @@ export const gougeUsable = (world, r) => gougeReady(world, r) && gougeTarget(wor
 
 // Gouge never stops the head: the momentum it has is kept and the boost adds
 // to it, speed and size both, for gougeBoost ticks (owner, 2026-11-03).
-function startGouge(world, r) {
-  const cost = gougeCost(r);
+function startGouge(world, r, free = false) {
+  const cost = free ? 0 : gougeCost(r);
   grow(r, -cost);
   // Every gouge also deepens the river's whole channel by 5%, applied with the digs (phase 4), so the
   // order rivers move in can't change what the others feel this tick.
@@ -1088,7 +1089,7 @@ function startGouge(world, r) {
   const cool = coolOf(r, TUNE.gougeCool), build = buildTicks(r);
   // The speed builds over `build` ticks, then the full boost runs; the cooldown starts after both.
   r.boost = build + TUNE.gougeBoost; r.boostLen = r.boost; r.boostBuild = build; r.boostFrom = r.speed;
-  r.gougeAt = r.surgeAt = world.tick + r.boost + cool; r.coolLen = cool; // one cooldown for both skills
+  if (!free) { r.gougeAt = r.surgeAt = world.tick + r.boost + cool; r.coolLen = cool; } // one cooldown for both skills (a free one leaves it)
   r.boostSpeed = Math.max(TUNE.gougeFloor, r.speed + TUNE.baseSpeed * TUNE.gougeAdd * Math.max(1, r.mass ?? 1));
   r.size = sizeOf(r.volume) + TUNE.gougeGrow; // the extra height comes at once: only the speed builds
   r.depth = depthOf(r);
@@ -1097,7 +1098,7 @@ function startGouge(world, r) {
   r.cut = 0; r.cutTicks = 0; r.cutAt = -1; r.cutLake = -1;
   r.netAt = r.stuckAt = world.tick; r.netX = r.stuckX = r.x; r.netZ = r.stuckZ = r.z; r.netT = r.travelled;
   world.events.push({ type: 'gouge-wind', river: r.idx, cost, tick: world.tick });
-  world.events.push({ type: 'gouge', river: r.idx, x: r.x, z: r.z, dx: r.dx, dz: r.dz, tick: world.tick });
+  world.events.push({ type: 'gouge', river: r.idx, x: r.x, z: r.z, dx: r.dx, dz: r.dz, free, tick: world.tick });
 }
 
 const clampUnit = (v) => Math.max(-1, Math.min(1, v | 0));
@@ -2760,7 +2761,7 @@ export const SLIDE = {
   // any lake, the water seeps into the hill, and once the basins together hold enough the slope gives way (water in
   // a slope is a main driver of landslides, bs flood-113). Several rivers, several spots; no timer.
   basins: 6, // lakes above the dam that feed the hill
-  need: 4, // lakes that must have been reached to bring it down (owner, 2026-11-16: four of six)
+  need: 4, // lakes that must have been reached (two-thirds of them where a map has fewer than six) to bring it down (owner, 2026-11-16: four of six)
   // The lakes are ordinary lakes, 90% full, and the first river into one latches it (owner, 2026-11-16): filling them
   // by pulses failed, as rivers left a lake before it filled and either lost their pulses to it or stopped filling it.
   start: 0.9,
@@ -2799,12 +2800,13 @@ export const SLIDE = {
   damHalf: 350, // metres either side of the line it covers, tapering off
   breachR: 300, // metres either side of the low point that wash out when it bursts; the rest stays and narrows the river
   burstTicks: 16, // the breach opens in 0.8 s
-  waveSpeed: 420, // m/s down the route
+  // The burst (owner, 2026-11-16): it carries every river behind the dam at carry times top speed for the whole
+  // wave, and the wave runs at that speed so they stay on it; a river ahead that the front reaches gets a free Gouge.
+  carry: 1.5,
+  waveSpeed: 360, // m/s down the route: carry times top speed (240)
   waveTicks: 200, // the wave runs 10 s (about 8 km)
   waveBand: 700, // metres behind the front that still catch it
-  rideTicks: 70, // a ride lasts 3.5 s...
-  rideSpeed: 520, // ...at least this fast
-  rideFromPond: 1.4, // a river that waited in the pond rides this much faster and longer
+  rideFromPond: 1.4, // a river that waited in the basin takes this much more of its water
   gift: 0.25, // of the start volume: the most of the pond's water each rider takes with it
   // The burst is the basin's own water and goes into the systems below (closed loop, owner 2026-11-16; bs flood-124:
   // lakes below store an outburst, channels carry it): riders take their share, each lake the front reaches fills
@@ -2981,7 +2983,7 @@ function slideStep(world) {
   const age = world.tick - s.tick, set = (state) => { s.state = state; s.tick = world.tick; world.events.push({ type: 'slide', phase: state, x: s.x, z: s.z, by: s.by, tick: world.tick }); };
   if (s.state === 'armed') {
     // Each basin filled once counts for good; enough of them and the slope gives way.
-    const need = Math.min(SLIDE.need, s.basins.length);
+    const need = Math.min(SLIDE.need, Math.ceil(s.basins.length * 2 / 3));
     for (const b of s.basins) {
       if (b.filled) continue;
       const r = world.rivers.find((o) => isRacing(o) && !o.dropping && o.inLake === b.id); // the first river into it latches it
@@ -3039,7 +3041,7 @@ function slideStep(world) {
   for (const r of world.rivers) {
     if (!isRacing(r) || r.dropping || s.wave <= 0) continue;
     const at = world.toBeach[cellIndex(t, r.x, r.z)];
-    if (!s.rode.has(r.idx) && at <= hi && at >= lo) { ride(world, s, r, 1); continue; }
+    if (!s.rode.has(r.idx) && at <= hi && at >= lo) { s.rode.add(r.idx); startGouge(world, r, true); world.events.push({ type: 'flood-gouge', river: r.idx, tick: world.tick }); continue; }
     // A channel the front crosses (a river whose head is further down): the wave pours into it there.
     if (at >= lo || s.fed?.has(r.idx)) continue;
     for (let i = r.path.length - 1; i >= 0; i -= 2) {
@@ -3061,10 +3063,11 @@ function slideStep(world) {
 }
 
 // Rivers held in the pond when it breaks: they go with the whole lake.
+// Every river behind the dam rides the burst; those in the basin take a bigger share of its water.
 function ridePond(world, s) {
   for (const r of world.rivers) {
     if (!isRacing(r) || r.dropping) continue;
-    if (inBasin(world, s, r.x, r.z)) ride(world, s, r, SLIDE.rideFromPond);
+    if (world.toBeach[cellIndex(world.terrain, r.x, r.z)] >= s.reach - 300) ride(world, s, r, inBasin(world, s, r.x, r.z) ? SLIDE.rideFromPond : 1);
   }
 }
 export const inBasin = (world, s, x, z) => !!s?.pond?.[cellIndex(world.terrain, x, z)];
@@ -3109,8 +3112,8 @@ function ride(world, s, r, k) {
   s.rode.add(r.idx);
   const take = Math.min(s.wave ?? 0, TUNE.startVolume * SLIDE.gift * k); // out of the basin's water, never made
   s.wave -= take; grow(r, take);
-  r.surgeT = 0; r.surgeBuild = 0; r.surgeFrom = r.speed; r.surgeLen = Math.round(SLIDE.rideTicks * k);
-  r.surgeSpeed = Math.max(SLIDE.rideSpeed * k, r.speed + TUNE.baseSpeed * TUNE.surgeAdd);
+  r.surgeT = 0; r.surgeBuild = 0; r.surgeFrom = r.speed; r.surgeLen = SLIDE.waveTicks; // carried for the whole wave
+  r.surgeSpeed = SLIDE.carry * TUNE.maxSpeed;
   r.surgeAt = Math.max(r.surgeAt ?? 0, world.tick + r.surgeLen);
   world.events.push({ type: 'flood-ride', river: r.idx, pond: k > 1, tick: world.tick });
 }
