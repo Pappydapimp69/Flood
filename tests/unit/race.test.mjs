@@ -53,33 +53,22 @@ function duel() {
   return { w, a, b, park };
 }
 
-test('contact: the deeper river siphons the shallower until it dries up', () => {
+test('contact: touching heads bounce apart, the deeper keeps its line, and no water moves', () => {
+  // Owner, 2026-11-16 (docs/collisions.md): a deeper head touching yours knocked you out in a second; heads now collide.
   const { w, a, b, park } = duel();
-  a.volume = TUNE.startVolume * 16; // size 2: cuts twice as deep at the same speed
-  a.size = 2;
+  a.volume = TUNE.startVolume * 16; a.size = 2; // the deeper one
   park();
-  const b0 = b.volume;
+  const a0 = a.volume, b0 = b.volume;
   step(w, new Map());
-  const s = w.events.filter((e) => e.type === 'siphon' && e.how === 'head');
-  assert.equal(s.length, 1);
-  assert.equal(s[0].from, b.idx);
-  const lead = (a.depth - b.depth) / b.depth;
-  assert.ok(lead > 0.3, `lead ${lead}`);
-  // The head siphon, netted with any junction flow between the pair (head
-  // depth against the other's channel as cut there) to one transfer.
-  const want = b0 * TUNE.siphonRate * Math.min(1, lead);
-  assert.ok(s[0].amount > 0 && s[0].amount <= want * 1.05, `took ${s[0].amount}, at most ${want}`);
-  // Hold the contact: b drains to the floor and is out, credited to a.
-  for (let k = 0; k < 400 && !b.out; k++) { park(); step(w, new Map()); }
-  assert.equal(b.out?.by, 'a');
-  assert.ok(b.volume < knockoutFloor(b));
-  // Every litre b lost to siphoning arrived at a (lakes and travel add on top).
-  // and between the pair, water only ever moved one way in a tick.
-  const moved = w.events.filter((e) => e.type === 'siphon');
-  const ticks = new Map();
-  for (const e of moved) { const k = `${e.tick}`; ticks.set(k, (ticks.get(k) ?? new Set()).add(e.from)); }
-  assert.ok([...ticks.values()].every((f) => f.size === 1), 'water flowed both ways in one tick');
-  assert.ok(moved.filter((e) => e.to === a.idx).length > moved.length / 2, 'most of the water did not go to the deeper river');
+  const bump = w.events.find((e) => e.type === 'bump' && e.landed);
+  assert.ok(bump, 'no bounce');
+  assert.equal(bump.hitter, a.idx, 'the deeper head should keep its line');
+  assert.ok(!w.events.some((e) => e.type === 'siphon' && e.how === 'head'), 'heads should not drain each other');
+  assert.ok(Math.hypot(b.kx ?? 0, b.kz ?? 0) > 2 * Math.hypot(a.kx ?? 0, a.kz ?? 0), 'the shallower should be knocked off its line, the deeper barely');
+  // Holding them together never knocks anyone out: knockouts come only through channels.
+  for (let k = 0; k < 200; k++) { park(); step(w, new Map()); }
+  assert.ok(!a.out && !b.out);
+  assert.ok(b.volume > b0 * 0.5 && a.volume > a0 * 0.5);
 });
 
 test('contact: equal depths move nothing', () => {
@@ -306,17 +295,19 @@ test('no river goes back behind the start line, even aimed uphill with a boost',
 });
 
 // Far behind the leader, Surge unlocks whatever the river's size (TUNE.tailUnlock).
-test('a river far behind the leader gets Surge before it is big enough', () => {
+test('Surge unlocks at volume only: a river far behind the leader does not get it early', () => {
+  // Owner, 2026-11-16: the same threshold for every river; no catch-up or landing unlock.
   const { world: w } = rollIsland(7, 2);
   const line = startLine(w), n = w.terrain.size, ws = w.terrain.worldSize, at = (c) => ({ x: ((c % n) / (n - 1) - 0.5) * ws, z: (Math.floor(c / n) / (n - 1) - 0.5) * ws });
   let ahead = -1;
-  for (let k = 0; k < n * n; k++) if (w.toBeach[k] > 0 && w.toBeach[k] < line.L - TUNE.catchUpGap - 2000 && w.lakeOf[k] < 0 && (ahead < 0 || w.toBeach[k] > w.toBeach[ahead])) ahead = k;
+  for (let k = 0; k < n * n; k++) if (w.toBeach[k] > 0 && w.toBeach[k] < line.L - 5000 && w.lakeOf[k] < 0 && (ahead < 0 || w.toBeach[k] > w.toBeach[ahead])) ahead = k;
   const lead = addRiver(w, 'lead', at(ahead)), tail = addRiver(w, 'tail', at(line.cells[line.cells.length >> 1]));
-  assert.ok(tail.volume < TUNE.surgeUnlock && !tail.surgeOn);
+  assert.ok(tail.volume < TUNE.surgeUnlock);
   step(w, new Map());
-  assert.ok(tail.surgeOn, 'the far-behind river has Surge');
-  assert.ok(!lead.surgeOn, 'the leader does not');
-  assert.equal(w.events.find((e) => e.type === 'unlock' && e.river === tail.idx)?.why, 'behind');
+  assert.ok(!tail.surgeOn, 'the far-behind river got Surge before it was big enough');
+  tail.volume = TUNE.surgeUnlock * 1.01;
+  step(w, new Map());
+  assert.ok(tail.surgeOn, 'a river at the unlock volume should have Surge');
 });
 
 // The cone: everyone starts together in the lane's narrow mouth (jittered inside it), the same on every machine.

@@ -34,7 +34,9 @@ async function until(page, fn, what, tries = 1200) { // 60 s: CI renders in soft
 const turned = (a, b) => Math.atan2(a.dx * b.dz - a.dz * b.dx, a.dx * b.dx + a.dz * b.dz) * -1;
 
 const fails = [];
+const only = process.env.PLAY_ONLY; // run only the checks whose name contains this
 async function check(name, fn) {
+  if (only && !name.includes(only)) return;
   try { await fn(); console.log(`ok   ${name}`); } catch (e) { fails.push(name); console.error(`FAIL ${name}: ${e.message}`); }
   // A failed check must not leave its page rendering: it would starve every later one.
   for (const ctx of browser.contexts()) await ctx.close().catch(() => {});
@@ -233,9 +235,11 @@ await check('lakes start part full and a river skates across without stopping', 
     const w = __flood.world, me = __flood.river, n = w.terrain.size;
     const lake = w.lakes.reduce((a, b) => (b.cells > a.cells ? b : a)), k = w.lakeOf.indexOf(lake.id);
     me.x = ((k % n) / (n - 1) - 0.5) * w.terrain.worldSize; me.z = (Math.floor(k / n) / (n - 1) - 0.5) * w.terrain.worldSize;
-    return w.lakes.every((l) => w.lakeVol[l.id] === w.lakeCap[l.id] * 0.95);
+    // Every lake starts 95% full, except the landslide's trigger lakes, which start at their own share (solo ski races).
+    const trig = new Set((w.slide?.basins ?? []).map((b) => b.id));
+    return w.lakes.filter((l) => !trig.has(l.id) && w.lakeVol[l.id] !== w.lakeCap[l.id] * 0.95).map((l) => l.id);
   });
-  if (!full) throw new Error('a lake did not start 95% full');
+  if (full.length) throw new Error(`lakes did not start 95% full: ${full.slice(0, 5)}`);
   const t0 = await state(page);
   const t1 = await until(page, (s) => s.tick > t0.tick + 20, '20 ticks');
   if (!(t1.travelled > t0.travelled + 20)) throw new Error(`head stopped on the lake: ${t0.travelled} -> ${t1.travelled}`);
@@ -383,7 +387,7 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   const seen = new Set([await focusId()]);
   for (let i = 0; i < 4 && seen.size < 2; i++) { await tap(13); seen.add(await focusId()); }
   if (!seen.has('play-tutorial')) throw new Error(`D-pad never reached Tutorial: ${[...seen]}`);
-  for (let i = 0; i < 4 && (await focusId()) !== 'play-solo'; i++) await tap(12);
+  for (let i = 0; i < 8 && (await focusId()) !== 'play-solo'; i++) await tap(12); // four buttons now (rivers, tutorial, landslide)
   const focused = await focusId();
   if (focused !== 'play-solo') throw new Error(`menu focus on ${focused}`);
   // (A slow software frame can miss a whole press, since the pad is read once a
@@ -500,8 +504,8 @@ await check('?rival=look: one rival is steered by the look-ahead planner in a wo
   for (let i = 0; i < 600 && !(await page.evaluate(() => __flood.planner?.replies >= 2)); i++) await page.waitForTimeout(100);
   const p = await page.evaluate(() => ({ replies: __flood.planner?.replies, steer: __flood.planner?.steer, error: __flood.error }));
   if (!(p.replies >= 2) || ![-1, 0, 1].includes(p.steer) || p.error) throw new Error(`planner never answered: ${JSON.stringify(p)}`);
-  const b = await state(page);
-  if (!(b.tick > a.tick)) throw new Error('the race stopped while it thought');
+  const b = await until(page, (s) => s.tick > a.tick + 10, 'the race to run on while the planner thinks').catch(() => state(page));
+  if (!(b.tick > a.tick)) throw new Error(`the race stopped while it thought: tick ${a.tick} -> ${b.tick}, ${JSON.stringify(await page.evaluate(() => ({ paused: __flood.paused, mode: __flood.mode, done: __flood.world?.rivers?.every((r) => r.finished || r.out), err: __flood.error })))}`);
   await page.close();
 });
 

@@ -1495,8 +1495,10 @@ function bounceHeads(world, a, b, dx, dz) {
   const key = `${a.id}|${b.id}`, cool = (world.headBumps ??= new Map());
   if (world.tick < (cool.get(key) ?? -1)) return;
   cool.set(key, world.tick + TUNE.headCool);
-  const d = Math.hypot(dx, dz) || 1, nx = dx / d, nz = dz / d; // from b toward a
   const [deep, shallow] = a.depth >= b.depth ? [a, b] : [b, a], sign = shallow === a ? 1 : -1;
+  // Heads on the very same spot have no line between them: knock the shallower across the deeper's heading.
+  if (Math.hypot(dx, dz) < 1e-3) { dx = -deep.dz * sign; dz = deep.dx * sign; }
+  const d = Math.hypot(dx, dz) || 1, nx = dx / d, nz = dz / d; // from b toward a
   const ks = TUNE.headKnock, kd = TUNE.headKnock * TUNE.headKnockDeep;
   shallow.kx = (shallow.kx ?? 0) + sign * nx * ks; shallow.kz = (shallow.kz ?? 0) + sign * nz * ks;
   deep.kx = (deep.kx ?? 0) - sign * nx * kd; deep.kz = (deep.kz ?? 0) - sign * nz * kd;
