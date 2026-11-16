@@ -18,10 +18,12 @@ export const TUNE = {
   // Downhill, speed levels off instead of rising with steepness (T181, owner
   // 2026-11-06): extra speed = satSpeed * (1 - e^(-slope / satSlope)).
   satSpeed: 90, satSlope: 0.015,
-  climbDrag: 0.03, // share of speed a climb takes per tick at a 5% rise, boosted or not
+  // Every momentum loss a landed river takes is 10% less than it was (owner, 2026-11-16): climbs, slowing, forest,
+  // trees felled, lava and being blocked.
+  climbDrag: 0.027, // share of speed a climb takes per tick at a 5% rise, boosted or not (was 0.03)
   maxSpeed: 240,
   speedEase: 0.2, // share of the way to target speed per tick, at starting size, speeding up (was 0.12: regaining speed felt slow)...
-  slowEase: 0.03, // ...and slowing down (divided by size): carried speed halves in about 1.1 s, not 0.27 s
+  slowEase: 0.027, // (was 0.03) ...and slowing down (divided by size): carried speed halves in about 1.1 s, not 0.27 s
   climb: 1.5, // metres any head can rise over before it is blocked, before its head height
   headPerSize: 2, // metres the water stands at the head per unit of size: what it can push over
   headLook: 150,
@@ -224,15 +226,15 @@ export const TUNE = {
   lavaLength: 70,
   steam: 0.006,
   steamFloor: 1.15,
-  lavaSlow: 0.6,
+  lavaSlow: 0.64, // (0.6: a 40% loss, now 36%)
   damHeight: 4,
   // Trees: what a river must be to knock a stand flat, and how tall a stand
   // stands to one that can't.
   treeBreak: 1.3,
   treeHeight: 14, // (no longer a rise: see forestDrag)
-  forestDrag: 0.35, // a small river among trees runs at this share of its speed
+  forestDrag: 0.415, // (0.35: a 65% loss, now 58.5%) // a small river among trees runs at this share of its speed
   canyonBoost: 1.35, // water confined in a canyon (terrain.fast) runs this much faster: the lane worth steering for
-  treeCost: 0.03, // share of its speed a head of size 1 loses per tick ploughing through forest its full width; divided by size
+  treeCost: 0.027, // (was 0.03) // share of its speed a head of size 1 loses per tick ploughing through forest its full width; divided by size
   // A head breaks trees by force: size x speed / base speed >= treeBreak (a small fast head smashes through, a slow one is held up).
   // The heat front: from heatStart ticks (counted from the start of the drop)
   // a heat wave rolls down the mountain at heatSpeed m/s. It never touches a
@@ -1450,7 +1452,7 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
       nx = r.x + d.x * v * DT; nz = r.z + d.z * v * DT;
     } else {
       nx = r.x; nz = r.z;
-      r.speed *= 0.8;
+      r.speed *= 0.82; // (0.8: a 20% loss, now 18%)
     }
   }
   if (r.route !== null) {
