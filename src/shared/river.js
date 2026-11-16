@@ -234,7 +234,10 @@ export const TUNE = {
   treeHeight: 14, // (no longer a rise: see forestDrag)
   forestDrag: 0.415, // (0.35: a 65% loss, now 58.5%) // a small river among trees runs at this share of its speed
   canyonBoost: 1.35, // water confined in a canyon (terrain.fast) runs this much faster: the lane worth steering for
-  treeCost: 0.027, // (was 0.03) // share of its speed a head of size 1 loses per tick ploughing through forest its full width; divided by size
+  treeCost: 0.035, // share of its speed a head of size 1 loses per 100 m ploughed through forest its full width, divided by size
+  // (owner, 2026-11-16: was 0.027 per tick, about 42% of its speed a second, so a fast river fell below treeBreak within
+  // 2 s and was held; per 100 m, a 1 km stand costs a size-1 head about 30%; bs flood-130: forest runs about a third as
+  // fast as a clear channel, which forestDrag keeps for a head too slow to break the trees)
   // A head breaks trees by force: size x speed / base speed >= treeBreak (a small fast head smashes through, a slow one is held up).
   // The heat front: from heatStart ticks (counted from the start of the drop)
   // a heat wave rolls down the mountain at heatSpeed m/s. It never touches a
@@ -2638,7 +2641,7 @@ function dig(world, { r, x: px, z: pz, width, depth, bed }) {
     }
   }
   // Ploughing through forest costs speed by the share of the head's footprint that was trees, less for more water.
-  if (felled && !predicting) r.speed *= 1 - (TUNE.treeCost * Math.min(1, felled / Math.max(1, cells))) / Math.max(1, r.size);
+  if (felled && !predicting) r.speed *= 1 - (TUNE.treeCost * (r.speed * DT / 100) * Math.min(1, felled / Math.max(1, cells))) / Math.max(1, r.size);
 }
 
 // A stuck river wears away the ground the way it's pushing: a strip as wide
