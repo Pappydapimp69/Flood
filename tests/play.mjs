@@ -496,6 +496,31 @@ await check('gamepad descent: left stick only steers, right stick up descends, R
   await ctx.close();
 });
 
+await check('tutorial: from the menu, every station teaches and the run reaches the sea', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
+  await page.goto(`${root}?lite&pilot&nohint`);
+  await page.waitForFunction(() => document.getElementById('studio')?.hidden, null, { timeout: 30000 });
+  await page.keyboard.press('Enter');
+  await page.waitForFunction(() => !document.getElementById('menu').hidden, null, { timeout: 30000 });
+  await page.click('#play-tutorial');
+  await until(page, (s) => s.ready, 'tutorial ready');
+  const taught = new Set();
+  for (let i = 0; i < 400; i++) {
+    const st = await page.evaluate(() => ({ lesson: __flood.camState().lesson, title: document.querySelector('#lesson h3')?.textContent ?? '', done: !!__flood.river?.finished, out: !!__flood.river?.out, course: __flood.world.terrain.course, tick: __flood.world.tick }));
+    if (st.course !== 'tutorial') throw new Error(`not the tutorial course: ${st.course}`);
+    if (st.done || st.out) { if (st.out) throw new Error('drained out in the tutorial'); break; }
+    if (st.lesson) { taught.add(st.title || `lesson ${taught.size}`); await page.keyboard.press('Enter'); await page.waitForTimeout(300); continue; }
+    await page.evaluate(() => { __flood.ff = 40; });
+    // A lesson that opens mid fast-forward holds the race, so stop waiting as soon as one shows.
+    await page.waitForFunction(() => !(__flood.ff > 0) || __flood.camState().lesson || __flood.river?.finished, null, { timeout: 60000 })
+      .catch(async () => { throw new Error(`stalled: ${JSON.stringify(await page.evaluate(() => ({ ...__flood.camState(), ff: __flood.ff, tick: __flood.world.tick, splash: !document.getElementById('splash').hidden, menu: !document.getElementById('menu').hidden })))}`); });
+  }
+  const end = await page.evaluate(() => ({ done: !!__flood.river?.finished }));
+  if (!end.done) throw new Error(`the tutorial run never reached the sea (lessons ${[...taught].join(' | ')})`);
+  if (taught.size < 5) throw new Error(`only ${taught.size} lessons played: ${[...taught].join(' | ')}`);
+  await page.close();
+});
+
 await check('?rival=look: one rival is steered by the look-ahead planner in a worker, and the race runs on', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 600 } });
   await page.goto(`${base}&rival=look`);

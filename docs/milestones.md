@@ -481,3 +481,18 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
   one wall; worn past 2 m of turf they wear at a quarter of the rate. Pale crest line, shaded lee.
 - Cost, measured lightly (same 3 seeds, 12 bots): finishers 31 -> 23 of 36, knockouts 3 -> 10, winning time
   127 -> 152 s. Not tuned; not played by hand.
+
+## Playable pass (2026-11-16, Claude owns the game)
+- Every test suite green: unit (80), smoke, play (now with a whole tutorial run), online, alpha. Two unit tests
+  still described replaced rules (heads draining on touch, Surge for the tail); they test the current rules now.
+  Heads on the very same spot had no direction to bounce apart in; they are knocked across the deeper's heading.
+- Skills arrive in the race: Surge at 600k L, Gouge at 800k L, one threshold for every river (at 1.2M and 1.5M,
+  bots got Surge about 95 s into a 150 s race and half never got Gouge; now about 40 s and 80 s after landing).
+- Landslide: rock breaks off the valley's highest steep face within 6 km (it fell off the floor on the full-size
+  maps), warns 8-16 s before falling, the dam grows as the blocks come to rest, the basin fills in 3-9 s from the
+  latched lakes and upstream rivers, and the outburst scours the rest of the dam to 6 m of rubble (the 110 m
+  remnant held rivers away from the breach for up to a minute). `tools/slide-times.mjs` measures it.
+- Screen: the feed folds repeats, each lake's overflow is said once a race and only within 3 km, lake tags only
+  for the nearest three ahead, tags keep off the HUD boxes, the help line sits clear of the buttons and hides
+  under the menu.
+- Measured: 12-bot races finish 9-11 of 12 with 1-2 knockouts; a sim tick takes 0.2-0.35 ms (13 ms at worst).
