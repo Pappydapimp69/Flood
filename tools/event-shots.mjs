@@ -36,7 +36,12 @@ async function shoot(name, aim) {
 // The dam from downstream and to one side, a few km off; the wave from ahead of it, looking back up the valley.
 const atDam = `(() => { const s = __flood.world.slide; return [s.x, s.z, 3800, Math.atan2(s.axis.x, s.axis.z) + 0.6, 0.42]; })()`;
 const atWave = `(() => { const s = __flood.world.slide, p = __flood.waveAt(); return p && [p.x, p.z, 2600, Math.atan2(s.axis.x, s.axis.z) + 0.3, 0.35]; })()`;
+// The face the rock breaks from, seen from across the valley: aimed between the valley's middle and the scar.
+const atFace = `(() => { const s = __flood.world.slide, u = (s.toeAt + s.scarAt) / 2; return [s.x + s.across.x * u, s.z + s.across.z * u, 3000, Math.atan2(-s.across.x, -s.across.z), 0.25]; })()`;
 const plan = [
+  ['0-cracking', "s.state === 'cracking' && since >= 60", atFace],
+  ['1-face-fall', "s.state === 'falling' && since >= 30", atFace],
+  ['1-face-fall-late', "s.state === 'falling' && since >= 90", atFace],
   ['1-fall-early', "s.state === 'falling' && since >= 8", atDam],
   ['2-fall-mid', "s.state === 'falling' && since >= 20", atDam],
   ['3-dammed', "s.state === 'dammed' && s.level > 40", atDam],

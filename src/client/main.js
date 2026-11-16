@@ -1310,6 +1310,9 @@ function clearSlideFx() {
   for (const o of [slideFx.rocks, slideFx.dust, slideFx.wave, slideFx.cracks, slideFx.split, slideFx.slabs, slideFx.trickle, slideFx.fresh, slideFx.slump, slideFx.slumpDust, ...slideFx.rings.map((g) => g.m)]) if (o) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); }
   slideFx = null;
 }
+// A share of the way up the slide's face, as metres out from the valley's middle: 0 at the toe, where the side starts
+// to rise, 1 at the scar on top (owner, 2026-11-16: the rocks fall from the slopes, not the middle of the valley).
+const faceUp = (s, u) => (s.toeAt ?? 0) + u * (s.scarAt - (s.toeAt ?? 0));
 // Built once a race has a slide: the cracks that mark the slope, the blocks (drawn where the sim has them), their
 // dust, and the wave's white water.
 function makeSlideFx() {
@@ -1321,7 +1324,7 @@ function makeSlideFx() {
   const L = SLIDE.slopeLong, onSlope = (up, along) => ({ x: s.x + s.across.x * up + s.axis.x * along, z: s.z + s.across.z * up + s.axis.z * along });
   const seg = [], glow = [];
   for (let c = 0; c < 14; c++) {
-    const up = s.scarAt * (0.3 + 0.65 * (c / 13));
+    const up = faceUp(s, 0.3 + 0.65 * (c / 13));
     let p = onSlope(up, -L * 0.8 + r() * 200);
     for (let j = 0; j < Math.round(L / 120); j++) {
       const q = onSlope(up + (r() - 0.5) * 80, ((p.x - s.x) * s.axis.x + (p.z - s.z) * s.axis.z) + 90 + r() * 60);
@@ -1329,7 +1332,7 @@ function makeSlideFx() {
       p = q;
     }
   }
-  const toeUp = Math.max(200, s.scarAt * 0.55);
+  const toeUp = faceUp(s, 0.25);
   for (let along = -L * 0.8; along < L * 0.2; along += 70) {
     const p = onSlope(toeUp + Math.sin(along / 90) * 30, along), q = onSlope(toeUp + Math.sin((along + 70) / 90) * 30, along + 70);
     glow.push(p.x, surfaceAt(world, p.x, p.z) * VERT + 10, p.z, q.x, surfaceAt(world, q.x, q.z) * VERT + 10, q.z);
@@ -1340,7 +1343,7 @@ function makeSlideFx() {
   split.renderOrder = 3;
   const SL = 40, slabs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: '#cfc6b6', flatShading: true }), SL);
   for (let i = 0; i < SL; i++) {
-    const p = onSlope(s.scarAt * (0.4 + r() * 0.55), -L * 0.8 + r() * L), y = surfaceAt(world, p.x, p.z) * VERT;
+    const p = onSlope(faceUp(s, 0.4 + r() * 0.55), -L * 0.8 + r() * L), y = surfaceAt(world, p.x, p.z) * VERT;
     tmpM.compose(tmpP.set(p.x, y + 15, p.z), tmpQ.setFromEuler(tmpE.set(r() * 0.6, r() * 6, r() * 0.6)), tmpS.set(160 + r() * 200, 40 + r() * 50, 90 + r() * 120));
     slabs.setMatrixAt(i, tmpM);
   }
@@ -1363,9 +1366,9 @@ function makeSlideFx() {
   const NB = Math.max(1, s.basins.length), stretches = Array.from({ length: NB }, (_, i) => -L * 0.8 + L * (i + 0.2 + r() * 0.6) / NB);
   const fseg = [], FS = 9; // segments per new crack
   for (const a0 of stretches) {
-    let p = onSlope(s.scarAt * 0.92, a0);
+    let p = onSlope(faceUp(s, 0.92), a0);
     for (let j = 0; j < FS; j++) {
-      const up = s.scarAt * (0.92 - 0.6 * (j + 1) / FS), q = onSlope(up, a0 + (r() - 0.5) * 140 + (j - FS / 2) * 12);
+      const up = faceUp(s, 0.92 - 0.6 * (j + 1) / FS), q = onSlope(up, a0 + (r() - 0.5) * 140 + (j - FS / 2) * 12);
       fseg.push(p.x, surfaceAt(world, p.x, p.z) * VERT + 8, p.z, q.x, surfaceAt(world, q.x, q.z) * VERT + 8, q.z);
       p = q;
     }
@@ -1412,7 +1415,7 @@ function tickSlideFx(now) {
   const filled = s.filled ?? 0;
   if (filled > f.latched) {
     f.slumpAlong = f.stretches[Math.min(f.stretches.length - 1, filled - 1)]; f.latched = filled; f.latchAt = now;
-    const p = f.onSlope(s.scarAt * 0.6, f.slumpAlong), d = river ? Math.hypot(p.x - river.x, p.z - river.z) : 0;
+    const p = f.onSlope(faceUp(s, 0.6), f.slumpAlong), d = river ? Math.hypot(p.x - river.x, p.z - river.z) : 0;
     audio.slump(Math.max(0.35, 1 - d / 12000)); buzz(Math.max(0.3, 1 - d / 12000), 350);
     if (d < 6000) gougeShakeAt = now - 150;
   }
@@ -1427,7 +1430,7 @@ function tickSlideFx(now) {
   const sd = f.slumpDust.geometry.attributes.position;
   if (show && since < 3.5) {
     f.slumpRocks.forEach((k, i) => {
-      const u = Math.min(1, Math.max(0, (since - k.delay) * k.speed)), up = s.scarAt * (k.up - 0.7 * u * u), p = f.onSlope(up, f.slumpAlong + k.along + k.drift * u);
+      const u = Math.min(1, Math.max(0, (since - k.delay) * k.speed)), up = faceUp(s, k.up - 0.7 * u * u), p = f.onSlope(up, f.slumpAlong + k.along + k.drift * u);
       const y = surfaceAt(world, p.x, p.z) * VERT;
       if (since >= k.delay && u < 1) {
         tmpQ.setFromEuler(tmpE.set(u * 25 + i, u * 17, 0));
@@ -1449,7 +1452,7 @@ function tickSlideFx(now) {
   if (before) {
     const live = cracking ? f.drips.length : Math.max(4, Math.round(f.drips.length * wet * 0.6)), speed = cracking ? 0.9 : 0.35;
     for (let i = 0; i < live; i++) {
-      const d = f.drips[i], u = (now / 1000 * speed + d.phase) % 1, up = s.scarAt * (0.95 - 0.5 * u) , p = f.onSlope(up, d.along);
+      const d = f.drips[i], u = (now / 1000 * speed + d.phase) % 1, up = faceUp(s, 0.95 - 0.5 * u), p = f.onSlope(up, d.along);
       tmpQ.setFromEuler(tmpE.set(u * 20, u * 13, 0));
       f.trickle.setMatrixAt(tn++, tmpM.compose(tmpP.set(p.x, surfaceAt(world, p.x, p.z) * VERT + d.size, p.z), tmpQ, tmpS.set(d.size, d.size, d.size)));
     }

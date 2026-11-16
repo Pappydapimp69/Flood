@@ -2778,6 +2778,7 @@ export const SLIDE = {
   // A full field now takes 8-12 s (it was 6e8, about 4.5 s: owner 2026-11-16, the slide triggered too quickly
   // to get clear of it; a hazard is fair when its warning gives time to see it and act).
   hillLoad: 1.6e9,
+  faceReach: 6000, // metres out either side of the valley searched for the face the rock breaks from
   slopeLong: 2500, // metres along the valley the cracked slope runs (it marks itself across the whole stretch)
   // The slide itself: blocks break off the scar and fall, bounce and roll down the real ground (bs flood-116),
   // and where each stops it piles up; the piles are the dam (a hummocky tongue that runs up the far wall, flood-117).
@@ -2838,26 +2839,49 @@ function makeSlide(world) {
   const wx = (k) => ((k % n) / (n - 1) - 0.5) * W, wz = (k) => (Math.floor(k / n) / (n - 1) - 0.5) * W;
   const centre = (a) => { let x = 0, z = 0, m = 0; for (let k = 0; k < n * n; k++) if (t.mask[k] && Math.abs(along[k] - a) * len < t.cell * 0.6) { x += wx(k); z += wz(k); m++; } return m ? { x: x / m, z: z / m } : null; };
   const ground = (x, z) => sampleFilled(t, x, z);
-  // Where: the valley's own direction there (it winds), at the first spot from SLIDE.at on with no lake across it.
+  // The face the rock breaks from, out one side of the valley: the toe where the ground starts to rise, the scar at the
+  // top of the steepest stretch (rockfall starts where the slope is steepest, the cliffs of a map's slope
+  // distribution: Loye et al. 2009). The relief is how far the scar stands above the floor.
+  const face = (c, px, pz) => {
+    const floor = ground(c.x, c.z), g = [];
+    for (let d = 0; d <= SLIDE.faceReach; d += 100) {
+      const k = cellIndex(t, c.x + px * d, c.z + pz * d);
+      if (!t.mask[k] || t.filled[k] <= SEA_LEVEL) break;
+      const h = ground(c.x + px * d, c.z + pz * d);
+      if (d > 1000 && h < floor - 50) break; // over a ridge into the next valley
+      g.push(h);
+    }
+    let best = 0, top = 0;
+    for (let i = 1; i + 5 < g.length; i++) if (g[i + 5] - g[i] > best) { best = g[i + 5] - g[i]; top = i + 5; }
+    if (best <= 0) return null;
+    while (top + 1 < g.length && g[top + 1] - g[top] > best / 10) top++; // on up the face while it still climbs
+    let toe = top - 5;
+    while (toe > 1 && g[toe - 1] > floor + 40 && g[toe - 1] < g[toe]) toe--; // down the face to its foot
+    return { toe: toe * 100, scar: top * 100, relief: g[top] - floor };
+  };
+  // Where: the valley's own direction there (it winds), a spot near SLIDE.at with no lake across it, beside the highest
+  // face either side (owner, 2026-11-16: the rocks fall from the slopes; on wide floors the old search found no slope
+  // within 4 km and broke the rock off the middle of the valley).
   let site = null;
-  for (let i = 0; i < 80 && !site; i++) {
+  for (let i = 0; i < 80; i++) {
     const a = SLIDE.at + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.005;
     const c = centre(a), p = centre(a - 0.012), q = centre(a + 0.012);
     if (!c || !p || !q) continue;
     let dx = q.x - p.x, dz = q.z - p.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
     let wet = false;
     for (let o = -400; o <= 400 && !wet; o += 100) for (let sd = -2500; sd <= 2500 && !wet; sd += 100) if (world.lakeOf[cellIndex(t, c.x + dx * o - dz * sd, c.z + dz * o + dx * sd)] >= 0) wet = true;
-    if (!wet) site = { c, dx, dz };
+    if (wet) continue;
+    for (const from of [-1, 1]) {
+      const f = face(c, -dz * from, dx * from);
+      if (!f) continue;
+      const score = f.relief - Math.abs(a - SLIDE.at) * 4000; // a little height traded for staying near the planned spot
+      if (!site || score > site.score) site = { c, dx, dz, from, score, ...f };
+    }
   }
   if (!site) return null;
-  const { c, dx, dz } = site, r = stream(t.seed, 'slide'), from = r() < 0.5 ? -1 : 1; // from: the side the slope stands on
+  const { c, dx, dz, from, toe, scar } = site, r = stream(t.seed, 'slide'); r(); // from: the side the face stands on
   const px = -dz * from, pz = dx * from; // across the valley, toward the slope
   const floor = ground(c.x, c.z);
-  // The toe: where the valley side starts to rise. The scar: up the side, where it stands well above the floor.
-  let toe = 0, scar = 0;
-  for (let d = 0; d < 4000; d += 50) { const g = ground(c.x + px * d, c.z + pz * d); if (!toe && g > floor + 40) toe = d; if (g > floor + 320) { scar = d; break; } }
-  if (!toe) toe = 600;
-  if (!scar) scar = toe + 900;
   let d = 0, m = 0;
   for (let o = -t.cell; o <= t.cell; o += t.cell) for (let sd = -1500; sd <= 1500; sd += 100) { const k = cellIndex(t, c.x + dx * o - dz * sd, c.z + dz * o + dx * sd); if (t.mask[k] && world.toBeach[k] < 1e8) { d += world.toBeach[k]; m++; } }
   // The floor just above it, where the pond starts.
@@ -2878,7 +2902,7 @@ function makeSlide(world) {
   }
   const cap = basins.reduce((a, b) => a + world.lakeCap[b.id], 0);
   return { state: 'armed', tick: 0, x: c.x, z: c.z, axis: { x: dx, z: dz }, across: { x: px, z: pz }, from, basins, seepCap: cap, wet: 0,
-    toe: { x: c.x + px * toe, z: c.z + pz * toe }, scar: { x: c.x + px * scar, z: c.z + pz * scar }, scarAt: scar,
+    toe: { x: c.x + px * toe, z: c.z + pz * toe }, scar: { x: c.x + px * scar, z: c.z + pz * scar }, scarAt: scar, toeAt: toe,
     reach: m ? d / m : world.toBeach[cellIndex(t, c.x, c.z)], base, level: 0, pondVol: 0, front: 0, rode: new Set(), by: -1, blocks: [], saddle: null, seedR: r() * 1e9 };
 }
 
@@ -2886,7 +2910,7 @@ function makeSlide(world) {
 function releaseBlocks(world, s) {
   const t = world.terrain, r = stream(t.seed, `slide-blocks:${s.seedR | 0}`), ax = s.axis.x, az = s.axis.z, px = s.across.x, pz = s.across.z;
   for (let i = 0; i < SLIDE.blocks; i++) {
-    const along = (r() - 0.5) * 900, up = (r() - 0.3) * 500; // up: further up the side (positive) or nearer the floor
+    const along = (r() - 0.5) * 900, up = -r() * 0.5 * (s.scarAt - s.toeAt); // from the scar down the upper half of the face
     const x = s.scar.x + ax * along + px * up, z = s.scar.z + az * along + pz * up;
     s.blocks.push({ x, z, y: sampleFilled(t, x, z) + 20, vx: -px * 260, vz: -pz * 260, vy: 0, size: 25 + r() * r() * 70, mu: 0.03 + r() * 0.17, at: 0, moving: true, air: false });
   }
@@ -2927,7 +2951,8 @@ function stepBlocks(world, s, age) {
     if (!b.air) b.y = h(b.x, b.z);
     // A rock avalanche flows as one mass and leaves debris all along its path (bs flood-117: a lobate tongue from
     // the scar to where it stops), so the valley closes as the front crosses it, not only once the last block stops.
-    if (!b.air && (age + (b.size | 0)) % 3 === 0 && steep < 0.6) settle(world, b, SLIDE.trail);
+    // Only on the floor: laid on the face, the trails of a hundred blocks stacked into a cone on the slope.
+    if (!b.air && (age + (b.size | 0)) % 3 === 0 && steep < 0.6 && floorY - Math.max(0, world.rock[cellIndex(t, b.x, b.z)]) < s.base + 60) settle(world, b, SLIDE.trail);
     const speed = Math.hypot(b.vx, b.vz);
     if ((!b.air && steep < 0.12 && speed < SLIDE.rest) || age - b.at > SLIDE.maxTicks || t.filled[cellIndex(t, b.x, b.z)] <= SEA_LEVEL) { b.moving = false; settle(world, b); }
   }

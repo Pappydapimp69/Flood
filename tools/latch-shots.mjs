@@ -17,7 +17,7 @@ for (let n = 1; n <= Number(process.argv[4] ?? 4); n++) {
   }
   for (const [k, yo] of [['a', 0.35], ['b', 0.8]]) {
     await page.evaluate(() => __flood.freeCamOn());
-    await page.evaluate((yo) => { const s = __flood.world.slide, f = __flood.slideFx(), q = f.onSlope(s.scarAt * 0.55, f.slumpAlong), p = q; __flood.freeCamAim(p.x, p.z, 2600, Math.atan2(-s.across.x, -s.across.z), yo); }, yo); // from across the valley, looking at the face
+    await page.evaluate((yo) => { const s = __flood.world.slide, f = __flood.slideFx(), q = f.onSlope(s.toeAt + 0.55 * (s.scarAt - s.toeAt), f.slumpAlong), p = q; __flood.freeCamAim(p.x, p.z, 2600, Math.atan2(-s.across.x, -s.across.z), yo); }, yo); // from across the valley, looking at the face
     await page.evaluate(() => { const f = __flood.slideFx(); if (f) f.latchAt = performance.now() - 900; });
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${out}/latch-${n}${k}.jpg`, type: 'jpeg', quality: 80 });
