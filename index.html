@@ -60,7 +60,7 @@
       background: #0e3442d9; color: #eefaff; padding: 10px 14px; border-radius: 12px; font: 600 14px/1.5 system-ui, sans-serif; text-align: center; pointer-events: none; }
     #hint[hidden] { display: none; }
     @media (max-width: 600px) { #help { display: none; } }
-    body.falling #help { display: none; }
+    body.falling #help, body:has(#menu:not([hidden])) #help { display: none; } /* not under the menu */
     body.touch #help { display: none; } /* phones have the ◀ ▶ buttons and the coach */ /* falling, the hint top right says how to fly */
     #hint .g { color: #8be68b; } #hint .r { color: #ff8d80; }
     #mute { position: fixed; right: calc(14px + env(safe-area-inset-right, 0px)); bottom: calc(10px + env(safe-area-inset-bottom, 0px));
