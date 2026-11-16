@@ -2987,16 +2987,28 @@ function floorSpan(world, s, h) {
   }
   return out;
 }
-function closeDam(world, s) {
+// The dam: one straight wall across the floor with a seeded low saddle. damCells lists each cell and the rock it
+// ends with; closeDam(share) raises every cell to that share of it, so the wall grows as the blocks come to rest
+// (laid all at once when the last block stopped, it popped up out of nowhere).
+function damCells(world, s) {
   const t = world.terrain, n = t.size, top = s.base + SLIDE.damHeight, low = s.base + SLIDE.damHeight * SLIDE.saddle;
   const [from, to] = s.span = floorSpan(world, s, top);
   const sad = from + (to - from) * (0.25 + 0.5 * ((s.seedR % 1000) / 1000)); // where along the crest the low point sits
+  const cells = [];
   for (let k = 0; k < n * n; k++) {
     if (t.filled[k] <= SEA_LEVEL) continue;
     const x = ((k % n) / (n - 1) - 0.5) * t.worldSize - s.x, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize - s.z;
     const o = Math.abs(x * s.axis.x + z * s.axis.z), sd = x * s.across.x + z * s.across.z;
     if (o > SLIDE.damHalf || sd < from - 200 || sd > to + 200) continue; // the whole floor, wall to wall (a lake on the line too)
     const crest = low + (top - low) * Math.min(1, Math.abs(sd - sad) / 600), want = (crest - t.filled[k]) * (1 - (o / SLIDE.damHalf) ** 2);
+    if (want > 0) cells.push(k, want);
+  }
+  return cells;
+}
+function closeDam(world, s, share = 1) {
+  const c = (s.damCells ??= damCells(world, s));
+  for (let i = 0; i < c.length; i += 2) {
+    const k = c[i], want = c[i + 1] * share;
     if (want > world.rock[k]) { world.treeRock[k] += want - world.rock[k]; world.rock[k] = want; world.dirty.push(k); }
   }
 }
@@ -3049,7 +3061,11 @@ function slideStep(world) {
     return;
   }
   if (s.state === 'falling') {
-    if (!stepBlocks(world, s, age)) { closeDam(world, s); s.saddle = lowPoint(world, s); makeBasin(world, s); set('dammed'); }
+    const moving = stepBlocks(world, s, age);
+    // The wall grows with the share of blocks at rest, so the valley closes as the debris arrives.
+    const share = 1 - moving / Math.max(1, s.blocks.length);
+    if (moving && share > (s.damShare ?? 0) + 0.04) { s.damShare = share; closeDam(world, s, share); }
+    if (!moving) { closeDam(world, s); s.saddle = lowPoint(world, s); makeBasin(world, s); set('dammed'); }
     return;
   }
   if (s.state === 'dammed') {
