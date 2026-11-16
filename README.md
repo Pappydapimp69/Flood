@@ -30,8 +30,8 @@ Steer with ← → (or A D). Falling: ↑ (W; the right stick up on a controller
   keeps flowing into you until that channel goes dry; if they cut yours, yours flows into them.
 - Every start is the same height and the same route length from the sea.
 - More water is more mass and a taller head: faster, deeper channels, and rises that turn a small
-  river aside don't stop a big one, so you steer more freely as you grow. Where rivers touch, the deeper
-  one drains the shallower. Drained below half the most water you've held (or 40% of your
+  river aside don't stop a big one, so you steer more freely as you grow. Heads that touch bounce apart
+  (the deeper keeps its line); water is drained only through channels. Drained below half the most water you've held (or 40% of your
   starting water), you're out.
 - Every trail stays live water and keeps eroding as long as its river pours; a drained river's bed goes grey.
 
