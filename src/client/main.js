@@ -1227,6 +1227,7 @@ const lakeShown = new Map();
 // the ground, right stick turns and tilts, the triggers lower and raise; nothing on screen but the world. Select
 // again flies back to the held view over 2 s and the race resumes. Keys: C toggles, arrows move, Q E raise and lower.
 let freeCam = null;
+dbg.slideFx = () => slideFx;
 dbg.freeCam = () => freeCam; // dev (tools/event-shots.mjs): open, aim and close the free camera from a script
 dbg.freeCamOn = () => { if (!freeCam && world) toggleFreeCam(); return !!freeCam; };
 dbg.freeCamOff = () => { if (freeCam) { freeCam = null; document.body.classList.remove('freecam'); input.freeze(false); acc = 0; } };
@@ -1288,9 +1289,21 @@ let slideFx = null;
 const roundDot = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'), gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
   gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.5, 'rgba(255,255,255,0.6)'); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(0, 0, 64, 64);
   return new THREE.CanvasTexture(c); })();
+// Line segments (x,y,z pairs) as flat ribbons lying on the ground, wide enough to read from across a valley
+// (WebGL draws lines one pixel wide).
+function ribbon(seg, w) {
+  const v = [];
+  for (let i = 0; i < seg.length; i += 6) {
+    const [ax, , az, bx, , bz] = seg.slice(i, i + 6), l = Math.hypot(bx - ax, bz - az) || 1, nx = -(bz - az) / l * w / 2, nz = (bx - ax) / l * w / 2;
+    const P = (x, z) => [x, surfaceAt(world, x, z) * VERT + 60, z], a0 = P(ax - nx, az - nz), a1 = P(ax + nx, az + nz), b1 = P(bx + nx, bz + nz), b0 = P(bx - nx, bz - nz);
+    v.push(...a0, ...a1, ...b1, ...a0, ...b1, ...b0); // each corner on the ground, so it lies along a steep face too
+    // (lifted 60 m: the terrain mesh's triangles stand above the bilinear height on a steep face, and buried it)
+  }
+  return new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(v, 3));
+}
 function clearSlideFx() {
   if (!slideFx) return;
-  for (const o of [slideFx.rocks, slideFx.dust, slideFx.wave, slideFx.cracks, slideFx.split, slideFx.slabs, slideFx.trickle, ...slideFx.rings.map((g) => g.m)]) if (o) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); }
+  for (const o of [slideFx.rocks, slideFx.dust, slideFx.wave, slideFx.cracks, slideFx.split, slideFx.slabs, slideFx.trickle, slideFx.fresh, slideFx.slump, slideFx.slumpDust, ...slideFx.rings.map((g) => g.m)]) if (o) { scene.remove(o); o.geometry.dispose(); o.material.dispose(); }
   slideFx = null;
 }
 // Built once a race has a slide: the cracks that mark the slope, the blocks (drawn where the sim has them), their
@@ -1319,8 +1332,8 @@ function makeSlideFx() {
   }
   const cracks = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(seg, 3)),
     new THREE.LineBasicMaterial({ color: '#2a1d14', transparent: true, opacity: 0.9 }));
-  const split = new THREE.LineSegments(new THREE.BufferGeometry().setAttribute('position', new THREE.Float32BufferAttribute(glow, 3)),
-    new THREE.LineBasicMaterial({ color: '#ff8a2a', transparent: true, opacity: 0.4, depthWrite: false }));
+  const split = new THREE.Mesh(ribbon(glow, 90), new THREE.MeshBasicMaterial({ color: '#ff8a2a', transparent: true, opacity: 0.4, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+  split.renderOrder = 3;
   const SL = 40, slabs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshLambertMaterial({ color: '#cfc6b6', flatShading: true }), SL);
   for (let i = 0; i < SL; i++) {
     const p = onSlope(s.scarAt * (0.4 + r() * 0.55), -L * 0.8 + r() * L), y = surfaceAt(world, p.x, p.z) * VERT;
@@ -1340,8 +1353,29 @@ function makeSlideFx() {
     scene.add(m);
     return { m, b };
   });
-  scene.add(split, slabs, trickle);
-  if (s.basins.length) feed(`Fill ${Math.min(SLIDE.need, s.basins.length)} of the ${s.basins.length} dry basins (orange rings) to bring the cracked slope down`);
+  // Each filled basin gives the slope a moment (owner, 2026-11-16): a stretch of the face slumps (a burst of stones
+  // and dust down it), a new crack opens across it glowing, and the split at its foot steps brighter, so by the
+  // last basin the slope looks ready to go. One stretch per basin, spread along the slope.
+  const NB = Math.max(1, s.basins.length), stretches = Array.from({ length: NB }, (_, i) => -L * 0.8 + L * (i + 0.2 + r() * 0.6) / NB);
+  const fseg = [], FS = 9; // segments per new crack
+  for (const a0 of stretches) {
+    let p = onSlope(s.scarAt * 0.92, a0);
+    for (let j = 0; j < FS; j++) {
+      const up = s.scarAt * (0.92 - 0.6 * (j + 1) / FS), q = onSlope(up, a0 + (r() - 0.5) * 140 + (j - FS / 2) * 12);
+      fseg.push(p.x, surfaceAt(world, p.x, p.z) * VERT + 8, p.z, q.x, surfaceAt(world, q.x, q.z) * VERT + 8, q.z);
+      p = q;
+    }
+  }
+  const fresh = new THREE.Mesh(ribbon(fseg, 70), new THREE.MeshBasicMaterial({ color: '#ffb347', transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide, fog: false }));
+  fresh.geometry.setDrawRange(0, 0); fresh.frustumCulled = false; fresh.renderOrder = 3;
+  const SN = 48, slump = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#6d6358', flatShading: true }), SN);
+  slump.frustumCulled = false; slump.count = 0;
+  const slumpDust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(SN * 3), 3)),
+    new THREE.PointsMaterial({ color: '#b39b80', size: 700, map: roundDot, transparent: true, opacity: 0, depthWrite: false }));
+  slumpDust.frustumCulled = false;
+  const slumpRocks = Array.from({ length: SN }, () => ({ along: (r() - 0.5) * 700, up: 0.85 + r() * 0.15, delay: r() * 0.5, speed: 0.55 + r() * 0.5, size: 30 + r() * 50, drift: (r() - 0.5) * 120 }));
+  scene.add(split, slabs, trickle, fresh, slump, slumpDust);
+  if (s.basins.length) feed(`Fill ${Math.min(SLIDE.need, s.basins.length)} of the ${s.basins.length} basins (orange rings) to bring the cracked slope down`);
   const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5e554c', flatShading: true }), SLIDE.blocks);
   rocks.frustumCulled = false; rocks.count = 0;
   const D = SLIDE.blocks * 3, dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(D * 3), 3)),
@@ -1355,7 +1389,7 @@ function makeSlideFx() {
   wave.frustumCulled = false;
   scene.add(cracks, rocks, dust, wave);
   const at = (k) => ({ x: ((k % n) / (n - 1) - 0.5) * W, z: (Math.floor(k / n) / (n - 1) - 0.5) * W });
-  slideFx = { slide: s, cracks, rocks, dust, wave, below, at, spin: [], puff: [], split, slabs, trickle, drips, rings, onSlope, toeUp };
+  slideFx = { slide: s, cracks, rocks, dust, wave, below, at, spin: [], puff: [], split, slabs, trickle, drips, rings, onSlope, toeUp, fresh, FS, slump, slumpDust, slumpRocks, stretches, latched: s.filled ?? 0, latchAt: -1e9, slumpAlong: 0 };
 }
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler(), tmpP = new THREE.Vector3(), tmpS = new THREE.Vector3();
 function tickSlideFx(now) {
@@ -1370,6 +1404,37 @@ function tickSlideFx(now) {
   f.split.visible = show && before;
   f.split.material.opacity = cracking ? 0.7 + 0.3 * Math.sin(now / 45) : 0.25 + 0.6 * wet + 0.1 * Math.sin(now / 300);
   f.slabs.visible = show && before;
+  // A new basin filled: rumble, slump one stretch of the face, open its crack, flash the split.
+  const filled = s.filled ?? 0;
+  if (filled > f.latched) {
+    f.slumpAlong = f.stretches[Math.min(f.stretches.length - 1, filled - 1)]; f.latched = filled; f.latchAt = now;
+    const p = f.onSlope(s.scarAt * 0.6, f.slumpAlong), d = river ? Math.hypot(p.x - river.x, p.z - river.z) : 0;
+    audio.slump(Math.max(0.35, 1 - d / 12000));
+    if (d < 6000) gougeShakeAt = now - 150;
+  }
+  const since = (now - f.latchAt) / 1000, flash = Math.max(0, 1 - since / 1.5);
+  f.fresh.geometry.setDrawRange(0, f.latched * f.FS * 6); f.fresh.visible = show && before && f.latched > 0;
+  f.fresh.material.opacity = cracking ? 0.7 + 0.3 * Math.sin(now / 50) : 0.55 + 0.45 * flash;
+  f.fresh.material.color.setRGB(1, 0.55 + 0.4 * flash, 0.2 + 0.6 * flash);
+  f.split.material.opacity = Math.min(1, f.split.material.opacity + 0.5 * flash);
+  f.split.material.color.setRGB(1, 0.42 + 0.35 * wet + 0.2 * flash, 0.12 + 0.3 * wet * wet + 0.3 * flash); // orange to near white as it soaks
+  // The slump: stones break off the top of the stretch and pour down the face for about 2.5 s, dust behind them.
+  let sn = 0;
+  const sd = f.slumpDust.geometry.attributes.position;
+  if (show && since < 3.5) {
+    f.slumpRocks.forEach((k, i) => {
+      const u = Math.min(1, Math.max(0, (since - k.delay) * k.speed)), up = s.scarAt * (k.up - 0.7 * u * u), p = f.onSlope(up, f.slumpAlong + k.along + k.drift * u);
+      const y = surfaceAt(world, p.x, p.z) * VERT;
+      if (since >= k.delay && u < 1) {
+        tmpQ.setFromEuler(tmpE.set(u * 25 + i, u * 17, 0));
+        f.slump.setMatrixAt(sn++, tmpM.compose(tmpP.set(p.x, y + k.size, p.z), tmpQ, tmpS.set(k.size, k.size * 0.8, k.size)));
+      }
+      sd.setXYZ(i, p.x, y + 60 + since * 90, p.z);
+    });
+    sd.needsUpdate = true;
+  }
+  f.slump.count = sn; f.slump.instanceMatrix.needsUpdate = true; f.slump.visible = sn > 0;
+  f.slumpDust.material.opacity = since < 3.5 ? 0.75 * Math.min(1, since * 3) * Math.max(0, 1 - since / 3.5) : 0; f.slumpDust.visible = show && f.slumpDust.material.opacity > 0.01;
   // Rings: pulsing orange while a basin waits to be filled; solid gold once it has counted.
   for (const g of f.rings) {
     g.m.visible = show && s.state === 'armed';

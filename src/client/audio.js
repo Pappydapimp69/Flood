@@ -226,6 +226,8 @@ export function createAudio() {
     // Gouge: the head rears up (a rising groan), then slams down (a heavy thud).
     gougeWind() { voice((t) => [...tone(t, 55, 170, 0.8, 0.22), ...burst(t, 0.8, 'bandpass', 300, 1600, 0.12, 0.8)], 'gouge', 0.5); },
     gouge(size = 1) { voice((t) => [...tone(t, 95, 32, 0.7, 0.5), ...burst(t, 1.1, 'lowpass', 2200, 140, 0.6 * Math.min(1.4, size), 0.5)], 'gouge', 0.5); },
+    // A basin filled on the Landslide: the hill groans, a deep rumble from Gouge's low tone, long and heavy.
+    slump(gain = 1) { voice((t) => [...tone(t, 70, 26, 1.8, 0.5 * gain), ...burst(t, 2.2, 'lowpass', 900, 90, 0.55 * gain, 0.35)], 'slump', 0.8); },
     // Reaching the sea: a wave crashing and a bright chime.
     finish(first) {
       voice((t) => burst(t, 2.6, 'lowpass', 1800, 300, 0.45, 0.6));
