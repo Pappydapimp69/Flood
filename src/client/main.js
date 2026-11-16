@@ -8,6 +8,7 @@ import { buildTerrainMesh, buildSeabed, applyCarve, resetCarve, setLakeLevel, hi
 import { buildSea, buildLakes, makeSurge, makeSpray, updateSpray, burstSpray, tickWater } from './water.js';
 import { Ribbon } from './ribbon.js';
 import { createInput } from './input.js';
+import { createHaptics } from './haptics.js';
 import { connect } from './net.js';
 import { createAudio } from './audio.js';
 import { alphaWanted, createFeedback } from './feedback.js';
@@ -302,7 +303,7 @@ try { courseWanted = localStorage.getItem('flood.course') || 'ski'; } catch { /*
 if (params.has('course')) courseWanted = params.get('course');
 // Training's test maps (owner, 2026-11-14): not in the Course list, started from the menu's Training entries.
 // The Landslide: a small map where a slope comes down ahead of the leader, dams the valley and bursts.
-const TRAINING = { slide: { seed: 56 } }; // 56: the straightest Landslide valley with all six ringed lakes (bot races, 2026-11-16: median 98 s, 11 of 12 finish; 7001 took 136 s, 7 finish)
+const TRAINING = { slide: { seed: 11 } }; // 11 on the full-size map: most finishers and fewest knockouts of 12 seeds with six ringed lakes (bot races, 2026-11-16), and its dam fills in about 34 s
 let trainingCourse = TRAINING[params.get('course')] ? params.get('course') : null;
 if (!COURSES.some(([k]) => k === courseWanted)) courseWanted = 'ski';
 const botCount = () => (params.has('bots') ? Math.max(0, Math.min(79, Number(params.get('bots')))) : riversWanted - 1);
@@ -313,6 +314,7 @@ let world, river, entries = [], bots = [], focus, names = {}, acc = 0, mapView, 
 let recordBanked = false, recordNotes = [];
 let paused = false; // solo: the race clock stops; online: just the menu over a running race
 // Settings, kept in this browser.
+const buzz = createHaptics(() => settings.shake); // vibration follows the shake option
 const settings = (() => { try { return { preview: true, shake: true, ...JSON.parse(localStorage.getItem('flood.settings') || '{}') }; } catch { return { preview: true, shake: true }; } })();
 const saveSettings = () => { try { localStorage.setItem('flood.settings', JSON.stringify(settings)); } catch { /* no storage */ } }; // this race's results banked into flood.record yet; personal bests it set
 // The end of the race: once the first river reaches the sea, the rest have
@@ -1409,7 +1411,7 @@ function tickSlideFx(now) {
   if (filled > f.latched) {
     f.slumpAlong = f.stretches[Math.min(f.stretches.length - 1, filled - 1)]; f.latched = filled; f.latchAt = now;
     const p = f.onSlope(s.scarAt * 0.6, f.slumpAlong), d = river ? Math.hypot(p.x - river.x, p.z - river.z) : 0;
-    audio.slump(Math.max(0.35, 1 - d / 12000));
+    audio.slump(Math.max(0.35, 1 - d / 12000)); buzz(Math.max(0.3, 1 - d / 12000), 350);
     if (d < 6000) gougeShakeAt = now - 150;
   }
   const since = (now - f.latchAt) / 1000, flash = Math.max(0, 1 - since / 1.5);
@@ -1562,7 +1564,7 @@ function advance(inputs) {
       // The slam: spray thrown up all round, the camera jolts, the boost is on.
       const en = entries[e.river], gr = world.rivers[e.river];
       if (en) { en.slamAt = performance.now(); burstSpray(en.spray, gr.x, surfaceAt(world, gr.x, gr.z) * VERT, gr.z, 1.8 * gr.size, 60); }
-      if (river && e.river === river.idx) { audio.gouge(gr.size); gougeShakeAt = performance.now(); showPop('Boosted — climb anything for 3 s'); }
+      if (river && e.river === river.idx) { audio.gouge(gr.size); gougeShakeAt = performance.now(); buzz(0.8, 180); showPop('Boosted — climb anything for 3 s'); }
       else if (river && en && Math.hypot(gr.x - river.x, gr.z - river.z) < 3000) audio.gouge(0.5);
     } else if (e.type === 'pool') {
       if (river && e.river === river.idx) { showPop('Lake — your water pours in and raises it'); teach('lake', 'A lake', 'Your water pours into the lake and raises it until it spills over the far bank. Cut the outlet and <b>everything that drains through it feeds you</b>. Lakes are the biggest source of water.', river.x, river.z); }
@@ -1594,13 +1596,25 @@ function advance(inputs) {
     } else if (e.type === 'bump') {
       // Two drops collided: spray where they met, and say what it cost you.
       const ra = world.rivers[e.a], rb = world.rivers[e.b], en = entries[e.a];
-      if (en) burstSpray(en.spray, e.x, skyY() + (ra.alt ?? 0), e.z, 1.4, 50);
+      if (en) burstSpray(en.spray, e.x, e.landed ? surfaceAt(world, e.x, e.z) * VERT + 20 : skyY() + (ra.alt ?? 0), e.z, 1.4, 50);
+      if (e.landed) {
+        // Two heads collided: they bounce apart, no water changes hands (owner, 2026-11-16).
+        const other = river === ra ? rb : river === rb ? ra : null;
+        if (other) {
+          const knocked = e.hitter !== river.idx;
+          showPop(knocked ? `${nameOf(other)} knocked you aside` : `You knocked ${nameOf(other)} aside`);
+          flashEdge(knocked ? '#ff9a4a' : '#ffcf3a');
+          audio.splash(1.1); gougeShakeAt = performance.now() - 250; buzz(knocked ? 0.7 : 0.45, 140);
+          teach('headbump', 'Collisions', 'River heads that touch <b>bounce apart</b>: the deeper river keeps its line and the shallower is knocked aside. No water is lost. You only lose water by running in a rival\'s channel while it is deeper than you.', e.x, e.z);
+        }
+        continue;
+      }
       const mine = river === ra ? [rb, e.lossA, e.lossB, e.gainA ?? 0] : river === rb ? [ra, e.lossB, e.lossA, e.gainB ?? 0] : null;
       if (mine) {
         const won = mine[3] > 0;
         showPop(won ? `You hit ${nameOf(mine[0])}! +${fmtL(mine[3] - mine[1])}` : `${nameOf(mine[0])} hit you! −${fmtL(mine[1])}`);
         flashEdge(won ? '#ffcf3a' : '#ff5a4a');
-        audio.splash(1.3); gougeShakeAt = performance.now() - 200;
+        audio.splash(1.3); gougeShakeAt = performance.now() - 200; buzz(won ? 0.45 : 0.7, 140);
         teach('bump', 'Bumping', 'Drops that collide knock each other off course. Whoever hits with more momentum (more water, more speed into the other) <b>wins</b>: the loser spills water and the winner soaks most of it up. Ram lighter drops; dodge heavier ones.', e.x, e.z);
       }
     } else if (e.type === 'slide') {
@@ -1613,7 +1627,7 @@ function advance(inputs) {
         showPop('THE SLOPE IS GIVING WAY');
         feed('The lakes have soaked the hill: it gives way under the water of every river still above the dam');
         audio.splash(0.6);
-      } else if (e.phase === 'falling') { showPop('LANDSLIDE — the valley is closing'); feed('The slope is coming down across the valley'); audio.splash(1); }
+      } else if (e.phase === 'falling') { showPop('LANDSLIDE — the valley is closing'); feed('The slope is coming down across the valley'); audio.splash(1); buzz(0.9, 900); }
       else if (e.phase === 'dammed') feed('The landslide has dammed the valley and cut every channel through it: the basin behind it fills with the water of every river held there or cut off. Full, it bursts and carries the rivers in it down the valley');
       else if (e.phase === 'burst') {
         const who = e.by >= 0 ? world.rivers[e.by] : null;
@@ -1622,7 +1636,7 @@ function advance(inputs) {
         audio.splash(1);
       }
     } else if (e.type === 'flood-ride') {
-      if (river && e.river === river.idx) showPop(e.pond ? 'RIDING THE FLOOD — the whole lake goes with you' : 'CAUGHT BY THE FLOOD WAVE');
+      if (river && e.river === river.idx) { showPop(e.pond ? 'RIDING THE FLOOD — the whole lake goes with you' : 'CAUGHT BY THE FLOOD WAVE'); buzz(1, 600); }
       else feed(`${nameOf(world.rivers[e.river])} ${e.pond ? 'rides the lake out' : 'is caught by the wave'}`);
     } else if (e.type === 'unlock') {
       if (river && e.river === river.idx && world.terrain.course !== 'tutorial') teach(`unlock:${e.skill}`, e.skill === 'gouge' ? 'Gouge unlocked' : 'Surge unlocked', e.skill === 'gouge' ? `You're big enough for <b>GOUGE</b> (${key('A', 'Space', 'the GOUGE button')}): for 3 s you climb over rises that would stop you. It costs some water, and using it puts <b>both</b> skills on cooldown.` : `${e.why === 'behind' ? "You're far behind the leader, so you get" : "You're big enough for"} <b>SURGE</b> (${key('RB', 'Q', 'the SURGE button')}): it builds up for a moment (longer the bigger you are), then gives a 2 s burst of speed on top of what you have. It costs some water, and using it puts <b>both</b> skills on cooldown.`, river.x, river.z);
@@ -1658,8 +1672,8 @@ function advance(inputs) {
     } else if (e.type === 'merge') {
       const w = world.rivers[e.winner], l = world.rivers[e.loser];
       if (w === river) { showPop(`You drained ${nameOf(l)} dry`); audio.merge(true); teach(`merge:${e.loser}`, `You drained ${nameOf(l)}`, `All of <b>${nameOf(l)}</b>'s water ran into you: it is out of the race.`, l.x, l.z); }
-      if (l === river) teach('drained', 'You were drained', `<b>${nameOf(w)}</b> took all your water. Next time, keep away from bigger rivers until you have grown.`, river.x, river.z);
-      if (l === river) audio.merge(false);
+      if (l === river) teach('drained', 'You were drained', `<b>${nameOf(w)}</b> took all your water. Next time, stay out of a deeper river\'s channel until you have grown.`, river.x, river.z);
+      if (l === river) { audio.merge(false); buzz(1, 500); }
       feed(`${nameOf(w)} drained ${nameOf(l)} dry`);
       // Spectate whoever drained the river we were watching.
       if (l === focus) focus = w;

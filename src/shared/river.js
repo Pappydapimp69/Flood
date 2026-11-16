@@ -273,6 +273,11 @@ export const TUNE = {
   // Contact is a depth tug-of-war: the deeper water siphons the shallower.
   // (was 0.012 / 0.015: 12 bot races had 0 knockouts, 2026-11-09; see ADR 0007)
   siphonRate: 0.04,
+  channelDrain: 0.012, // share of its water a second a head in a rival's live channel loses to the deeper side (docs/collisions.md)
+  headCool: 60, // ticks (3 s) before the same two heads can collide again
+  headKnock: 260, // m/s the shallower head is knocked apart at, fading...
+  headKnockDecay: 0.85, // ...to this share each tick (about 85 m)
+  headKnockDeep: 0.3, // the deeper head is knocked this share as hard
   siphonCap: 0.05,
   siphonDeadband: 0.05,
   floor: 0.4, // below this share of the starting volume a river dries up and is out...
@@ -1398,6 +1403,12 @@ function moveRiver(world, r, { s: steer, f: fwd, g: glideIn = 0, k: skill, u: su
     const d = routeDir();
     if (d) { mx = d.x; mz = d.z; nx = r.x + mx * v * DT; nz = r.z + mz * v * DT; }
   }
+  // A head bump's knock, fading: it moves the head only where the water could go anyway.
+  if (r.kx || r.kz) {
+    const kx = r.kx ?? 0, kz = r.kz ?? 0, tx = nx + kx * DT, tz = nz + kz * DT;
+    r.kx = Math.abs(kx) < 1 ? 0 : kx * TUNE.headKnockDecay; r.kz = Math.abs(kz) < 1 ? 0 : kz * TUNE.headKnockDecay;
+    if (surfaceAt(world, tx, tz, me) <= ceiling) { nx = tx; nz = tz; }
+  }
   // A skill presses through: no bouncing off a rise while boosted or surging.
   // The head holds its heading and wears the ground ahead down, and goes on
   // as soon as it's through (the skill's speed floor keeps it pushing).
@@ -1473,6 +1484,20 @@ const byId = (a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 // Bigger first; equal volumes fall back to id so ties never depend on order.
 const biggerFirst = (a, b) => b.volume - a.volume || byId(a, b);
 
+// Two heads touch: the deeper keeps its line, the shallower is knocked off it (and the deeper a little), apart
+// along the line between them, fading through their own flow; the same pair can't collide again for headCool.
+function bounceHeads(world, a, b, dx, dz) {
+  const key = `${a.id}|${b.id}`, cool = (world.headBumps ??= new Map());
+  if (world.tick < (cool.get(key) ?? -1)) return;
+  cool.set(key, world.tick + TUNE.headCool);
+  const d = Math.hypot(dx, dz) || 1, nx = dx / d, nz = dz / d; // from b toward a
+  const [deep, shallow] = a.depth >= b.depth ? [a, b] : [b, a], sign = shallow === a ? 1 : -1;
+  const ks = TUNE.headKnock, kd = TUNE.headKnock * TUNE.headKnockDeep;
+  shallow.kx = (shallow.kx ?? 0) + sign * nx * ks; shallow.kz = (shallow.kz ?? 0) + sign * nz * ks;
+  deep.kx = (deep.kx ?? 0) - sign * nx * kd; deep.kz = (deep.kz ?? 0) - sign * nz * kd;
+  world.events.push({ type: 'bump', a: a.idx, b: b.idx, hitter: deep.idx, lossA: 0, lossB: 0, gainA: 0, gainB: 0, landed: true, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, tick: world.tick });
+}
+
 function resolveContacts(world) {
   const grace = Math.min(rule(world, 'graceMax') ?? Infinity, TUNE.graceTicks + TUNE.gracePerRiver * world.rivers.length);
   const rs = world.rivers.filter((r) => isRacing(r) && !r.dropping && world.tick - r.born >= grace);
@@ -1496,12 +1521,15 @@ function resolveContacts(world) {
     const inCh = o >= 0 && o !== a.idx && live.has(o) && carve[k] > TUNE.contactDepth && isLive(world, k);
     if (!TUNE.cutRide) { if (inCh) cuts.push([a, a.depth, world.rivers[o], carve[k], k]); } // head depth vs the channel as cut right here
     else trackChannel(world, a, inCh ? o : -1, k, cuts);
-    // Heads touching.
+    // Draining comes only from channels (docs/collisions.md, owner 2026-11-14): a head in a rival's live channel,
+    // by the deeper side, at channelDrain a second.
+    if (inCh) add(a, a.depth, world.rivers[o], carve[k], 'channel');
+    // Heads touching collide and bounce apart; no water changes hands or is lost (owner, 2026-11-16).
     for (const b of rs) {
       if (b.idx <= a.idx) continue;
       const reach = (widthOf(a) + widthOf(b)) / 2;
       const dx = a.x - b.x, dz = a.z - b.z;
-      if (dx * dx + dz * dz < reach * reach) add(a, a.depth, b, b.depth, 'head');
+      if (dx * dx + dz * dz < reach * reach) bounceHeads(world, a, b, dx, dz);
     }
   }
   // Amounts come from volumes at the start of the phase, so order can't matter.
@@ -1513,7 +1541,7 @@ function resolveContacts(world) {
     const [win, dw, lose, dl] = dp >= dq ? [p, dp, q, dq] : [q, dq, p, dp];
     const lead = (dw - dl) / Math.max(dl, 0.5);
     if (lead < TUNE.siphonDeadband) continue;
-    const amount = start.get(lose) * TUNE.siphonRate * Math.min(1, lead);
+    const amount = start.get(lose) * (how === 'channel' ? TUNE.channelDrain / TICK_HZ : TUNE.siphonRate) * Math.min(1, lead);
     flows.push({ win, lose, amount, how });
     lost.set(lose, (lost.get(lose) ?? 0) + amount);
   }
@@ -2760,9 +2788,9 @@ export const SLIDE = {
   // point, holding pondPerCell litres per metre of depth (a lake holds 25k a cell). It fills only with water: the
   // pulses of rivers whose heads are trapped in it, and the pulses of rivers already past the dam, whose channels the
   // debris cut (their water stops at the dam). It breaks only when full; wearing the crest no longer breaks it.
-  pondPerCell: 1500,
+  pondPerCell: 300,
   pondArea: 2500, // metres of the drawn pond plane above the dam (the client's sheet, clipped by the valley sides)
-  pondCells: 4000, // the basin is at most this many cells
+  pondCells: 900, // the basin is at most this many cells, nearest the dam first (a wide floor ran to 3,000 and took minutes)
   cutRock: 15, // metres of debris over a channel that cut it
   // Where the blocks stop the debris closes the valley as one straight wall across it (bs flood-111: a wall laid across
   // the valley's own direction; the blocks alone left gaps, so the low point was a gap 5-15 m high and nothing held).
@@ -2902,14 +2930,27 @@ function settle(world, b, share = 1) {
   if (share === 1) b.y = sampleFilled(t, b.x, b.z) + world.rock[cellIndex(t, b.x, b.z)];
 }
 
+// How far the valley floor runs either way along the dam line: out to where the ground stands above h.
+function floorSpan(world, s, h) {
+  const t = world.terrain, out = [0, 0];
+  for (const [i, dir] of [[0, -1], [1, 1]]) {
+    for (let sd = 0; sd <= 12000; sd += 100) {
+      const k = cellIndex(t, s.x + s.across.x * sd * dir, s.z + s.across.z * sd * dir);
+      out[i] = sd * dir;
+      if (t.filled[k] >= h || t.filled[k] <= SEA_LEVEL || !t.mask[k]) break;
+    }
+  }
+  return out;
+}
 function closeDam(world, s) {
   const t = world.terrain, n = t.size, top = s.base + SLIDE.damHeight, low = s.base + SLIDE.damHeight * SLIDE.saddle;
-  const sad = ((s.seedR % 1000) / 1000 - 0.5) * 2000; // where along the crest the low point sits
+  const [from, to] = s.span = floorSpan(world, s, top);
+  const sad = from + (to - from) * (0.25 + 0.5 * ((s.seedR % 1000) / 1000)); // where along the crest the low point sits
   for (let k = 0; k < n * n; k++) {
-    if (!t.mask[k] || t.filled[k] <= SEA_LEVEL || world.lakeOf[k] >= 0) continue;
+    if (t.filled[k] <= SEA_LEVEL) continue;
     const x = ((k % n) / (n - 1) - 0.5) * t.worldSize - s.x, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize - s.z;
     const o = Math.abs(x * s.axis.x + z * s.axis.z), sd = x * s.across.x + z * s.across.z;
-    if (o > SLIDE.damHalf || Math.abs(sd) > 4000) continue;
+    if (o > SLIDE.damHalf || sd < from - 200 || sd > to + 200) continue; // the whole floor, wall to wall (a lake on the line too)
     const crest = low + (top - low) * Math.min(1, Math.abs(sd - sad) / 600), want = (crest - t.filled[k]) * (1 - (o / SLIDE.damHalf) ** 2);
     if (want > world.rock[k]) { world.treeRock[k] += want - world.rock[k]; world.rock[k] = want; world.dirty.push(k); }
   }
@@ -2920,7 +2961,8 @@ function closeDam(world, s) {
 function lowPoint(world, s) {
   const t = world.terrain;
   let best = null;
-  for (let sd = -3000; sd <= 3000; sd += 100) {
+  const [from, to] = s.span ?? [-3000, 3000];
+  for (let sd = from; sd <= to; sd += 100) {
     let top = -Infinity, rock = 0, fx = 0, fz = 0;
     for (let o = -500; o <= 500; o += 100) {
       const x = s.x + s.axis.x * o + s.across.x * sd, z = s.z + s.axis.z * o + s.across.z * sd, k = cellIndex(t, x, z), v = t.filled[k] + world.rock[k];

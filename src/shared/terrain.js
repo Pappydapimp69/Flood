@@ -340,8 +340,8 @@ function placeBoulders(seed, n, cell, height, mask, along, across) {
   return out;
 }
 
-// The Landslide test map (Training): the ski generator on a smaller grid, so it builds fast.
-export const SLIDE_SIZE = { size: 400, worldSize: 40000 };
+// The Landslide test map (Training): the ski generator at full size.
+export const SLIDE_SIZE = {}; // full ski size (owner, 2026-11-16: the 40 km version made the course 10.6 km wide against the ski map's 17)
 export function generateIsland(seed = 1, opts = {}) {
   const { size: n, worldSize, maxHeight, seaDepth, course } = { ...DEFAULTS, ...(opts.course === 'slide' ? SLIDE_SIZE : {}), ...opts };
   const height = new Float32Array(n * n), mask = new Uint8Array(n * n); // mask: 1 on the race slope, 0 on scenery and sea

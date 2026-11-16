@@ -3,7 +3,7 @@
 import { createRequire } from 'node:module';
 import { serve } from './serve.mjs';
 const { chromium } = createRequire(import.meta.url)('playwright');
-const [out, seed = '56'] = process.argv.slice(2);
+const [out, seed = '11'] = process.argv.slice(2);
 const server = await serve(0);
 const browser = await chromium.launch({ args: ['--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader'] });
 const page = await browser.newPage({ viewport: { width: 800, height: 450 } });
