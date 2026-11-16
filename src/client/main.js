@@ -852,9 +852,19 @@ function placeCloudTags() {
 // centred on its point, so near an edge half of it used to fall off.
 // Tags placed this frame step up past any they would cover, so they never stack into a blur.
 let tagFrame = -1;
+const HUD_BOXES = ['stats', 'skill', 'surge', 'mute', 'feed'];
 const tagRects = [];
 function placeTag(el, x, y) {
-  if (tagFrame !== dbg.frames) { tagFrame = dbg.frames; tagRects.length = 0; }
+  if (tagFrame !== dbg.frames) {
+    tagFrame = dbg.frames; tagRects.length = 0;
+    // The HUD's own boxes count as taken: on a phone, lake and cloud tags covered the stats and the skill buttons.
+    for (const id of HUD_BOXES) {
+      const b = document.getElementById(id);
+      if (!b || b.hidden || !b.offsetParent) continue;
+      const r = b.getBoundingClientRect();
+      if (r.width && r.height) tagRects.push({ x: r.left + r.width / 2, y: r.bottom, w: r.width, h: r.height });
+    }
+  }
   const w = el.offsetWidth, h = el.offsetHeight, m = 8;
   const ml = document.body.classList.contains('falling') ? 56 : m; // falling: clear of the altimeter on the left
   const px = Math.min(innerWidth - m - w / 2, Math.max(ml + w / 2, ((x + 1) / 2) * innerWidth));
