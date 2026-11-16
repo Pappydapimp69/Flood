@@ -2339,9 +2339,7 @@ function drainsBack(world, cell, lake) {
 // The deepest an outlet may be cut: its lip never more than outletDrain below
 // the level the lake starts at, so outlets bleed a lake's top off (and feed
 // rivers from the start) but never empty it into a pit.
-// A Landslide basin not yet filled keeps its outlets at its rim: a river leaving it empty cut its outlet at the floor
-// and drained it, so basins peaked at a tenth to a half full and the slope never fell (bot races, 2026-11-16).
-export const outletLipFloor = (world, lake) => world.basinHold?.has(lake) ? world.lakeBed[lake] + lakeSpan(world, lake) * 0.97 : world.lakeBed[lake] + TUNE.pebbleBed;
+export const outletLipFloor = (world, lake) => world.lakeBed[lake] + TUNE.pebbleBed;
 function outletFloor(world, lake, cell) {
   return Math.max(0, world.terrain.filled[cell] - outletLipFloor(world, lake));
 }
@@ -2353,7 +2351,7 @@ function joinLake(world, r, lake, cell) {
   // lower outlet. As wide as the head; from then on only the water through it
   // deepens it.
   const ground = world.terrain.filled[cell];
-  const lip = Math.max(SEA_LEVEL + 0.5, Math.min(ground, world.basinHold?.has(lake) ? Infinity : lakeLevel(world, lake)) - r.depth * TUNE.pebbleCut); // pebble: a quarter of the head's depth
+  const lip = Math.max(SEA_LEVEL + 0.5, Math.min(ground, lakeLevel(world, lake)) - r.depth * TUNE.pebbleCut); // pebble: a quarter of the head's depth
   r.via.set(lake, { cell, e: Math.max(0, Math.min(ground - lip, outletFloor(world, lake, cell))), w: widthOf(r), born: world.tick, at: Math.max(0, r.path.length - 1) });
   r.lakes++;
   // Joining a lake adds its water to yours at once, then keeps flowing.
@@ -2729,11 +2727,11 @@ export const SLIDE = {
   // The trigger (owner, 2026-11-16): dry basins spread over the course above the dam. Rivers fill them as they fill
   // any lake, the water seeps into the hill, and once the basins together hold enough the slope gives way (water in
   // a slope is a main driver of landslides, bs flood-113). Several rivers, several spots; no timer.
-  basins: 6, // dry basins above the dam that feed the hill
-  need: 4, // basins that must have been filled to bring it down (owner, 2026-11-16: four of six)
-  start: 0.67, // basins start two-thirds full, so a river or two tops one up on the way past (owner, 2026-11-16)
-  full: 0.9, // a basin counts once it is this full, and stays counted: rivers drain lakes through their outlets and
-  // the heat front dries them, so counting the water they hold now never added up
+  basins: 6, // lakes above the dam that feed the hill
+  need: 4, // lakes that must have been reached to bring it down (owner, 2026-11-16: four of six)
+  // The lakes are ordinary lakes, 90% full, and the first river into one latches it (owner, 2026-11-16): filling them
+  // by pulses failed, as rivers left a lake before it filled and either lost their pulses to it or stopped filling it.
+  start: 0.9,
   basinFrom: 1500, basinTo: 12000, // metres of route above the dam they lie between
   crackTicks: 140, // then 7 s of widening cracks and trickling stones before the mass comes down
   slopeLong: 2500, // metres along the valley the cracked slope runs (it marks itself across the whole stretch)
@@ -2812,7 +2810,6 @@ function makeSlide(world) {
     if (basins.some((o) => Math.hypot(o.x - b.x, o.z - b.z) < 1500)) continue;
     basins.push(b); world.lakeVol[b.id] = world.lakeCap[b.id] * SLIDE.start;
   }
-  world.basinHold = new Set(basins.map((b) => b.id));
   const cap = basins.reduce((a, b) => a + world.lakeCap[b.id], 0);
   return { state: 'armed', tick: 0, x: c.x, z: c.z, axis: { x: dx, z: dz }, across: { x: px, z: pz }, from, basins, seepCap: cap, wet: 0,
     toe: { x: c.x + px * toe, z: c.z + pz * toe }, scar: { x: c.x + px * scar, z: c.z + pz * scar }, scarAt: scar,
@@ -2910,10 +2907,11 @@ function slideStep(world) {
     // Each basin filled once counts for good; enough of them and the slope gives way.
     const need = Math.min(SLIDE.need, s.basins.length);
     for (const b of s.basins) {
-      if (b.filled || world.lakeVol[b.id] < world.lakeCap[b.id] * SLIDE.full) continue;
-      b.filled = true; s.filled = (s.filled ?? 0) + 1; world.basinHold.delete(b.id);
-      let by = -1, best = 3000 ** 2;
-      for (const r of world.rivers) { const q = (r.x - b.x) ** 2 + (r.z - b.z) ** 2; if (isRacing(r) && q < best) { best = q; by = r.idx; } }
+      if (b.filled) continue;
+      const r = world.rivers.find((o) => isRacing(o) && !o.dropping && o.inLake === b.id); // the first river into it latches it
+      if (!r) continue;
+      b.filled = true; s.filled = (s.filled ?? 0) + 1;
+      const by = r.idx;
       if (s.filled < need) world.events.push({ type: 'slide', phase: 'soaking', filled: s.filled, need, basin: b.id, x: b.x, z: b.z, by, tick: world.tick });
     }
     s.wet = need ? Math.min(1, (s.filled ?? 0) / need) : 1;

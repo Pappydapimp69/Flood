@@ -193,11 +193,11 @@ export function botSteer(world, bot) {
   const t = world.terrain;
   // The Landslide's dam (Training): a bold bot near it makes for the saddle, the crest's low point, to break
   // through first; the rest wait in the pond to ride the flood.
-  // Before it comes down, the bold go for the dry basins that feed the slope, to bring it down on the pack (events
+  // Before it comes down, the bold go for the ringed lakes that feed the slope, to bring it down on the pack (events
   // are targets like anything else, owner 2026-11-14).
   const sl = world.slide;
   if (sl?.state === 'armed' && bot.aggression > 0.55) {
-    // The nearest basin ahead that still has room: fill it and bring the slope down.
+    // The nearest ringed lake ahead not yet reached: reach it and bring the slope down.
     let p = null, d = 2500;
     for (const b of sl.basins) {
       const q = Math.hypot(b.x - r.x, b.z - r.z);

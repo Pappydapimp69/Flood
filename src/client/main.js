@@ -1344,7 +1344,7 @@ function makeSlideFx() {
   const TN = 36, trickle = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#6d6358', flatShading: true }), TN);
   trickle.frustumCulled = false;
   const drips = Array.from({ length: TN }, (_, i) => ({ along: -L * 0.8 + r() * L, phase: r(), size: 8 + r() * 14 }));
-  // The basins: a ring on each rim, pulsing while it has room.
+  // The basins: a ring on each rim, pulsing until a river reaches it.
   const rings = s.basins.map((b) => {
     let cells = 0; for (let k = 0; k < n * n; k++) if (world.lakeOf[k] === b.id) cells++;
     const rad = Math.sqrt(cells / Math.PI) * t.cell + 60;
@@ -1353,7 +1353,7 @@ function makeSlideFx() {
     scene.add(m);
     return { m, b };
   });
-  // Each filled basin gives the slope a moment (owner, 2026-11-16): a stretch of the face slumps (a burst of stones
+  // Each lake reached gives the slope a moment (owner, 2026-11-16): a stretch of the face slumps (a burst of stones
   // and dust down it), a new crack opens across it glowing, and the split at its foot steps brighter, so by the
   // last basin the slope looks ready to go. One stretch per basin, spread along the slope.
   const NB = Math.max(1, s.basins.length), stretches = Array.from({ length: NB }, (_, i) => -L * 0.8 + L * (i + 0.2 + r() * 0.6) / NB);
@@ -1375,7 +1375,7 @@ function makeSlideFx() {
   slumpDust.frustumCulled = false;
   const slumpRocks = Array.from({ length: SN }, () => ({ along: (r() - 0.5) * 700, up: 0.85 + r() * 0.15, delay: r() * 0.5, speed: 0.55 + r() * 0.5, size: 30 + r() * 50, drift: (r() - 0.5) * 120 }));
   scene.add(split, slabs, trickle, fresh, slump, slumpDust);
-  if (s.basins.length) feed(`Fill ${Math.min(SLIDE.need, s.basins.length)} of the ${s.basins.length} basins (orange rings) to bring the cracked slope down`);
+  if (s.basins.length) feed(`Reach ${Math.min(SLIDE.need, s.basins.length)} of the ${s.basins.length} ringed lakes (orange rings) to bring the cracked slope down`);
   const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5e554c', flatShading: true }), SLIDE.blocks);
   rocks.frustumCulled = false; rocks.count = 0;
   const D = SLIDE.blocks * 3, dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(D * 3), 3)),
@@ -1404,7 +1404,7 @@ function tickSlideFx(now) {
   f.split.visible = show && before;
   f.split.material.opacity = cracking ? 0.7 + 0.3 * Math.sin(now / 45) : 0.25 + 0.6 * wet + 0.1 * Math.sin(now / 300);
   f.slabs.visible = show && before;
-  // A new basin filled: rumble, slump one stretch of the face, open its crack, flash the split.
+  // A new lake reached: rumble, slump one stretch of the face, open its crack, flash the split.
   const filled = s.filled ?? 0;
   if (filled > f.latched) {
     f.slumpAlong = f.stretches[Math.min(f.stretches.length - 1, filled - 1)]; f.latched = filled; f.latchAt = now;
@@ -1435,7 +1435,7 @@ function tickSlideFx(now) {
   }
   f.slump.count = sn; f.slump.instanceMatrix.needsUpdate = true; f.slump.visible = sn > 0;
   f.slumpDust.material.opacity = since < 3.5 ? 0.75 * Math.min(1, since * 3) * Math.max(0, 1 - since / 3.5) : 0; f.slumpDust.visible = show && f.slumpDust.material.opacity > 0.01;
-  // Rings: pulsing orange while a basin waits to be filled; solid gold once it has counted.
+  // Rings: pulsing orange until a river reaches the lake; solid gold once it has counted.
   for (const g of f.rings) {
     g.m.visible = show && s.state === 'armed';
     if (g.b.filled) { g.m.material.color.set('#ffd23f'); g.m.material.opacity = 0.9; } else g.m.material.opacity = 0.35 + 0.3 * Math.sin(now / 250);
@@ -1606,12 +1606,12 @@ function advance(inputs) {
     } else if (e.type === 'slide') {
       if (e.phase === 'soaking') {
         const who = e.by >= 0 ? world.rivers[e.by] : null;
-        feed(`${who ? nameOf(who) : 'A river'} filled a basin: ${e.filled} of ${e.need} to bring the slope down`);
-        if (who === river) showPop(`BASIN FILLED — ${e.filled} of ${e.need}`);
+        feed(`${who ? nameOf(who) : 'A river'} reached a ringed lake: ${e.filled} of ${e.need} to bring the slope down`);
+        if (who === river) showPop(`LAKE REACHED — ${e.filled} of ${e.need}`);
       }
       else if (e.phase === 'cracking') {
         showPop('THE SLOPE IS GIVING WAY — 7 seconds');
-        feed('The basins have soaked the hill: the slope comes down in 7 seconds');
+        feed('The lakes have soaked the hill: the slope comes down in 7 seconds');
         audio.splash(0.6);
       } else if (e.phase === 'falling') { showPop('LANDSLIDE — the valley is closing'); feed('The slope is coming down across the valley'); audio.splash(1); }
       else if (e.phase === 'dammed') feed('The landslide has dammed the valley: the pond fills with every river held behind it. Wear down its low point, or wait and ride the flood');
