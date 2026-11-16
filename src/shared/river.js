@@ -127,12 +127,12 @@ export const TUNE = {
   lakeCoolPer: 0.001, lakeCoolLitres: 10_000, lakeCoolMin: 0.25, // lakes are buffs: cooldowns 0.1% shorter per 10k L of lake water taken in (never under a quarter)
   // Skills unlock as a river grows (litres; once unlocked, kept), and share one
   // cooldown: using either restarts it for both, at the length of the one used.
-  surgeUnlock: 1_200_000, // Surge, for every river alike
+  surgeUnlock: 600_000, // Surge, for every river alike (1.2M: bots got it 95 s into a 150 s race; the first lake or cloud now brings it)
   // Skills build up with weight (owner, 2026-11-13): the speed builds over skillBuild seconds for a river of
   // skillBuildAt litres, longer as it grows, by (size / that size)^1.5 (computed as q * sqrt q: no pow).
   // The full boost then runs its whole length, and the cooldown starts only once it ends.
   skillBuild: 1, skillBuildAt: 1_500_000,
-  gougeUnlock: 1_500_000,
+  gougeUnlock: 800_000, // (1.5M: half the field never got it before the first finish)
   // Comeback experiments (off by default).
   stormAim: 'pack', // 'pack': storms blow in just ahead of the middle of the field; 'tail': over its back
   catchUp: 0, // extra trickle share for rivers more than catchUpGap behind the leader
@@ -2818,6 +2818,7 @@ export const SLIDE = {
   damHalf: 350, // metres either side of the line it covers, tapering off
   breachR: 300, // metres either side of the low point that wash out when it bursts; the rest stays and narrows the river
   burstTicks: 16, // the breach opens in 0.8 s
+  rubble: 6, // metres of debris the outburst leaves across the rest of the floor
   // The burst (owner, 2026-11-16): it carries every river behind the dam at carry times top speed for the whole
   // wave, and the wave runs at that speed so they stay on it; a river ahead that the front reaches gets a free Gouge.
   carry: 1.5,
@@ -3073,16 +3074,25 @@ function slideStep(world) {
   // Bursting: the breach at the low point washes out; the rest of the debris stays and narrows the river (a rapid
   // through the gap, slack water behind the remains: flood-118). The wave runs down the route.
   if (age <= SLIDE.burstTicks) {
-    const n = t.size, b = s.breach, gx = (b.x / t.worldSize + 0.5) * (n - 1), gy = (b.z / t.worldSize + 0.5) * (n - 1), reach = Math.ceil((SLIDE.breachR + 600) / t.cell);
-    for (let y = Math.round(gy) - reach; y <= Math.round(gy) + reach; y++) for (let x = Math.round(gx) - reach; x <= Math.round(gx) + reach; x++) {
-      if (x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
-      const k = y * n + x, wxk = (x / (n - 1) - 0.5) * t.worldSize - b.x, wzk = (y / (n - 1) - 0.5) * t.worldSize - b.z;
-      const side = Math.abs(wxk * s.across.x + wzk * s.across.z), was = world.rock[k];
-      if (side > SLIDE.breachR || was <= 0) continue;
-      const now = was * (1 - (age + 1) / (SLIDE.burstTicks + 1));
-      world.rock[k] = now; world.treeRock[k] += now - was; world.dirty.push(k);
+    // The breach at the low point washes out; the outburst scours the rest of the dam down to low rubble across
+    // the whole floor (it stood 110 m high beside a 600 m gap, and rivers away from the gap sat behind it for a
+    // minute: 3 to 6 of 12 on seeds 43 and 99, 2026-11-16). The rubble stays as roughness (flood-118).
+    const n = t.size, b = s.breach, f = (age + 1) / (SLIDE.burstTicks + 1);
+    const [from, to] = s.span ?? [-3000, 3000];
+    const gx = (s.x / t.worldSize + 0.5) * (n - 1), gy = (s.z / t.worldSize + 0.5) * (n - 1);
+    const reach = Math.ceil((Math.max(Math.abs(from), Math.abs(to)) + SLIDE.damHalf + 400) / t.cell);
+    const bAt = (b.x - s.x) * s.across.x + (b.z - s.z) * s.across.z;
+    for (let y = Math.max(1, Math.round(gy) - reach); y <= Math.min(n - 2, Math.round(gy) + reach); y++) for (let x = Math.max(1, Math.round(gx) - reach); x <= Math.min(n - 2, Math.round(gx) + reach); x++) {
+      const k = y * n + x, was = world.rock[k];
+      if (was <= 0) continue;
+      const wxk = (x / (n - 1) - 0.5) * t.worldSize - s.x, wzk = (y / (n - 1) - 0.5) * t.worldSize - s.z;
+      const o = Math.abs(wxk * s.axis.x + wzk * s.axis.z), sd = wxk * s.across.x + wzk * s.across.z;
+      if (o > SLIDE.damHalf + 300 || sd < from - 400 || sd > to + 400) continue;
+      const keep = Math.abs(sd - bAt) <= SLIDE.breachR ? 0 : Math.min(was, SLIDE.rubble);
+      const now = was - (was - keep) * f;
+      if (now < was) { world.rock[k] = now; world.treeRock[k] += now - was; world.dirty.push(k); }
     }
-    for (const bl of s.blocks) if (Math.abs((bl.x - b.x) * s.across.x + (bl.z - b.z) * s.across.z) < SLIDE.breachR) bl.gone = true;
+    for (const bl of s.blocks) if (Math.abs((bl.x - s.x) * s.across.x + (bl.z - s.z) * s.across.z - bAt) < SLIDE.breachR) bl.gone = true;
   }
   s.level = Math.max(0, s.level * (1 - 1 / SLIDE.burstTicks));
   s.front = s.reach - SLIDE.waveSpeed * age * DT;

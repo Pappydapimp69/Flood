@@ -8,8 +8,8 @@ In the browser: https://pappydapimp69.github.io/Flood/ (solo against bots; onlin
 
 Steer with ← → (or A D). Falling: ↑ (W; the right stick up on a controller; ▼ DIVE on a phone, a tap turns it on or off) descends faster, and ↓ (S; RB on a controller; ▲ DASH on a phone) dashes, twice the speed for a second, ready again 5 s after. On a controller the left stick and D-pad only steer. On a phone the game plays in landscape: ◀ ▶ under your left thumb steer (20% gentler than a key), ▼ DIVE / ▲ DASH under your right fly the drop, and once landed dragging anywhere else works like the right stick (sideways looks around, up pulls the camera back). The 4.5 s opening shot can't be skipped.
 
-- **Gouge** (Space / E, pad A or B, or the GOUGE button): your river keeps its momentum and Gouge adds to it: more speed and a bigger head for 3 s, flowing over ground up to 80 m higher than usual. 10 s cooldown; costs water.
-- **Surge** (Q / F, a pad bumper, or the SURGE button): adds a burst of speed on top of what you have, for 2 s. 8 s cooldown; costs water. Unlocks at 1.2M L, or as soon as you fall 3 km behind the leader.
+- **Gouge** (Space / E, pad A or B, or the GOUGE button): your river keeps its momentum and Gouge adds to it: more speed and a bigger head for 3 s, flowing over ground up to 80 m higher than usual. 10 s cooldown; costs water. Unlocks at 800,000 L.
+- **Surge** (Q / F, a pad bumper, or the SURGE button): adds a burst of speed on top of what you have, for 2 s. 8 s cooldown; costs water. Unlocks at 600,000 L, the same for every river.
 - **Map** (M, pad Y, or the MAP button): the whole run from above, the gold finish beach at the bottom.
 - **Pause** (Esc / P, pad Start): resume, restart, music and effects volume, route preview and camera shake.
 - The white ribbon ahead of your river is where your water will go in the next 10 s if you let go of

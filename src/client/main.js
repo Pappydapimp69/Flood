@@ -562,6 +562,7 @@ let net, ids = [], frames = [], nextFrame = 0, endTable = null;
 
 // rolled: a world already built for this seed (solo rolls it), else built here.
 function beginRace(seed, raceIds, me, rolled) {
+  overflowSaid = null;
   clearSlideFx();
   if (freeCam) { freeCam = null; document.body.classList.remove('freecam'); input.freeze(false); }
   recordBanked = false; recordNotes = [];
@@ -897,9 +898,11 @@ function placeLakeTags() {
   const near = mapView || !me || me.dropping ? [] : world.lakes
     .map((l) => ({ l, x: (l.gx / (n - 1) - 0.5) * t.worldSize, z: (l.gy / (n - 1) - 0.5) * t.worldSize }))
     .map((o) => ({ ...o, d: Math.hypot(o.x - me.x, o.z - me.z) }))
-    .filter((o) => o.d < 4500 && o.d > 200 && (o.x - me.x) * me.dx + (o.z - me.z) * me.dz > 0)
+    // Ahead within about 50 degrees of your heading and 3.5 km, the nearest three: five labels across the whole
+    // half-plane ahead crowded the view.
+    .filter((o) => o.d < 3500 && o.d > 200 && (o.x - me.x) * me.dx + (o.z - me.z) * me.dz > o.d * 0.64)
     .sort((a, b) => a.d - b.d)
-    .slice(0, 5);
+    .slice(0, 3);
   while (lakeTagPool.length < near.length) {
     const el = document.createElement('div');
     tagBox.append(el);
@@ -921,13 +924,18 @@ function placeLakeTags() {
   });
 }
 
+let overflowSaid = null; // lakes whose overflow was announced this race
 const nameOf = (r) => (r === river ? 'You' : names[r.id] ?? r.id);
+// The same line again does not stack: it moves to the top, counts up and stays its 5 s from now (four copies of
+// one lake message filled the corner for whole races).
 function feed(text) {
-  const li = document.createElement('div');
-  li.textContent = text;
+  let li = [...hud.feed.children].find((el) => el.dataset.text === text);
+  if (li) { li.dataset.n = String(Number(li.dataset.n) + 1); clearTimeout(Number(li.dataset.timer)); }
+  else { li = document.createElement('div'); li.dataset.text = text; li.dataset.n = '1'; }
+  li.textContent = Number(li.dataset.n) > 1 ? `${text} ×${li.dataset.n}` : text;
   hud.feed.prepend(li);
-  while (hud.feed.children.length > 4) hud.feed.lastChild.remove();
-  setTimeout(() => li.remove(), 5000);
+  while (hud.feed.children.length > 3) hud.feed.lastChild.remove();
+  li.dataset.timer = String(setTimeout(() => li.remove(), 5000));
 }
 
 // ---- The Tutorial's training course ----
@@ -1576,7 +1584,10 @@ function advance(inputs) {
     } else if (e.type === 'pond') {
       if (river && e.river === river.idx) showPop('Stuck — your water fills the hollow until it spills');
     } else if (e.type === 'overflow') {
-      if (e.on) feed('A lake is overflowing — its spill is free water');
+      // Only a lake near you is news: its spill is water you can reach.
+      const l = world.lakes.find((q) => q.id === e.lake), t = world.terrain, n = t.size;
+      // A lake's spill flickers on and off as its level hovers at the brim: one word per lake a race (it counted to 49).
+      if (e.on && l && river && !(overflowSaid ??= new Set()).has(l.id) && Math.hypot((l.gx / (n - 1) - 0.5) * t.worldSize - river.x, (l.gy / (n - 1) - 0.5) * t.worldSize - river.z) < 3000) { overflowSaid.add(l.id); feed('A lake near you is overflowing — its spill is free water'); }
     } else if (e.type === 'join') {
       if (river && e.river === river.idx) { showPop('Outlet cut · what drains through it feeds you'); audio.lake(); }
     } else if (e.type === 'junction') {
