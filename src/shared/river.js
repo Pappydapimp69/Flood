@@ -2011,7 +2011,7 @@ export function pulseEvery(r) {
 
 // Pulses, once per tick: release, run down the channel, arrive.
 function pulses(world) {
-  const t = world.terrain, n = t.size;
+  const t = world.terrain, n = t.size, sl = world.slide?.state === 'dammed' ? world.slide : null;
   const cutsOf = new Map();
   for (const jk of [...world.junctions.keys()].sort()) {
     const j = world.junctions.get(jk);
@@ -2054,6 +2054,8 @@ function pulses(world) {
           world.events.push({ type: 'splash', river: rd.idx, owner: r.idx, tick: world.tick });
           break;
         }
+        // A channel the landslide's debris cut: the pulse goes no further, its water into the basin behind the dam.
+        if (sl?.cut?.[c]) { sl.pondVol += p.flow + p.amount; p.flow = 0; p.amount = 0; p.dead = true; break; }
         // (The head itself doesn't erode: a head that stops can't dig itself a pit.)
         if (p.erode && p.i <= r.path.length - TUNE.headSpared) erodeAt(world, r, c, flow, p.every);
         const lake = world.lakeOf[c];
@@ -2099,6 +2101,7 @@ function pulses(world) {
         feed(j.to, j.at, take);
         world.events.push({ type: 'siphon', from: r.idx, to: j.to.idx, amount: take, how: 'junction', tick: world.tick });
       }
+      if (p.dead) continue;
       p.s = s1;
       if (s1 < head) { keep.push(p); continue; }
       // At the head: the river swells (or, with its head in a lake, the lake does).
@@ -2106,7 +2109,8 @@ function pulses(world) {
       // full lake passes it straight on to the head (what flows into a full
       // reservoir flows out), so the head still swells and surges.
       const L = r.inLake;
-      if (L >= 0 && lakeLevel(world, L) < world.lakeBrim[L]) { world.lakePending[L] += p.flow + p.amount; world.lakeFlow[L] += p.flow; }
+      if (sl?.state === 'dammed' && inBasin(world, sl, r.x, r.z)) sl.pondVol += p.flow + p.amount; // trapped: it fills the basin
+      else if (L >= 0 && lakeLevel(world, L) < world.lakeBrim[L]) { world.lakePending[L] += p.flow + p.amount; world.lakeFlow[L] += p.flow; }
       else if (p.amount > 0) {
         grow(r, p.amount);
         // The wave hits the head and shoves it on: a surge of speed, bigger
@@ -2733,13 +2737,16 @@ export const SLIDE = {
   // by pulses failed, as rivers left a lake before it filled and either lost their pulses to it or stopped filling it.
   start: 0.9,
   basinFrom: 1500, basinTo: 12000, // metres of route above the dam they lie between
-  crackTicks: 140, // then 7 s of widening cracks and trickling stones before the mass comes down
+  // Once enough lakes are reached the hill gives way by the water above it, not a timer (owner, 2026-11-16): every tick
+  // it takes in the volume of every river still upstream of the dam, and comes down once it has taken hillLoad. Eight
+  // rivers of 700k bring it down in about 5 s; a lone small river takes about a minute.
+  hillLoad: 6e8,
   slopeLong: 2500, // metres along the valley the cracked slope runs (it marks itself across the whole stretch)
   // The slide itself: blocks break off the scar and fall, bounce and roll down the real ground (bs flood-116),
   // and where each stops it piles up; the piles are the dam (a hummocky tongue that runs up the far wall, flood-117).
   blocks: 120,
-  release: 16, // ticks over which the scar lets go, top first
-  grav: 450, // m/s2 along the slope: game time (rivers run 300 m/s), so the slide crosses a wide floor in about 5 s
+  release: 110, // ticks over which the scar lets go, top first: with the blocks travelling, the slope comes down over about 11 s, not at once (owner)
+  grav: 300, // m/s2 along the slope: game time (rivers run 300 m/s), so the slide crosses a wide floor in about 5 s
   rest: 10, // m/s: a block on gentle ground slower than this stops
   maxTicks: 140, // a block still moving after 7 s stops where it is
   trail: 0.12, // share of a pile a moving block leaves every 3 ticks along its path on the floor
@@ -2749,10 +2756,19 @@ export const SLIDE = {
   // The pond and the burst (flood-113: a landslide dam fails by overtopping at its lowest point, when the inflow has
   // filled it): the pond fills with the water held rivers pour in; it bursts when it reaches the crest's low point,
   // or when rivers pressing the low point wash it down near the valley floor.
-  pondPerMetre: 8_000, // litres the pond holds per metre of the low point's height above the floor (one river fills a 100 m dam in about 18 s, three in 6)
-  pondArea: 2500, // metres of route above the dam that count as in the pond
-  loose: 0.6, // metres a tick a river pressing the dam washes off the debris near it, times its size
-  breachLeft: 15, // metres: the low point worn to this above the floor breaks it
+  // The basin (owner, 2026-11-16): the real hollow behind the dam, every connected cell upstream below the dam's low
+  // point, holding pondPerCell litres per metre of depth (a lake holds 25k a cell). It fills only with water: the
+  // pulses of rivers whose heads are trapped in it, and the pulses of rivers already past the dam, whose channels the
+  // debris cut (their water stops at the dam). It breaks only when full; wearing the crest no longer breaks it.
+  pondPerCell: 1500,
+  pondArea: 2500, // metres of the drawn pond plane above the dam (the client's sheet, clipped by the valley sides)
+  pondCells: 4000, // the basin is at most this many cells
+  cutRock: 15, // metres of debris over a channel that cut it
+  // Where the blocks stop the debris closes the valley as one straight wall across it (bs flood-111: a wall laid across
+  // the valley's own direction; the blocks alone left gaps, so the low point was a gap 5-15 m high and nothing held).
+  damHeight: 110, // metres above the floor
+  saddle: 0.7, // the crest's seeded low point stands this share of the height
+  damHalf: 350, // metres either side of the line it covers, tapering off
   breachR: 300, // metres either side of the low point that wash out when it bursts; the rest stays and narrows the river
   burstTicks: 16, // the breach opens in 0.8 s
   waveSpeed: 420, // m/s down the route
@@ -2761,7 +2777,12 @@ export const SLIDE = {
   rideTicks: 70, // a ride lasts 3.5 s...
   rideSpeed: 520, // ...at least this fast
   rideFromPond: 1.4, // a river that waited in the pond rides this much faster and longer
-  gift: 0.25, // of the start volume: the pond's water each rider takes with it
+  gift: 0.25, // of the start volume: the most of the pond's water each rider takes with it
+  // The burst is the basin's own water and goes into the systems below (closed loop, owner 2026-11-16; bs flood-124:
+  // lakes below store an outburst, channels carry it): riders take their share, each lake the front reaches fills
+  // to its brim and a little over (it spills), each channel it crosses is fed there; what is left reaches the sea.
+  channelShare: 0.08, // of what the wave still carries, fed into each channel it crosses
+  spill: 1.05, // a lake the wave reaches fills to this share of its brim, so it spills
 };
 
 const wxOf = (t, k) => ((k % t.size) / (t.size - 1) - 0.5) * t.worldSize, wzOf = (t, k) => (Math.floor(k / t.size) / (t.size - 1) - 0.5) * t.worldSize;
@@ -2881,6 +2902,19 @@ function settle(world, b, share = 1) {
   if (share === 1) b.y = sampleFilled(t, b.x, b.z) + world.rock[cellIndex(t, b.x, b.z)];
 }
 
+function closeDam(world, s) {
+  const t = world.terrain, n = t.size, top = s.base + SLIDE.damHeight, low = s.base + SLIDE.damHeight * SLIDE.saddle;
+  const sad = ((s.seedR % 1000) / 1000 - 0.5) * 2000; // where along the crest the low point sits
+  for (let k = 0; k < n * n; k++) {
+    if (!t.mask[k] || t.filled[k] <= SEA_LEVEL || world.lakeOf[k] >= 0) continue;
+    const x = ((k % n) / (n - 1) - 0.5) * t.worldSize - s.x, z = (Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize - s.z;
+    const o = Math.abs(x * s.axis.x + z * s.axis.z), sd = x * s.across.x + z * s.across.z;
+    if (o > SLIDE.damHalf || Math.abs(sd) > 4000) continue;
+    const crest = low + (top - low) * Math.min(1, Math.abs(sd - sad) / 600), want = (crest - t.filled[k]) * (1 - (o / SLIDE.damHalf) ** 2);
+    if (want > world.rock[k]) { world.treeRock[k] += want - world.rock[k]; world.rock[k] = want; world.dirty.push(k); }
+  }
+}
+
 // The dam's low point: across the valley along its line, the lowest top of the debris on the floor (where the pond
 // spills first). Only where debris lies: open ground beside it is valley wall or a gap water already runs through.
 function lowPoint(world, s) {
@@ -2918,39 +2952,28 @@ function slideStep(world) {
     if (s.wet >= 1) set('cracking');
     return;
   }
-  if (s.state === 'cracking') { if (age >= SLIDE.crackTicks) { releaseBlocks(world, s); s.by = -1; set('falling'); } return; }
+  if (s.state === 'cracking') {
+    // The hill gives way by the water above it: every river still upstream of the dam loads it with its volume.
+    let up = 0;
+    for (const r of world.rivers) if (isRacing(r) && !r.dropping && world.toBeach[cellIndex(t, r.x, r.z)] > s.reach) up += r.volume;
+    s.load = (s.load ?? 0) + up;
+    s.give = Math.min(1, s.load / SLIDE.hillLoad);
+    if (s.give >= 1 || !up) { releaseBlocks(world, s); s.by = -1; set('falling'); }
+    return;
+  }
   if (s.state === 'falling') {
-    if (!stepBlocks(world, s, age)) { s.saddle = lowPoint(world, s); set('dammed'); }
+    if (!stepBlocks(world, s, age)) { closeDam(world, s); s.saddle = lowPoint(world, s); makeBasin(world, s); set('dammed'); }
     return;
   }
   if (s.state === 'dammed') {
-    // Rivers against the debris wash it away near them, fastest where they press together.
-    if (age % 2 === 0) for (const r of world.rivers) {
-      if (!isRacing(r) || r.dropping) continue;
-      const n = t.size, gx = (r.x / t.worldSize + 0.5) * (n - 1), gy = (r.z / t.worldSize + 0.5) * (n - 1), reach = 3;
-      for (let y = Math.round(gy) - reach; y <= Math.round(gy) + reach; y++) for (let x = Math.round(gx) - reach; x <= Math.round(gx) + reach; x++) {
-        if (x < 1 || y < 1 || x >= n - 1 || y >= n - 1) continue;
-        const k = y * n + x, was = world.rock[k];
-        if (was <= 0 || Math.hypot((x - gx) * t.cell, (y - gy) * t.cell) > 220) continue;
-        const now = Math.max(0, was - SLIDE.loose * 2 * Math.max(1, r.size));
-        world.rock[k] = now; world.treeRock[k] += now - was; world.dirty.push(k);
-      }
-    }
-    if (age % 10 === 0) s.saddle = lowPoint(world, s) ?? s.saddle;
-    const lip = s.saddle ? Math.max(5, s.saddle.top - s.base) : 0;
-    // The pond fills with the water held rivers pour in.
-    for (const r of world.rivers) {
-      if (!isRacing(r) || r.dropping) continue;
-      const at = world.toBeach[cellIndex(t, r.x, r.z)], up = (r.x - s.x) * s.axis.x + (r.z - s.z) * s.axis.z;
-      if (up < 0 && at >= s.reach - 300 && at <= s.reach + SLIDE.pondArea) s.pondVol += dischargeOf(r); // litres a tick
-    }
-    const cap = SLIDE.pondPerMetre * lip;
-    s.level = lip ? Math.min(1, s.pondVol / cap) * lip : 0;
-    const over = !s.saddle || s.pondVol >= cap, worn = s.saddle && s.saddle.top - s.base <= SLIDE.breachLeft;
-    if (over || worn) {
-      if (worn) { let best = 1500 ** 2; for (const r of world.rivers) { const q = (r.x - s.saddle.x) ** 2 + (r.z - s.saddle.z) ** 2; if (isRacing(r) && q < best) { best = q; s.by = r.idx; } } }
+    // The basin fills only with the water pulses pour into it (pulses()); full, it bursts at the low point.
+    const lip = s.saddle ? Math.max(0, s.saddle.top - s.base) : 0;
+    s.level = s.cap ? Math.min(1, s.pondVol / s.cap) * lip : 0;
+    if (!s.cap || s.pondVol >= s.cap) {
       s.breach = s.saddle ? { x: s.saddle.x, z: s.saddle.z } : { x: s.x, z: s.z };
+      s.cut = null; s.wave = s.pondVol; // the channels open again; the wave is the basin's water
       set('burst'); s.front = s.reach; ridePond(world, s);
+      s.lakesBelow = lakesBelow(world, s);
     }
     return;
   }
@@ -2970,27 +2993,80 @@ function slideStep(world) {
   }
   s.level = Math.max(0, s.level * (1 - 1 / SLIDE.burstTicks));
   s.front = s.reach - SLIDE.waveSpeed * age * DT;
+  const lo = s.front - 200, hi = s.front + SLIDE.waveBand;
   for (const r of world.rivers) {
-    if (!isRacing(r) || r.dropping || s.rode.has(r.idx)) continue;
+    if (!isRacing(r) || r.dropping || s.wave <= 0) continue;
     const at = world.toBeach[cellIndex(t, r.x, r.z)];
-    if (at <= s.front + SLIDE.waveBand && at >= s.front - 200) ride(world, s, r, 1);
+    if (!s.rode.has(r.idx) && at <= hi && at >= lo) { ride(world, s, r, 1); continue; }
+    // A channel the front crosses (a river whose head is further down): the wave pours into it there.
+    if (at >= lo || s.fed?.has(r.idx)) continue;
+    for (let i = r.path.length - 1; i >= 0; i -= 2) {
+      const q = r.path[i], b = world.toBeach[cellIndex(t, q.x, q.z)];
+      if (b < lo) continue;
+      if (b <= hi) { const give = s.wave * SLIDE.channelShare; s.wave -= give; feed(r, i, give); (s.fed ??= new Set()).add(r.idx); }
+      break;
+    }
   }
-  if (age >= SLIDE.waveTicks) set('done');
+  // Lakes the front reaches fill to their brim and spill.
+  while (s.lakesBelow?.length && s.lakesBelow[0].at >= lo && s.wave > 0) {
+    const l = s.lakesBelow.shift().id, room = Math.max(0, world.lakeCap[l] * SLIDE.spill - world.lakeVol[l] - world.lakePending[l]), take = Math.min(room, s.wave);
+    world.lakePending[l] += take; s.wave -= take;
+  }
+  if (age >= SLIDE.waveTicks || s.wave <= 0 || s.front <= 0) {
+    if (s.wave > 0) (world.water ??= { pumped: 0, sky: 0, ground: 0, sea: 0 }).sea += s.wave; // the rest runs on to the sea
+    s.wave = 0; set('done');
+  }
 }
 
 // Rivers held in the pond when it breaks: they go with the whole lake.
 function ridePond(world, s) {
   for (const r of world.rivers) {
     if (!isRacing(r) || r.dropping) continue;
-    const at = world.toBeach[cellIndex(world.terrain, r.x, r.z)];
-    if (at >= s.reach - 300 && at <= s.reach + SLIDE.pondArea) ride(world, s, r, SLIDE.rideFromPond);
+    if (inBasin(world, s, r.x, r.z)) ride(world, s, r, SLIDE.rideFromPond);
   }
+}
+export const inBasin = (world, s, x, z) => !!s?.pond?.[cellIndex(world.terrain, x, z)];
+
+// The basin behind the dam: every cell connected to the floor just upstream that lies below the dam's low point, and
+// the channels the debris cut (cells on the dam line under cutRock of rock).
+function makeBasin(world, s) {
+  const t = world.terrain, n = t.size, top = s.saddle?.top ?? -Infinity, pond = new Uint8Array(n * n), cut = new Uint8Array(n * n);
+  const proj = (k) => (((k % n) / (n - 1) - 0.5) * t.worldSize - s.x) * s.axis.x + ((Math.floor(k / n) / (n - 1) - 0.5) * t.worldSize - s.z) * s.axis.z;
+  let cap = 0, cells = 0;
+  // From the lowest open ground just upstream of the dam (the floor there can be under debris).
+  let seed = -1;
+  for (let o = -2500; o <= -100; o += 100) for (let sd = -2000; sd <= 2000; sd += 100) {
+    const k = cellIndex(t, s.x + s.axis.x * o + s.across.x * sd, s.z + s.axis.z * o + s.across.z * sd), g = t.filled[k] + Math.max(0, world.rock[k]);
+    if (t.mask[k] && g < top && (seed < 0 || g < t.filled[seed] + Math.max(0, world.rock[seed]))) seed = k;
+  }
+  const q = seed < 0 ? [] : [seed];
+  if (seed >= 0) pond[seed] = 1;
+  while (q.length && cells < SLIDE.pondCells) {
+    const k = q.shift(); cells++;
+    cap += (top - t.filled[k] - Math.max(0, world.rock[k])) * SLIDE.pondPerCell;
+    const x = k % n;
+    for (const j of [k - 1, k + 1, k - n, k + n]) {
+      if (j < 0 || j >= n * n || pond[j] || (j === k - 1 && x === 0) || (j === k + 1 && x === n - 1)) continue;
+      if (t.filled[j] + Math.max(0, world.rock[j]) >= top || t.filled[j] <= SEA_LEVEL || proj(j) > 300) continue;
+      pond[j] = 1; q.push(j);
+    }
+  }
+  for (let k = 0; k < n * n; k++) if (world.rock[k] >= SLIDE.cutRock && Math.abs(proj(k)) < 700) cut[k] = 1;
+  s.pond = pond; s.cut = cut; s.cap = cap;
+}
+
+// The lakes below the dam, nearest first, with how far each lies along the route.
+function lakesBelow(world, s) {
+  const at = new Map();
+  for (let k = 0; k < world.lakeOf.length; k++) { const l = world.lakeOf[k]; if (l >= 0) at.set(l, Math.max(at.get(l) ?? -Infinity, world.toBeach[k])); }
+  return [...at].filter(([, a]) => a < s.reach).map(([id, a]) => ({ id, at: a })).sort((a, b) => b.at - a.at || a.id - b.id);
 }
 
 // A ride is a surge the river does not pay for: the same machinery (speed floor, lift, hop), more water.
 function ride(world, s, r, k) {
   s.rode.add(r.idx);
-  grow(r, TUNE.startVolume * SLIDE.gift * k);
+  const take = Math.min(s.wave ?? 0, TUNE.startVolume * SLIDE.gift * k); // out of the basin's water, never made
+  s.wave -= take; grow(r, take);
   r.surgeT = 0; r.surgeBuild = 0; r.surgeFrom = r.speed; r.surgeLen = Math.round(SLIDE.rideTicks * k);
   r.surgeSpeed = Math.max(SLIDE.rideSpeed * k, r.speed + TUNE.baseSpeed * TUNE.surgeAdd);
   r.surgeAt = Math.max(r.surgeAt ?? 0, world.tick + r.surgeLen);

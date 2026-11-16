@@ -191,8 +191,8 @@ export function botSteer(world, bot) {
   bot.next = world.tick + (TUNE_BOT.think || bot.think);
 
   const t = world.terrain;
-  // The Landslide's dam (Training): a bold bot near it makes for the saddle, the crest's low point, to break
-  // through first; the rest wait in the pond to ride the flood.
+  // The Landslide's dam (Training): a bold bot near it makes for the saddle, the crest's low point, where the burst
+  // breaks out first; the rest wait in the basin to ride the flood.
   // Before it comes down, the bold go for the ringed lakes that feed the slope, to bring it down on the pack (events
   // are targets like anything else, owner 2026-11-14).
   const sl = world.slide;

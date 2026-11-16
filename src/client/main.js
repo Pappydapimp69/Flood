@@ -1610,15 +1610,15 @@ function advance(inputs) {
         if (who === river) showPop(`LAKE REACHED — ${e.filled} of ${e.need}`);
       }
       else if (e.phase === 'cracking') {
-        showPop('THE SLOPE IS GIVING WAY — 7 seconds');
-        feed('The lakes have soaked the hill: the slope comes down in 7 seconds');
+        showPop('THE SLOPE IS GIVING WAY');
+        feed('The lakes have soaked the hill: it gives way under the water of every river still above the dam');
         audio.splash(0.6);
       } else if (e.phase === 'falling') { showPop('LANDSLIDE — the valley is closing'); feed('The slope is coming down across the valley'); audio.splash(1); }
-      else if (e.phase === 'dammed') feed('The landslide has dammed the valley: the pond fills with every river held behind it. Wear down its low point, or wait and ride the flood');
+      else if (e.phase === 'dammed') feed('The landslide has dammed the valley and cut every channel through it: the basin behind it fills with the water of every river held there or cut off. Full, it bursts and carries the rivers in it down the valley');
       else if (e.phase === 'burst') {
         const who = e.by >= 0 ? world.rivers[e.by] : null;
         showPop(who === river ? 'YOU BROKE THE DAM — ride the flood' : 'THE DAM BURST — ride the flood');
-        feed(who ? `${nameOf(who)} broke the dam: a flood wave is running down the valley` : 'The pond overtopped the dam: a flood wave is running down the valley');
+        feed(who ? `${nameOf(who)} broke the dam: a flood wave is running down the valley` : 'The basin behind the dam filled and burst: its water is running down the valley, into every lake and channel below');
         audio.splash(1);
       }
     } else if (e.type === 'flood-ride') {
