@@ -1,9 +1,29 @@
 # The Landslide: what it is for
 
 Claude's design position, 2026-11-17, written before any more building (owner: work out what the mechanic is
-for first). Evidence cited by bs id; numbers from bot races in this repo's tools.
+for first). Evidence cited by bs id; numbers from bot races in this repo's tools. Revised the same day after
+re-reading where it came from (summit-rush.md, "The living mountain"): the first version below read it as a
+comeback device; that is a consequence, not the purpose.
 
-## What it is for
+## Where it came from
+The owner's verdict on the set-piece maps, 2026-11-14: "the map has to feel alive"; the mountain should change
+during the race. The landslide is the first piece of a living mountain (ideas listed beside it: a glacier
+outburst, a river jumping course, a log jam). And from the start, "No river, no slide": the rivers cause it.
+
+## What it is for, in one line
+The rivers' own water changes the mountain, and the changed mountain changes the rivers' water: the field's lake
+visits soak a slope until it falls, the debris cuts the channels through it and stores the water behind it, and
+the burst gives that water back down the valley. A closed loop the players set in motion, not an event the game
+runs at them.
+
+## What it adds to the plain slope
+On the plain slope a lake is only a refill. Here the lakes above the slope also load it, so the race splits into
+two ways to play: take the lakes (grow, soak the hill, and be behind the dam when it falls, then ride the flood)
+or skip them and run (beat the slope, but past it your channel is cut and your pulses stop until the burst). The
+landslide is what makes "lakes or speed" a real fork with a visible consequence, and the field's choices decide
+when it happens.
+
+## What it does (first reading, still true as effects)
 The ski slope alone is a solo time trial with neighbours: in 12-bot races the nearest rival sits about 1 km away
 (within 400 m only 5-10% of the time), and positions rarely change once the field spreads. Nothing in the world
 makes the field meet or makes one river's choice change another's race.
@@ -38,7 +58,8 @@ It is a trade, not a punishment:
   from the wave pouring into your channel.
 - **Ride it:** you lose time held behind the dam, then gain speed and water from the flood.
 
-The design target is that the two come out close to even across seeds, so the choice is real. Split/Second was
+Those are the two sides of the lakes-or-speed fork above: whoever took the lakes caused it and is behind it;
+whoever ran is past it. The target is that both ways to play stay viable across seeds, so the choice is real. Split/Second was
 criticised where simply outrunning the field beat using its hazards (flood-143); a ride that always wins would be
 the opposite failure. This must be measured, not assumed: time to the sea for rivers that beat it against rivers
 that rode it, same seeds.
@@ -62,9 +83,10 @@ lake zone, so the front can read how close it is and decide. Not separate per-ri
 activations make it a personal weapon (a Blue Shell, flood-141), which removes the shared choice the event exists
 for.
 
-Time should be a backstop only: if the field is about to reach the slope and the soaking is not done, it should
-still come down then, in front of the front-runners, so the set piece never fails to happen. Time sets the latest
-moment; lakes set the usual one.
+No clock, not even as a backstop (the first version of this note wanted one; that was wrong): the point is that
+the rivers cause it. If the field skips the lakes and the slope never falls, that is the field's choice and its
+result, as the owner's first spec had it ("No river, no slide"). What must be tuned instead is that the lakes are
+worth taking, so a normal race does soak the slope.
 
 ## Stages, not all at once
 Stages: each lake reached soaks the slope a visible step further (cracks widen, a stretch slumps), then the final
@@ -78,7 +100,7 @@ The 2026-11-17 change that moved it to wherever the leader was heading was wrong
 "beat it" half and turned a shared event into one river's weapon.
 
 ## What to build next (not yet built)
-1. A fixed, marked slope again, with the trigger lakes well above it so the soaking finishes while the field is
-   approaching, not after it has passed; the time backstop for when it would otherwise be late.
-2. Measure beat-it against ride-it on several seeds and tune the hold, the ride and the lake top-ups until neither
-   dominates.
+1. A fixed, marked slope again, below the lake zone, so the field that soaks it is the field approaching it; no
+   clock.
+2. Measure the fork on several seeds, lakes-takers against runners, and tune the hold, the ride, the cut and the
+   lake top-ups until both stay viable.
