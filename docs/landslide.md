@@ -5,6 +5,25 @@ for first). Evidence cited by bs id; numbers from bot races in this repo's tools
 re-reading where it came from (summit-rush.md, "The living mountain"): the first version below read it as a
 comeback device; that is a consequence, not the purpose.
 
+## Fourth pass (2026-11-17, owner: consider the game as a whole)
+The toe trigger of the third pass was wrong for Flood. A river has no engine: its speed comes only from the line it
+takes over the terrain, so a trigger at one spot on the valley side is a detour that costs the best line, the
+lakes, the fights with rivals and even the descent's choice of clouds. A trigger must come from what rivers
+already do on whatever lines they choose.
+
+Position: **the trigger is the water the whole field puts into the mountain above the slope.** Real slopes fail
+when water soaking into them raises the pressure underground; steady water only primes a slope, pulses set it off
+(USGS, Iverson 2000; bs flood-149). Flood already models the soaking: every channel seeps into the ground
+(`TUNE.seepRate`) and storms rain into it. So every channel carved above the slope soaks it as it flows, and the
+pulses that run down those channels push it harder. Bigger rivers, deeper channels, lake water drawn through
+outlets, storms and skills that carve all bring it sooner, as side effects of playing well, never as a detour.
+It is not a clock in disguise: a field of small, thin rivers soaks it slowly and a field that grows fast brings it
+down early, and where the field's water runs decides which slope gets the water.
+
+What stays from the third pass: one fixed, marked slope; its soaking shown on the slope in stages (darkening,
+cracks, slumps, a countdown) so every river can read it and choose to beat it or ride it; no clock; lakes as water
+(basin inflow, flood top-ups), not a trigger. What goes: the toe trigger, and ringed lakes as latches.
+
 ## After external research (2026-11-17, third pass): my position
 What other games teach, and what follows for Flood:
 - **Player-caused, not timed.** Battlefield 4's Levolution began as "Timeline", a background timer that changed
