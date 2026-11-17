@@ -5,6 +5,50 @@ for first). Evidence cited by bs id; numbers from bot races in this repo's tools
 re-reading where it came from (summit-rush.md, "The living mountain"): the first version below read it as a
 comeback device; that is a consequence, not the purpose.
 
+## After external research (2026-11-17, third pass): my position
+What other games teach, and what follows for Flood:
+- **Player-caused, not timed.** Battlefield 4's Levolution began as "Timeline", a background timer that changed
+  maps whatever players did, and was reworked so players trigger each event, with the stated rule that the
+  set piece must matter to play and not only be spectacle (flood-112). Split/Second's route changers are also
+  fired by racers (flood-108). Grumble Volcano's crumbling on lap 3 and MotorStorm Apocalypse's earthquakes are the
+  timed or uncontrolled kind; MotorStorm's reviewers liked that only because no racer could abuse it (flood-145).
+  Flood wants the first kind: the owner's "no river, no slide".
+- **The cause must be legible where the effect happens.** Harvey Smith found Deus Ex players felt robbed when their
+  actions changed a situation in ways they could not read, and Tim Cain's telegraphing rule is the same from the
+  other side (flood-147, flood-135). Today's trigger fails this: you touch a ringed lake kilometres away and a slope
+  you never looked at gives way. It is a checkbox, not water, and bots tick it for you.
+- **A trigger is worth having only as a situational tradeoff.** Sid Meier: interesting decisions are tradeoffs that
+  depend on the situation (flood-147). Split/Second was criticised where outrunning the field beat using its
+  hazards (flood-143); the Blue Shell where the user gained little and the target had no way out (flood-141).
+- **Catch-up must not be the point.** Visible rubber-banding is the best-known failure of dynamic difficulty in
+  racing games (flood-148). The flood carrying the held rivers is fine as a consequence of a rule; the event must
+  not exist to slow the leaders.
+- **From Dust's lesson:** a water and terrain simulation is the play itself; the hard part in multiplayer is how
+  players act on the terrain (flood-146). Flood already has the verb: rivers erode.
+
+So my opinion, and where it disagrees with what is built:
+1. **Purpose:** the living mountain, a part of the course the rivers can break, whose breaking reshapes the water
+   network for everyone: it cuts the channels across it, stores the water behind it and releases it as a flood.
+2. **Trigger: the rivers wear the slope's toe, not ringed lakes.** Undercutting the toe is what real rivers do to
+   bring slopes down (USGS, flood-113), it happens at the slope where everyone can see it, and it uses Flood's own
+   verbs: a river flowing along the toe wears it a little, a Gouge into it a lot. That was the owner's first
+   trigger (2026-11-14); it was replaced because the spot was not apparent, the 3 s delay was short and it fired too
+   late to see. Those are faults of marking and timing, fixed by the stages below, not of the cause.
+3. **Combined and staged.** Every river's erosion adds to one shared wear on the toe, shown on the slope itself:
+   cracks open, stretches slump, then a countdown of about 10 s, then a fall of about 12 s while the dam grows. One
+   river can bring it down alone only by spending time and Gouges there; a few passing rivers bring it down by
+   flowing along it. Several rivers, several spots along a 2.5 km toe, as the owner asked.
+4. **The tradeoff is built in.** Whoever sets it off is at the slope when it goes. Run on and you beat it, but your
+   own channel is cut behind you until the burst; stay and you are held, then ride the flood. Setting it off just
+   after rivals pass cuts their supply; just before they arrive holds them, and they ride the flood past you later.
+   No choice is always right, and every choice costs the chooser something (flood-147).
+5. **Lakes keep their role as water:** the lakes above drain into the basin when it closes (so the hold stays short,
+   flood-134), and the flood fills the lakes below (so rivers ahead with outlets there are paid back). They stop
+   being the trigger.
+6. **No clock, a fixed marked slope, no placement chasing the leader.** If no river touches the toe, it never falls.
+7. **Bots** wear the toe only when it suits them (a rival close behind, or their own route along it), so the player
+   sees rivals use it deliberately, not by drifting through a ring.
+
 ## Where it came from
 The owner's verdict on the set-piece maps, 2026-11-14: "the map has to feel alive"; the mountain should change
 during the race. The landslide is the first piece of a living mountain (ideas listed beside it: a glacier
@@ -71,7 +115,7 @@ that rode it, same seeds.
 - **One river by accident.** A bot drifting through a lake was setting it off; a trigger the player cannot see or
   answer is a gotcha (flood-135).
 
-## Why it needs triggers, and what they should be
+## Why it needs triggers, and what they should be (second pass; superseded on the trigger by the position above)
 It needs triggers so it has a cause the players can see and a moment they can see coming: a warning they can act
 on (flood-135). Without a trigger it is either scenery (a clock) or random.
 
@@ -100,7 +144,7 @@ The 2026-11-17 change that moved it to wherever the leader was heading was wrong
 "beat it" half and turned a shared event into one river's weapon.
 
 ## What to build next (not yet built)
-1. A fixed, marked slope again, below the lake zone, so the field that soaks it is the field approaching it; no
-   clock.
+1. A fixed, marked slope again whose toe the rivers wear (flow along it, Gouge into it), with the shared wear shown
+   in stages on the slope; ringed lakes no longer a trigger; no clock.
 2. Measure the fork on several seeds, lakes-takers against runners, and tune the hold, the ride, the cut and the
    lake top-ups until both stay viable.
