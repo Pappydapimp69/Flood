@@ -33,6 +33,7 @@ Steer with ← → (or A D). Falling: ↑ (W; the right stick up on a controller
   river aside don't stop a big one, so you steer more freely as you grow. Heads that touch bounce apart
   (the deeper keeps its line); water is drained only through channels. Drained below half the most water you've held (or 40% of your
   starting water), you're out.
+- Ringed lakes: the river that reaches the last of them brings a landslide down about 7 km ahead of the leader. It dams the valley; when the basin behind it bursts, the river that set it off rides the flood.
 - Every trail stays live water and keeps eroding as long as its river pours; a drained river's bed goes grey.
 
 ## Alpha testers

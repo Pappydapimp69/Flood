@@ -1400,7 +1400,7 @@ function makeSlideFx() {
   slumpDust.frustumCulled = false;
   const slumpRocks = Array.from({ length: SN }, () => ({ along: (r() - 0.5) * 700, up: 0.85 + r() * 0.15, delay: r() * 0.5, speed: 0.55 + r() * 0.5, size: 30 + r() * 50, drift: (r() - 0.5) * 120 }));
   scene.add(split, slabs, trickle, fresh, slump, slumpDust);
-  if (s.basins.length) feed(`Reach ${Math.min(SLIDE.need, Math.ceil(s.basins.length * 2 / 3))} of the ${s.basins.length} ringed lakes (orange rings) to bring the cracked slope down`);
+  if (s.basins.length && !s.placed) feed(`Ringed lakes: the river that reaches the ${['', 'first', 'second', 'third', 'fourth'][Math.min(SLIDE.need, Math.ceil(s.basins.length * 2 / 3))] ?? 'last'} brings a landslide down ahead of the leader, and rides its flood`);
   const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5e554c', flatShading: true }), SLIDE.blocks);
   rocks.frustumCulled = false; rocks.count = 0;
   const D = SLIDE.blocks * 3, dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(D * 3), 3)),
@@ -1414,31 +1414,33 @@ function makeSlideFx() {
   wave.frustumCulled = false;
   scene.add(cracks, rocks, dust, wave);
   const at = (k) => ({ x: ((k % n) / (n - 1) - 0.5) * W, z: (Math.floor(k / n) / (n - 1) - 0.5) * W });
-  slideFx = { slide: s, cracks, rocks, dust, wave, below, at, spin: [], puff: [], split, slabs, trickle, drips, rings, onSlope, toeUp, fresh, FS, slump, slumpDust, slumpRocks, stretches, latched: s.filled ?? 0, latchAt: -1e9, slumpAlong: 0 };
+  slideFx = { slide: s, placed: s.placed, cracks, rocks, dust, wave, below, at, spin: [], puff: [], split, slabs, trickle, drips, rings, onSlope, toeUp, fresh, FS, slump, slumpDust, slumpRocks, stretches, latched: s.filled ?? 0, latchAt: -1e9, slumpAlong: 0 };
 }
 const tmpM = new THREE.Matrix4(), tmpQ = new THREE.Quaternion(), tmpE = new THREE.Euler(), tmpP = new THREE.Vector3(), tmpS = new THREE.Vector3();
 function tickSlideFx(now) {
   const s = world?.slide;
   if (!s) { if (slideFx) clearSlideFx(); return; }
-  if (slideFx?.slide !== s) { clearSlideFx(); makeSlideFx(); }
+  if (slideFx?.slide !== s || slideFx.placed !== s.placed) { const keep = slideFx?.slide === s ? { latched: slideFx.latched, latchAt: slideFx.latchAt } : null; clearSlideFx(); makeSlideFx(); if (keep) Object.assign(slideFx, keep); }
   const f = slideFx, show = !mapView;
+  // The face is only known once the slope is set off, ahead of the leader: before that nothing marks a slope.
+  const onFace = !!s.placed;
   // Cracks: there from the start; widening (darker, flickering) through the countdown; gone once it falls.
   const before = s.state === 'armed' || s.state === 'cracking', cracking = s.state === 'cracking', wet = cracking ? 1 : s.wet ?? 0;
-  f.cracks.visible = show && before;
+  f.cracks.visible = show && before && onFace;
   f.cracks.material.opacity = cracking ? 0.6 + 0.4 * Math.sin(now / 60) : 0.5 + 0.4 * wet;
-  f.split.visible = show && before;
+  f.split.visible = show && before && onFace;
   f.split.material.opacity = cracking ? 0.7 + 0.3 * Math.sin(now / 45) : 0.25 + 0.6 * wet + 0.1 * Math.sin(now / 300);
-  f.slabs.visible = show && before;
+  f.slabs.visible = show && before && onFace;
   // A new lake reached: rumble, slump one stretch of the face, open its crack, flash the split.
   const filled = s.filled ?? 0;
   if (filled > f.latched) {
     f.slumpAlong = f.stretches[Math.min(f.stretches.length - 1, filled - 1)]; f.latched = filled; f.latchAt = now;
-    const p = f.onSlope(faceUp(s, 0.6), f.slumpAlong), d = river ? Math.hypot(p.x - river.x, p.z - river.z) : 0;
+    const p = onFace ? f.onSlope(faceUp(s, 0.6), f.slumpAlong) : (river ?? { x: 0, z: 0 }), d = river && onFace ? Math.hypot(p.x - river.x, p.z - river.z) : 0;
     audio.slump(Math.max(0.35, 1 - d / 12000)); buzz(Math.max(0.3, 1 - d / 12000), 350);
     if (d < 6000) gougeShakeAt = now - 150;
   }
   const since = (now - f.latchAt) / 1000, flash = Math.max(0, 1 - since / 1.5);
-  f.fresh.geometry.setDrawRange(0, f.latched * f.FS * 6); f.fresh.visible = show && before && f.latched > 0;
+  f.fresh.geometry.setDrawRange(0, f.latched * f.FS * 6); f.fresh.visible = show && before && onFace && f.latched > 0;
   f.fresh.material.opacity = cracking ? 0.7 + 0.3 * Math.sin(now / 50) : 0.55 + 0.45 * flash;
   f.fresh.material.color.setRGB(1, 0.55 + 0.4 * flash, 0.2 + 0.6 * flash);
   f.split.material.opacity = Math.min(1, f.split.material.opacity + 0.5 * flash);
@@ -1446,7 +1448,7 @@ function tickSlideFx(now) {
   // The slump: stones break off the top of the stretch and pour down the face for about 2.5 s, dust behind them.
   let sn = 0;
   const sd = f.slumpDust.geometry.attributes.position;
-  if (show && since < 3.5) {
+  if (show && onFace && since < 3.5) {
     f.slumpRocks.forEach((k, i) => {
       const u = Math.min(1, Math.max(0, (since - k.delay) * k.speed)), up = faceUp(s, k.up - 0.7 * u * u), p = f.onSlope(up, f.slumpAlong + k.along + k.drift * u);
       const y = surfaceAt(world, p.x, p.z) * VERT;
@@ -1459,7 +1461,7 @@ function tickSlideFx(now) {
     sd.needsUpdate = true;
   }
   f.slump.count = sn; f.slump.instanceMatrix.needsUpdate = true; f.slump.visible = sn > 0;
-  f.slumpDust.material.opacity = since < 3.5 ? 0.75 * Math.min(1, since * 3) * Math.max(0, 1 - since / 3.5) : 0; f.slumpDust.visible = show && f.slumpDust.material.opacity > 0.01;
+  f.slumpDust.material.opacity = since < 3.5 ? 0.75 * Math.min(1, since * 3) * Math.max(0, 1 - since / 3.5) : 0; f.slumpDust.visible = show && onFace && f.slumpDust.material.opacity > 0.01;
   // Rings: pulsing orange until a river reaches the lake; solid gold once it has counted.
   for (const g of f.rings) {
     g.m.visible = show && s.state === 'armed';
@@ -1467,7 +1469,7 @@ function tickSlideFx(now) {
   }
   // Trickling stones: a few at first, more as it soaks, all of them and fast while it cracks.
   let tn = 0;
-  if (before) {
+  if (before && onFace) {
     const live = cracking ? f.drips.length : Math.max(4, Math.round(f.drips.length * wet * 0.6)), speed = cracking ? 0.9 : 0.35;
     for (let i = 0; i < live; i++) {
       const d = f.drips[i], u = (now / 1000 * speed + d.phase) % 1, up = faceUp(s, 0.95 - 0.5 * u), p = f.onSlope(up, d.along);
@@ -1650,15 +1652,19 @@ function advance(inputs) {
         if (who === river) showPop(`LAKE REACHED — ${e.filled} of ${e.need}`);
       }
       else if (e.phase === 'cracking') {
-        showPop('THE SLOPE IS GIVING WAY');
-        feed('The lakes have soaked the hill: it gives way under the water of every river still above the dam');
+        const who = e.by >= 0 ? world.rivers[e.by] : null, lead = e.target >= 0 ? world.rivers[e.target] : null;
+        const km = river ? ((world.toBeach[cellIndex(world.terrain, river.x, river.z)] - world.slide.reach) / 1000).toFixed(1) : '?';
+        if (who === river) showPop(lead === river ? 'YOU SET OFF THE SLOPE — it falls ahead of you' : `YOU SET OFF THE SLOPE — it falls ahead of ${nameOf(lead)}; you ride its flood`);
+        else if (lead === river) showPop(`${nameOf(who)} SET OFF THE SLOPE — it falls ${km} km ahead of you: get through or wait for the flood`);
+        else showPop(`THE SLOPE IS GIVING WAY ${km} km ahead`);
+        feed(`${who ? nameOf(who) : 'A river'} reached the last ringed lake: the slope ahead of ${lead ? nameOf(lead) : 'the leader'} gives way`);
         audio.splash(0.6);
       } else if (e.phase === 'falling') { showPop('LANDSLIDE — the valley is closing'); feed('The slope is coming down across the valley'); audio.splash(1); buzz(0.9, 900); }
       else if (e.phase === 'dammed') feed('The landslide has dammed the valley and cut every channel through it: the basin behind it fills with the water of every river held there or cut off. Full, it bursts and carries the rivers in it down the valley');
       else if (e.phase === 'burst') {
         const who = e.by >= 0 ? world.rivers[e.by] : null;
-        showPop(who === river ? 'YOU BROKE THE DAM — ride the flood' : 'THE DAM BURST — ride the flood');
-        feed(who ? `${nameOf(who)} broke the dam: a flood wave is running down the valley` : 'The basin behind the dam filled and burst: its water is running down the valley, into every lake and channel below');
+        showPop(who === river ? 'THE DAM BURST — your flood carries you' : 'THE DAM BURST — ride the flood');
+        feed(`The dam burst${who ? `: ${nameOf(who)}, who set it off, rides the flood` : ''}; its water is running down the valley, into every lake and channel below`);
         audio.splash(1);
       }
     } else if (e.type === 'flood-gouge') {

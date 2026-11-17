@@ -496,3 +496,16 @@ Owner: "make the race map more competitive" and "the descent is still sloppy". M
   for the nearest three ahead, tags keep off the HUD boxes, the help line sits clear of the buttons and hides
   under the menu.
 - Measured: 12-bot races finish 9-11 of 12 with 1-2 knockouts; a sim tick takes 0.2-0.35 ms (13 ms at worst).
+
+## The landslide as a move (2026-11-17, owner: it felt like something that happens, after you'd passed)
+- The river that reaches the last ringed lake sets the slope off, and it comes down on the first steep face about
+  7 km down the course from the leader (`SLIDE.ahead`), not at a spot fixed when the map was made. The latcher
+  rides the burst wherever it is (Blue Shell lesson, bs flood-141: the user of a leader-targeting item must gain).
+- Before the trigger nothing marks a slope; the rings and their latches are the setup. The messages name who set
+  it off and whom it falls ahead of, with the distance.
+- Measured on six seeds (12 bots): the leader was 6.1-8.0 km above the dam when it was set off, no river got past
+  before it closed (one on one seed), warnings 10-12 s, fills 2-12 s, no river held in the basin over 8 s, and
+  the latcher rode the flood every time.
+- Spot search: no lake on the dam line within 700 m of the valley's middle (2.5 km ruled out nearly every spot on
+  the ski course); course centres computed once a map as plain data (a function on the world broke the planner
+  worker's copy of it).

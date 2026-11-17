@@ -1,5 +1,5 @@
-// Latch shots: stills of the Landslide's slope as each basin fills (the slump, the new crack, the brighter split),
-// from a camera across the valley. Usage: node tools/latch-shots.mjs <outdir> [seed]
+// Latch shots: stills of each ringed lake as a river reaches it (the ring turns gold). The slope itself is only
+// placed when the last lake is reached, ahead of the leader; event-shots.mjs films it from then on. Usage: node tools/latch-shots.mjs <outdir> [seed]
 import { createRequire } from 'node:module';
 import { serve } from './serve.mjs';
 const { chromium } = createRequire(import.meta.url)('playwright');
@@ -17,7 +17,7 @@ for (let n = 1; n <= Number(process.argv[4] ?? 4); n++) {
   }
   for (const [k, yo] of [['a', 0.35], ['b', 0.8]]) {
     await page.evaluate(() => __flood.freeCamOn());
-    await page.evaluate((yo) => { const s = __flood.world.slide, f = __flood.slideFx(), q = f.onSlope(s.toeAt + 0.55 * (s.scarAt - s.toeAt), f.slumpAlong), p = q; __flood.freeCamAim(p.x, p.z, 2600, Math.atan2(-s.across.x, -s.across.z), yo); }, yo); // from across the valley, looking at the face
+    await page.evaluate((yo) => { const s = __flood.world.slide, b = s.basins.filter((q) => q.filled).at(-1) ?? s.basins[0]; __flood.freeCamAim(b.x, b.z, 2600, 0.6, yo); }, yo); // the lake just reached
     await page.evaluate(() => { const f = __flood.slideFx(); if (f) f.latchAt = performance.now() - 900; });
     await page.waitForTimeout(300);
     await page.screenshot({ path: `${out}/latch-${n}${k}.jpg`, type: 'jpeg', quality: 80 });

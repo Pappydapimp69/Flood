@@ -440,8 +440,10 @@ await check('gamepad: A picks a menu button, stick and D-pad steer, A races agai
   // Finish the run by force (after the spawn grace), then A on the results card starts a new one.
   const t0 = (await state(page)).tick;
   await until(page, (st) => st.tick > Math.max(t0, 140), 'past spawn grace');
-  await page.evaluate(() => { const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out); me.volume = 1; me.size = 0.01; bot.x = me.x + 5; bot.z = me.z; });
-  for (let i = 0; i < 100 && !(await page.evaluate(() => !!document.getElementById('again'))); i++) await page.waitForTimeout(100);
+  // (Knocked out directly: parking a bot on the head relied on touching heads draining, a rule that is gone.)
+  await page.evaluate(() => { const me = __flood.river, bot = __flood.world.rivers.find((r) => r !== me && !r.out); me.out = { by: bot.id, tick: __flood.world.tick }; });
+  for (let i = 0; i < 600 && !(await page.evaluate(() => !!document.getElementById('again'))); i++) await page.waitForTimeout(100);
+  if (!(await page.evaluate(() => !!document.getElementById('again')))) throw new Error('no results card after the knockout');
   const before = (await state(page)).tick;
   await tap(0);
   await until(page, (s) => s.tick < before, 'A on the results card restarts');

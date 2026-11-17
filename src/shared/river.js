@@ -2764,7 +2764,8 @@ export function riverFingerprint(world) {
 // downstream when it fails). The dam is ordinary rock on world.rock, so it is shared in lockstep, rivers wear
 // it as they wear any rise, and the client draws it like cooled lava.
 export const SLIDE = {
-  at: 0.55, // where along the course the slope stands (share of the course)
+  at: 0.55, // where the rings' lakes are measured from (share of the course); the slope itself is placed ahead of the leader
+  ahead: 7000, // metres of course ahead of the leader where the slope comes down: the warning and the fall land in front of it
   // The trigger (owner, 2026-11-16): dry basins spread over the course above the dam. Rivers fill them as they fill
   // any lake, the water seeps into the hill, and once the basins together hold enough the slope gives way (water in
   // a slope is a main driver of landslides, bs flood-113). Several rivers, several spots; no timer.
@@ -2838,9 +2839,51 @@ const wxOf = (t, k) => ((k % t.size) / (t.size - 1) - 0.5) * t.worldSize, wzOf =
 function makeSlide(world) {
   const t = world.terrain, n = t.size, along = t.along;
   if (!along) return null;
-  const len = t.long * t.worldSize, W = t.worldSize;
-  const wx = (k) => ((k % n) / (n - 1) - 0.5) * W, wz = (k) => (Math.floor(k / n) / (n - 1) - 0.5) * W;
-  const centre = (a) => { let x = 0, z = 0, m = 0; for (let k = 0; k < n * n; k++) if (t.mask[k] && Math.abs(along[k] - a) * len < t.cell * 0.6) { x += wx(k); z += wz(k); m++; } return m ? { x: x / m, z: z / m } : null; };
+  const s = { state: 'armed', tick: 0, placed: 0, by: -1, target: -1, wet: 0, level: 0, pondVol: 0, front: 0, rode: new Set(), blocks: [], saddle: null };
+  // Where the slope stands is chosen when it is set off, ahead of the leader (placeSlide, owner 2026-11-17: it came
+  // down after the leaders had passed and felt like something that happens, not a mechanic); this first spot only
+  // sets which lakes above it carry the rings.
+  if (!placeSlide(world, s, SLIDE.at, SLIDE.at - 0.2, SLIDE.at + 0.2)) return null;
+  const W = t.worldSize, wx = (k) => ((k % n) / (n - 1) - 0.5) * W, wz = (k) => (Math.floor(k / n) / (n - 1) - 0.5) * W;
+  const r = stream(t.seed, 'slide'); r();
+  // The basins: mid-size lakes above the dam, emptied; spread out (no two within 1.5 km).
+  const basins = [];
+  const reachHere = s.reach;
+  const cand = world.lakes.filter((l) => l.cells >= TUNE.basinMinCells && l.cells <= TUNE.basinMaxCells && world.lakeOutlet[l.id] >= 0).map((l) => {
+    let x = 0, z = 0, k0 = -1, nn = 0;
+    for (let k = 0; k < n * n; k++) if (world.lakeOf[k] === l.id) { x += wx(k); z += wz(k); nn++; if (k0 < 0) k0 = k; }
+    return { id: l.id, x: x / nn, z: z / nn, at: world.toBeach[k0] };
+  }).filter((b) => b.at > reachHere + SLIDE.basinFrom && b.at < reachHere + SLIDE.basinTo);
+  while (basins.length < SLIDE.basins && cand.length) {
+    const b = cand.splice(Math.floor(r() * cand.length), 1)[0];
+    if (basins.some((o) => Math.hypot(o.x - b.x, o.z - b.z) < 1500)) continue;
+    basins.push(b); world.lakeVol[b.id] = world.lakeCap[b.id] * SLIDE.start;
+  }
+  s.basins = basins; s.seepCap = basins.reduce((a, b) => a + world.lakeCap[b.id], 0); s.seedR = r() * 1e9;
+  return s;
+}
+
+// Course centres, once per map: the middle of the valley at each share of the course (0 at the top, 1 at the sea).
+function slideCentres(world) {
+  const t = world.terrain, n = t.size, along = t.along, len = t.long * t.worldSize, W = t.worldSize, step = 0.005;
+  const sums = new Map(), half = (t.cell * 0.6) / len;
+  for (let k = 0; k < n * n; k++) {
+    if (!t.mask[k]) continue;
+    const x = ((k % n) / (n - 1) - 0.5) * W, z = (Math.floor(k / n) / (n - 1) - 0.5) * W;
+    for (let i = Math.ceil((along[k] - half) / step); i * step <= along[k] + half; i++) {
+      const o = sums.get(i) ?? { x: 0, z: 0, m: 0 }; o.x += x; o.z += z; o.m++; sums.set(i, o);
+    }
+  }
+  return { step, sums }; // plain data: the world is copied to workers, and a function cannot be
+}
+const centreAt = (cs, a) => { const o = cs.sums.get(Math.round(a / cs.step)); return o?.m ? { x: o.x / o.m, z: o.z / o.m } : null; };
+
+// Put the slope on the highest steep face beside the valley between shares lo and hi of the course, nearest a0.
+// want: metres from the sea by water the slope should stand at (the leader's, less SLIDE.ahead): faces are then scored
+// by how near they stand to it along the route, and none may stand nearer the leader than want + 1 km.
+function placeSlide(world, s, a0, lo, hi, want) {
+  const t = world.terrain;
+  const cs = (world.slideCentres ??= slideCentres(world)), centre = (a) => centreAt(cs, a), step = cs.step;
   const ground = (x, z) => sampleFilled(t, x, z);
   // The face the rock breaks from, out one side of the valley: the toe where the ground starts to rise, the scar at the
   // top of the steepest stretch (rockfall starts where the slope is steepest, the cliffs of a map's slope
@@ -2862,51 +2905,41 @@ function makeSlide(world) {
     while (toe > 1 && g[toe - 1] > floor + 40 && g[toe - 1] < g[toe]) toe--; // down the face to its foot
     return { toe: toe * 100, scar: top * 100, relief: g[top] - floor };
   };
-  // Where: the valley's own direction there (it winds), a spot near SLIDE.at with no lake across it, beside the highest
+  // Where: the valley's own direction there (it winds), a spot in the window with no lake across it, beside the highest
   // face either side (owner, 2026-11-16: the rocks fall from the slopes; on wide floors the old search found no slope
   // within 4 km and broke the rock off the middle of the valley).
   let site = null;
-  for (let i = 0; i < 80; i++) {
-    const a = SLIDE.at + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * 0.005;
-    const c = centre(a), p = centre(a - 0.012), q = centre(a + 0.012);
+  for (let i = Math.ceil(Math.max(0.05, lo) / step); i * step <= Math.min(0.97, hi) + 1e-9; i++) {
+    const a = i * step, c = centre(a), p = centre(a - 0.01), q = centre(a + 0.01);
     if (!c || !p || !q) continue;
     let dx = q.x - p.x, dz = q.z - p.z; const l = Math.hypot(dx, dz) || 1; dx /= l; dz /= l;
     let wet = false;
-    for (let o = -400; o <= 400 && !wet; o += 100) for (let sd = -2500; sd <= 2500 && !wet; sd += 100) if (world.lakeOf[cellIndex(t, c.x + dx * o - dz * sd, c.z + dz * o + dx * sd)] >= 0) wet = true;
+    // No lake on the line itself, near the valley's middle (within 2.5 km either side ruled out nearly every spot on
+    // the lake-filled ski course; the wall is laid across whatever floor it meets).
+    for (let o = -200; o <= 200 && !wet; o += 100) for (let sd = -700; sd <= 700 && !wet; sd += 100) if (world.lakeOf[cellIndex(t, c.x + dx * o - dz * sd, c.z + dz * o + dx * sd)] >= 0) wet = true;
     if (wet) continue;
     for (const from of [-1, 1]) {
       const f = face(c, -dz * from, dx * from);
       if (!f) continue;
-      const score = f.relief - Math.abs(a - SLIDE.at) * 4000; // a little height traded for staying near the planned spot
+      const at = world.toBeach[cellIndex(t, c.x, c.z)];
+      if (want != null && !(at <= want + 1000)) continue;
+      // Height traded for staying near the planned spot: 100 m of relief for each 300 m off it.
+      const score = f.relief - (want != null ? Math.abs(at - want) / 3 : Math.abs(a - a0) * 4000);
       if (!site || score > site.score) site = { c, dx, dz, from, score, ...f };
     }
   }
-  if (!site) return null;
-  const { c, dx, dz, from, toe, scar } = site, r = stream(t.seed, 'slide'); r(); // from: the side the face stands on
+  if (!site) return false;
+  const { c, dx, dz, from, toe, scar } = site;
   const px = -dz * from, pz = dx * from; // across the valley, toward the slope
-  const floor = ground(c.x, c.z);
   let d = 0, m = 0;
   for (let o = -t.cell; o <= t.cell; o += t.cell) for (let sd = -1500; sd <= 1500; sd += 100) { const k = cellIndex(t, c.x + dx * o - dz * sd, c.z + dz * o + dx * sd); if (t.mask[k] && world.toBeach[k] < 1e8) { d += world.toBeach[k]; m++; } }
   // The floor just above it, where the pond starts.
   let base = Infinity;
   for (let sd = -1500; sd <= 1500; sd += 100) base = Math.min(base, ground(c.x - dx * 400 - dz * sd, c.z - dz * 400 + dx * sd));
-  // The basins: mid-size lakes above the dam, emptied; spread out (no two within 1.5 km).
-  const basins = [];
-  const reachHere = m ? d / m : world.toBeach[cellIndex(t, c.x, c.z)];
-  const cand = world.lakes.filter((l) => l.cells >= TUNE.basinMinCells && l.cells <= TUNE.basinMaxCells && world.lakeOutlet[l.id] >= 0).map((l) => {
-    let x = 0, z = 0, k0 = -1, nn = 0;
-    for (let k = 0; k < n * n; k++) if (world.lakeOf[k] === l.id) { x += wx(k); z += wz(k); nn++; if (k0 < 0) k0 = k; }
-    return { id: l.id, x: x / nn, z: z / nn, at: world.toBeach[k0] };
-  }).filter((b) => b.at > reachHere + SLIDE.basinFrom && b.at < reachHere + SLIDE.basinTo);
-  while (basins.length < SLIDE.basins && cand.length) {
-    const b = cand.splice(Math.floor(r() * cand.length), 1)[0];
-    if (basins.some((o) => Math.hypot(o.x - b.x, o.z - b.z) < 1500)) continue;
-    basins.push(b); world.lakeVol[b.id] = world.lakeCap[b.id] * SLIDE.start;
-  }
-  const cap = basins.reduce((a, b) => a + world.lakeCap[b.id], 0);
-  return { state: 'armed', tick: 0, x: c.x, z: c.z, axis: { x: dx, z: dz }, across: { x: px, z: pz }, from, basins, seepCap: cap, wet: 0,
-    toe: { x: c.x + px * toe, z: c.z + pz * toe }, scar: { x: c.x + px * scar, z: c.z + pz * scar }, scarAt: scar, toeAt: toe,
-    reach: m ? d / m : world.toBeach[cellIndex(t, c.x, c.z)], base, level: 0, pondVol: 0, front: 0, rode: new Set(), by: -1, blocks: [], saddle: null, seedR: r() * 1e9 };
+  Object.assign(s, { x: c.x, z: c.z, axis: { x: dx, z: dz }, across: { x: px, z: pz }, from, base, scarAt: scar, toeAt: toe,
+    toe: { x: c.x + px * toe, z: c.z + pz * toe }, scar: { x: c.x + px * scar, z: c.z + pz * scar },
+    reach: m ? d / m : world.toBeach[cellIndex(t, c.x, c.z)], damCells: null, span: null });
+  return true;
 }
 
 // The blocks, from the scar: a patch along the valley side, top first; sizes and friction seeded.
@@ -3035,7 +3068,7 @@ function lowPoint(world, s) {
 function slideStep(world) {
   const s = world.slide, t = world.terrain;
   if (!s || s.state === 'done') return;
-  const age = world.tick - s.tick, set = (state) => { s.state = state; s.tick = world.tick; world.events.push({ type: 'slide', phase: state, x: s.x, z: s.z, by: s.by, tick: world.tick }); };
+  const age = world.tick - s.tick, set = (state) => { s.state = state; s.tick = world.tick; world.events.push({ type: 'slide', phase: state, x: s.x, z: s.z, by: s.by, target: s.target, tick: world.tick }); };
   if (s.state === 'armed') {
     // Each basin filled once counts for good; enough of them and the slope gives way.
     const need = Math.min(SLIDE.need, Math.ceil(s.basins.length * 2 / 3));
@@ -3046,9 +3079,24 @@ function slideStep(world) {
       b.filled = true; s.filled = (s.filled ?? 0) + 1;
       const by = r.idx;
       if (s.filled < need) world.events.push({ type: 'slide', phase: 'soaking', filled: s.filled, need, basin: b.id, x: b.x, z: b.z, by, tick: world.tick });
+      else s.by = by; // the last lake: this river sets the slope off
     }
     s.wet = need ? Math.min(1, (s.filled ?? 0) / need) : 1;
-    if (s.wet >= 1) set('cracking');
+    if (s.wet >= 1) {
+      // It comes down ahead of the leader (owner, 2026-11-17: placed on the map, it fell behind the leaders and was
+      // just something that happens): on the first steep face from SLIDE.ahead metres down the course from the
+      // leading river, so the warning and the fall land in front of it. Whoever reached the last lake rides the burst
+      // (a leader-targeting catch-up item should pay the one who used it, bs flood-141).
+      const t = world.terrain, len = t.long * t.worldSize;
+      let lead = null;
+      for (const o of world.rivers) if (isRacing(o) && !o.dropping && (!lead || world.toBeach[cellIndex(t, o.x, o.z)] < world.toBeach[cellIndex(t, lead.x, lead.z)])) lead = o;
+      if (lead) {
+        const a0 = t.along[cellIndex(t, lead.x, lead.z)], want = world.toBeach[cellIndex(t, lead.x, lead.z)] - SLIDE.ahead;
+        if (placeSlide(world, s, a0, a0, a0 + 0.35, want) || placeSlide(world, s, a0, a0, 0.97)) s.target = lead.idx;
+      }
+      s.placed = world.tick + 1;
+      set('cracking');
+    }
     return;
   }
   if (s.state === 'cracking') {
@@ -3057,7 +3105,7 @@ function slideStep(world) {
     for (const r of world.rivers) if (isRacing(r) && !r.dropping && world.toBeach[cellIndex(t, r.x, r.z)] > s.reach) up += r.volume;
     s.load = (s.load ?? 0) + up;
     s.give = Math.min(1, s.load / SLIDE.hillLoad);
-    if (s.give >= 1 || !up) { releaseBlocks(world, s); s.by = -1; set('falling'); }
+    if (s.give >= 1 || !up) { releaseBlocks(world, s); set('falling'); }
     return;
   }
   if (s.state === 'falling') {
@@ -3083,6 +3131,8 @@ function slideStep(world) {
       s.breach = s.saddle ? { x: s.saddle.x, z: s.saddle.z } : { x: s.x, z: s.z };
       s.cut = null; s.wave = s.pondVol; // the channels open again; the wave is the basin's water
       set('burst'); s.front = s.reach; ridePond(world, s);
+      const by = world.rivers[s.by]; // whoever set it off rides it, wherever it is
+      if (by && isRacing(by) && !by.dropping && !s.rode.has(by.idx)) ride(world, s, by, SLIDE.rideFromPond);
       s.lakesBelow = lakesBelow(world, s);
     }
     return;
