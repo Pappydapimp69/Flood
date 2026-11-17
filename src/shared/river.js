@@ -163,7 +163,8 @@ export const TUNE = {
   lineTol: 0.004, // share of that distance either side drawn as the line
   ceilSlope: 1.3, // highest a drop can be: this many metres up per metre still to go to the line
   floorGap: 60, // lowest: this far over the ground, easing to 0 in the last 1.5 km
-  dropCloudShare: 0.104, // (0.156 x 16/24 clouds) descent clouds hold this share of cloudWater (they gave far too much; 0.25 x 10/16 clouds)
+  dropCloudShare: 0.375, // (owner 2026-11-17: the clouds should mean more; at 0.104 in 24 clouds a drop landed with its start volume +-10% and cloud water predicted nothing; now 16 clouds of about 0.2 start volumes each: 20-26 of 72 bot drops land with Surge unlocked, none did before)
+  dropCloudShareOld: 0.104, // (0.156 x 16/24 clouds) descent clouds hold this share of cloudWater (they gave far too much; 0.25 x 10/16 clouds)
   cloudSpread: 4500, // metres either side of the comet path the first clouds sit; they close in toward the start line
   diveRate: 1.6,
   diveSpeed: 0, floatSpeed: 0.3, // diving only loses height, no ground speed (was 0.5: bots dived half the descent and outran players, owner 2026-11-09); // diving glides this much faster, floating this much slower // ...diving falls up to this much faster (about 12 s)...
@@ -172,7 +173,7 @@ export const TUNE = {
   dashBoost: 1, dashTicks: 20, dashCool: 100, // twice the glide for 1 s; ready again 5 s after it fired
   // Rain clouds hang in the sky over the summits: fall through one and its
   // water is yours, a bigger start; each can only be taken once.
-  skyClouds: 24, // rain clouds along the comet path in (16 until the descent grew from 80 s to 120 s: as many per second, same total water) (was 10:
+  skyClouds: 16, // (24 until 2026-11-17: fewer, bigger clouds, each a goal worth a detour; 12 left 35 s quiet stretches) // rain clouds along the comet path in (16 until the descent grew from 80 s to 120 s: as many per second, same total water) (was 10:
   // an engaged drop's longest quiet stretch 18 s, worst 29 s; now 13 s, worst 16 s, same total water)...
   cloudsRandom: true, // anywhere in the lane, any reachable height (owner); off: cloudsOnPath placement
   cloudsOnPath: true, // ...each at the height a steady fall passes it, so steering to one can reach it
@@ -211,7 +212,9 @@ export const TUNE = {
   // Anti-bullying: the drop hit darts away (bumpBurst faster for bumpBurstTicks), the
   // hitter is checked (bumpRecoil of its glide for bumpRecoilTicks), so a chaser can't pin a drop.
   bumpBurst: 0.6, bumpBurstTicks: 10, bumpRecoil: 0.5, bumpRecoilTicks: 20,
-  bumpTransfer: 0.7, // share of the loser's spill the winner of a bump soaks up (the rest goes to the sky)
+  bumpTransfer: 0.85, // (0.7 before rams: a takedown should pay) // share of the loser's spill the winner of a bump soaks up (the rest goes to the sky)
+  ramOnly: true, // drops bump only when one is dashing; dive out of its height to dodge
+  ramTake: 0.15, // share of the loser's water a ram knocks loose; bumpTransfer of it goes to the winner
   bumpSteal: true, // the side with more momentum into the hit wins it (Brain flood#E122: the winner must gain; dlist#E71: damage by momentum)
   bumpWinLoss: 0.15, // the winner still spills this share of what the loser does
   zoneSlack: 2400, // metres a falling drop may stray from the landing rings: wide enough to glide to another mountain's
@@ -1675,6 +1678,9 @@ function dropBumps(world) {
     const va = a.glideV ?? TUNE.glideSpeed, vb = b.glideV ?? TUNE.glideSpeed;
     const close = (a.dx * va + (a.kx ?? 0) - b.dx * vb - (b.kx ?? 0)) * nx + (a.dz * va + (a.kz ?? 0) - b.dz * vb - (b.kz ?? 0)) * nz;
     if (close <= TUNE.bumpMin) continue; // drifting apart, or only brushing
+    // Only a ram is a bump (owner 2026-11-17: bumping should be more involved): one of them is dashing into the
+    // other. Drops that merely cross pass by: 50-70 accidental touches a race spilled as much water as every cloud gave.
+    if (TUNE.ramOnly && !(a.dashT > 0) && !(b.dashT > 0)) continue;
     bumps.set(key, world.tick + TUNE.bumpCool);
     const ma = Math.max(0.2, a.size), mb = Math.max(0.2, b.size);
     const ka = close * TUNE.bumpKnock * (mb / (ma + mb)), kb = close * TUNE.bumpKnock * (ma / (ma + mb));
@@ -1689,7 +1695,8 @@ function dropBumps(world) {
     if (TUNE.bumpSteal) {
       const pa = a.volume * (ca + 1), pb = b.volume * (cb + 1), aWins = pa > pb || (pa === pb && a.id < b.id);
       const [win, lose, kl] = aWins ? [a, b, kb] : [b, a, ka];
-      const spill = Math.min(lose.volume * TUNE.bumpLossMax, lose.volume * TUNE.bumpLoss * 2 * (kl / TUNE.glideSpeed));
+      // A ram takes a real share (Burnout's takedown pays the hitter in what wins the race, bs flood-152).
+      const spill = TUNE.ramOnly ? lose.volume * TUNE.ramTake : Math.min(lose.volume * TUNE.bumpLossMax, lose.volume * TUNE.bumpLoss * 2 * (kl / TUNE.glideSpeed));
       const winSpill = spill * TUNE.bumpWinLoss, take = spill * TUNE.bumpTransfer;
       if (aWins) { lb = spill; la = winSpill; ga = take; } else { la = spill; lb = winSpill; gb = take; }
     } else {

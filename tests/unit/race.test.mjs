@@ -209,7 +209,7 @@ test('drop: with bots, every drop reaches the line within the course and nobody 
   assert.ok(worst <= (TUNE.glideSpeed * 2.2 * (1 + TUNE.draftBoost) * (1 + TUNE.bumpBurst) / 20) * 1.4 + 1, `a drop moved ${worst.toFixed(0)} m in a tick: dragged`);
 });
 
-test('drop: a bump goes to whoever hits with more momentum: the loser spills water, the winner soaks most of it up', async () => {
+test('drop: a ram (a dash into another drop) goes to whoever hits with more momentum: the loser spills ramTake of its water, the winner soaks most of it up', async () => {
   const { rollIsland } = await import('../../src/shared/river.js');
   const w = rollIsland(5, 2).world;
   const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
@@ -219,10 +219,11 @@ test('drop: a bump goes to whoever hits with more momentum: the loser spills wat
   const va = a.volume, vb = b.volume, sky = w.sky ?? 0;
   let bumped = null;
   for (let k = 0; k < 60 && !bumped; k++) {
-    step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: -1 }]]));
+    step(w, new Map([['a', { s: 0, f: k % 20 ? 0 : -1, g: 1 }], ['b', { s: 0, f: 0, g: -1 }]])); // a dashes (down) into b
     bumped = w.events.splice(0).find((e) => e.type === 'bump');
   }
   assert.ok(bumped, 'no bump');
+  assert.ok(Math.abs((vb - b.volume) / vb - TUNE.ramTake) < 0.02, `the rammed lost ${((vb - b.volume) / vb).toFixed(3)} of its water, want ${TUNE.ramTake}`);
   assert.ok(a.volume > va && b.volume < vb, `rammer ${a.volume - va}, rammed ${b.volume - vb}`);
   const spilled = (va + vb) - (a.volume + b.volume);
   assert.ok(Math.abs((w.sky - sky) - spilled) < 1e-6 * va, 'what was spilled did not go to the sky');
@@ -253,13 +254,17 @@ test('drop: no bumps during the opening shot (TUNE.dropCalm), then bumps as usua
   const a = addRiver(w, 'a', undefined, { drop: true }), b = addRiver(w, 'b', undefined, { drop: true });
   Object.assign(a, { dx: 1, dz: 0 });
   Object.assign(b, { x: a.x + 200, z: a.z, alt: a.alt, dx: -1, dz: 0 }); // head-on, already touching
-  const go = new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: 1 }]]);
+  const go = new Map([['a', { s: 0, f: -1, g: 1 }], ['b', { s: 0, f: 0, g: 1 }]]); // a dashes: a ram
   step(w, go);
   assert.ok(!w.events.some((e) => e.type === 'bump'), 'bumped during the opening shot');
   for (const r of [a, b]) r.fallT = TUNE.dropCalm;
+  // Crossing without a dash is no bump (TUNE.ramOnly, owner 2026-11-17: bumping should be a choice, not an accident).
   Object.assign(b, { x: a.x + 200, z: a.z, alt: a.alt, dx: -1, dz: 0 });
-  w.events.length = 0; step(w, go);
-  assert.ok(w.events.some((e) => e.type === 'bump'), 'no bump after the opening shot');
+  a.dashT = 0; w.events.length = 0; step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: 1 }]]));
+  assert.ok(!w.events.some((e) => e.type === 'bump'), 'drops that only crossed bumped');
+  Object.assign(b, { x: a.x + 200, z: a.z, alt: a.alt, dx: -1, dz: 0 });
+  a.dashAt = 0; w.events.length = 0; step(w, go);
+  assert.ok(w.events.some((e) => e.type === 'bump'), 'no ram after the opening shot');
 });
 
 test('drop: after a bump the drop hit darts away and the hitter is checked', () => {
@@ -269,7 +274,7 @@ test('drop: after a bump the drop hit darts away and the hitter is checked', () 
   Object.assign(a, { dx: ax, dz: az, fallT: TUNE.dropCalm });
   Object.assign(b, { x: a.x + ax * 300, z: a.z + az * 300, alt: a.alt, dx: ax, dz: az, fallT: TUNE.dropCalm }); // a rams b from behind: b throttles right back
   let bump = null;
-  for (let k = 0; k < 20 && !bump; k++) { step(w, new Map([['a', { s: 0, f: 0, g: 1 }], ['b', { s: 0, f: 0, g: -1 }]])); bump = w.events.splice(0).find((e) => e.type === 'bump'); }
+  for (let k = 0; k < 20 && !bump; k++) { step(w, new Map([['a', { s: 0, f: k ? 0 : -1, g: 1 }], ['b', { s: 0, f: 0, g: -1 }]])); bump = w.events.splice(0).find((e) => e.type === 'bump'); } // a dashes into b
   assert.ok(bump, 'no bump');
   assert.equal(bump.hitter, a.idx, 'the rammer is the hitter');
   assert.ok(a.recoilT > 0 && b.burstT > 0, 'no recoil or burst');

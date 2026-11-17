@@ -40,3 +40,18 @@ Proposed, in order:
 3. One skill moment at the end: a timed touchdown (pull out of the dive close to the ground) that sets your opening
    speed, like a rocket start.
 4. Clouds and bumps go unless they can be made to matter: at today's size they are noise, and bumps are a net loss.
+
+## Built (2026-11-17, owner: on the ski slope the fair line stays; clouds should mean more; bumping more involved)
+- 16 bigger clouds (24 before) holding about 2.5 times the water: a drop lands with 0.4-1.8 of its start volume
+  (was 0.78-1.20), and 20-26 of 72 bot drops land with Surge already unlocked (none before). Cloud water now leans
+  toward a better place (rank correlation +0.14, was -0.22), still weak against the race's noise.
+- Bumps are rams: only a dashing drop bumps another; drops that cross pass by. The heavier hit takes 15% of the
+  loser's water and keeps 85% of it (Burnout's takedown pays the hitter, bs flood-152). Diving out of the hitter's
+  height is the dodge. Bumps fell from 50-72 to 27-38 a race and move 2-3 start volumes between drops instead of
+  spilling them to the sky; bots save the dash until their prey is within a dash's reach.
+- How quickly a drop reaches the line: glide is always full for everyone (keys, pad, touch and bots), so arrival
+  comes from the line flown, the slipstream and dashes, and each dash is now spent on speed, a cloud or a ram.
+- Race health (6 seeds, 12 bots): 66 of 72 finished, 6 knocked out (63 and 9 before).
+- Still open: a drop's longest stretch with nothing happening rose from 22 s to 35 s (fewer accidental bumps);
+  water still buys little speed (size is the cube root of water, +10% speed per size), so cloud water pays
+  mostly in early skills, fight depth and knockout margin; the race after landing remains very noisy.

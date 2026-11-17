@@ -1643,7 +1643,7 @@ function advance(inputs) {
         showPop(won ? `You hit ${nameOf(mine[0])}! +${fmtL(mine[3] - mine[1])}` : `${nameOf(mine[0])} hit you! −${fmtL(mine[1])}`);
         flashEdge(won ? '#ffcf3a' : '#ff5a4a');
         audio.splash(1.3); gougeShakeAt = performance.now() - 200; buzz(won ? 0.45 : 0.7, 140);
-        teach('bump', 'Bumping', 'Drops that collide knock each other off course. Whoever hits with more momentum (more water, more speed into the other) <b>wins</b>: the loser spills water and the winner soaks most of it up. Ram lighter drops; dodge heavier ones.', e.x, e.z);
+        teach('bump', 'Bumping', '<b>DASH</b> into another drop to ram it: whoever hits with more momentum (more water, more speed into the other) <b>wins</b>, and the loser spills 15% of its water, most of it into the winner. Drops that only cross pass by. Ram lighter drops; <b>dive</b> out of a heavier one\'s height to dodge.', e.x, e.z);
       }
     } else if (e.type === 'slide') {
       if (e.phase === 'soaking') {

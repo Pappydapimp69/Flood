@@ -363,7 +363,12 @@ function botGlide(world, bot) {
   // Diving onto it from above closes the gap (a dive is faster): a drop flying straight ahead is still catchable.
   // Under it: float up to its height first (out of bump height, a chase never lands).
   // (Down is Dash now: it dives onto a drop below it, and dashes after one that is getting away.)
-  if (prey) return { s: turnTo(r, prey.x, prey.z), f: r.alt > prey.alt + 40 ? 1 : (prey.x - r.x) ** 2 + (prey.z - r.z) ** 2 > 500 * 500 ? -1 : 0, g: 1 };
+  // A ram needs the dash (TUNE.ramOnly): save it until the prey is within a dash's reach, then fire it.
+  if (prey) {
+    const d2 = (prey.x - r.x) ** 2 + (prey.z - r.z) ** 2, ready = now >= (r.dashAt ?? 0);
+    const f = r.alt > prey.alt + 40 ? 1 : ready && d2 < 450 * 450 ? -1 : 0;
+    return { s: turnTo(r, prey.x, prey.z), f, g: 1 };
+  }
   // A drop it just let go of, still close by: peel away from it (backing off means leaving, not tailgating).
   for (const o of world.rivers) {
     const until = spared.get(o.id) ?? -1; // peel for the first peelTicks of the spare
