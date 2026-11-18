@@ -1062,6 +1062,7 @@ const pendingActions = [];
 const touchUI = lowPower;
 document.body.classList.toggle('touch', touchUI);
 const tpad = document.getElementById('tpad'), tfly = document.getElementById('tfly');
+const diveMeter = document.getElementById('divemeter');
 const padFly = document.getElementById('padfly'), padDive = document.getElementById('pf-dive'), padDash = document.getElementById('pf-dash');
 input.bind(document.getElementById('t-left'), 'left');
 input.bind(document.getElementById('t-right'), 'right');
@@ -1731,6 +1732,14 @@ function updateSkill() {
     tfly.hidden = !river?.dropping || mapView || calmNow();
     if (!river?.dropping) input.untoggle('fwd'); // landed (or a new race): diving is off again
   }
+  // The dive meter while falling, on every input: what is left of the drop's one store of dive.
+  diveMeter.hidden = !river?.dropping || !isRacing(river) || mapView || calmNow() || isSummit(world);
+  if (!diveMeter.hidden) {
+    const left = Math.max(0, Math.min(1, (river.diveLeft ?? TUNE.diveMeter) / TUNE.diveMeter));
+    diveMeter.style.setProperty('--left', left.toFixed(3));
+    diveMeter.classList.toggle('empty', left <= 0);
+    diveMeter.classList.toggle('on', (river.diveK ?? 0) > 0.05 && left > 0);
+  }
   // A pad while falling: the two descent controls on screen, the dash with its recharge.
   padFly.hidden = touchUI || !padSeen || !river?.dropping || !isRacing(river) || mapView || calmNow();
   if (!padFly.hidden) {
@@ -1920,7 +1929,7 @@ const TUTORIAL = [
   // Dive and dash are taught one at a time, each passed by doing it (the one combined step passed on either,
   // and its first half passed by itself, so nobody was ever asked to dash). Each also passes after a while:
   // a step nobody completes must not hide the ones after it for the whole fall.
-  { drop: true, text: () => key('<b>Right stick ↑</b> dives: you fall faster, to reach low clouds', 'Hold <b>↑</b> (or W) to dive: you fall faster, to reach low clouds', 'Tap <b>▼ DIVE</b> to fall faster and reach low clouds · tap it again to stop'),
+  { drop: true, text: () => key('<b>Right stick ↑</b> dives: you fall faster, to reach low clouds, from a meter that never refills', 'Hold <b>↑</b> (or W) to dive: you fall faster, to reach low clouds, from a meter that never refills', 'Tap <b>▼ DIVE</b> to fall faster and reach low clouds, from a meter that never refills · tap it again to stop'),
     pass: (c) => (river.diveK ?? 0) > 0.5 || c.secs > 20 },
   { drop: true, text: () => `${key('<b>RB</b> dashes', 'Press <b>↓</b> (or S) to dash', 'Tap <b>▲ DASH</b>')}: a ${Math.round(TUNE.dashTicks / TICK_HZ)} s burst ahead, then a ${Math.round((TUNE.dashCool - TUNE.dashTicks) / TICK_HZ)} s recharge`,
     pass: (c) => (river.dashAt ?? 0) - TUNE.dashCool >= c.since || c.secs > 25 },

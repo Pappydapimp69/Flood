@@ -4,7 +4,7 @@
 // randomness comes from its own id-keyed stream.
 
 import { stream } from './rng.js';
-import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, slopeT, descentLane, laneHalf, courseDir, isSummit, spawnBand, DT, TUNE } from './river.js';
+import { surfaceAt, cellIndex, isRacing, isLive, widthOf, liftOf, skyClouds, gougeUsable, gougeTarget, surgeReady, calm, slopeT, descentLane, laneHalf, courseDir, isSummit, spawnBand, toLine, DT, TUNE } from './river.js';
 import { downhill } from './terrain.js';
 
 // Each bot has a personality: what it weighs, besides running downhill.
@@ -381,6 +381,10 @@ function botGlide(world, bot) {
   let cloud = null, cd = Infinity, fast = false;
   for (const c of skyClouds(world)) {
     if (c.low || !(c.water > 0) || c.alt > r.alt + TUNE.cloudDepth) continue;
+    // The glide brings it down on its own as it flies there; the rest is dive, from a meter that never refills.
+    const run = Math.max(1, toLine(world, r.x, r.z)), along = Math.hypot(c.x - r.x, c.z - r.z);
+    const glideTo = TUNE.dropClear + (r.alt - TUNE.dropClear) * Math.max(0, 1 - along / run);
+    if (glideTo - c.alt - TUNE.cloudDepth * 0.5 > (r.diveLeft ?? TUNE.diveMeter)) continue;
     if ((c.x - r.x) * ax + (c.z - r.z) * az < 0) continue; // behind it: no turning back
     const ticks = Math.max(0, r.alt - c.alt) / (TUNE.dropAlt / TUNE.dropTicks);
     const d = Math.hypot(c.x - r.x, c.z - r.z), reach = ticks * TUNE.glideSpeed * 1.8 * DT;

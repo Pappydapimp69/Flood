@@ -236,6 +236,13 @@
     #padfly div.on, #padfly div[data-state=on] { background: #45d2ffd9; color: #062430; border-color: #fff; }
     #padfly div.on b, #padfly div[data-state=on] b { color: #062430; }
     #padfly div[data-state=cool] { color: #ffffff99; }
+    /* The dive meter (owner, 2026-11-18: dive is a meter, fixed, never recharged): shown while falling on every input. */
+    #divemeter { position: fixed; left: 50%; bottom: max(14px, env(safe-area-inset-bottom)); transform: translateX(-50%); width: min(260px, 46vw);
+      display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; background: #0b2a36cc; box-shadow: 0 4px 14px #0005;
+      color: #e8f6ff; font: 700 13px/1 system-ui, sans-serif; letter-spacing: .06em; pointer-events: none; z-index: 5; }
+    #divemeter i { flex: 1; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #9fe6ff calc(var(--left, 1) * 100%), #ffffff22 0); }
+    #divemeter.empty span::after { content: ' EMPTY'; color: #ffb38a; }
+    #divemeter.on i { box-shadow: 0 0 8px #9fe6ff; }
     #padfly div[data-state=cool]::after { content: ''; position: absolute; left: 0; bottom: 0; height: 4px; width: calc(var(--cool, 0) * 100%); background: #9fe6ff; }
     #tpad button, #tfly button { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
       border: 3px solid #ffffffcc; background: #0b2a36b3; color: #fff; font: 900 26px system-ui, sans-serif; cursor: pointer;
@@ -315,6 +322,7 @@
     <button id="play-slide">Training · Landslide (test map)</button>
     <small class="nav">↑ ↓ to choose · A / Enter to start</small>
   </div>
+  <div id="divemeter" hidden><span>DIVE</span><i></i></div>
   <div id="padfly" hidden><div id="pf-dive"><b>RIGHT STICK ↑</b><span>DIVE</span></div><div id="pf-dash" data-state="ready"><b>RB</b><span>DASH</span></div></div>
   <div id="tpad" hidden><button id="t-left" aria-label="Steer left">◀</button><button id="t-right" aria-label="Steer right">▶</button></div>
   <div id="tfly" hidden><button id="t-float" aria-label="Dash: a burst of speed">▲<small>DASH</small></button><button id="t-dive" aria-label="Dive: tap to fall faster, tap again to stop">▼<small>DIVE</small></button></div>

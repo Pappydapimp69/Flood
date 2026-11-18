@@ -171,6 +171,9 @@ export const TUNE = {
   // drops beyond the steady fall adds diveGain m/s across the ground, up to diveMax; let go and the extra speed bleeds
   // off by diveBleed a tick, a share diveLift of it coming back as height (the pull-out), under the ceiling.
   diveGain: 1, diveMax: 100, diveBleed: 0.04, diveLift: 0.5,
+  // The dive is a meter, not a skill (owner, 2026-11-18): every drop gets diveMeter metres of dive below its glide,
+  // fixed, never recharged, so diving for a low cloud, for speed or out of a ram's way spends one store. Half the drop.
+  diveMeter: 3000,
   dropClear: 70, // metres a drop always keeps over the ground (and its trees) until the line: it is drawn 40 m+ across
   diveSpeed: 0, floatSpeed: 0.3, // diving only loses height, no ground speed (was 0.5: bots dived half the descent and outran players, owner 2026-11-09); // diving glides this much faster, floating this much slower // ...diving falls up to this much faster (about 12 s)...
   floatRate: 0.35, // (float is gone, owner 2026-11-12: down is Dash now; kept for old tuning notes)
@@ -715,7 +718,7 @@ function glide(world, r, steer, fwd, g = 0) {
   // On the floor there is no height left to trade: a dive there is no faster.
   // Dive and float build up and fade (owner, 2026-11-09): about 1.2 s to full, 0.6 s to let go.
   // Down is Dash (it was float): nothing slows the fall any more.
-  const want = fwd > 0 && !r.onFloor ? fwd : 0;
+  const want = fwd > 0 && !r.onFloor && (r.diveLeft ?? TUNE.diveMeter) > 0 ? fwd : 0;
   // The dive comes in at once (owner, 2026-11-13: no delay); letting go still eases off over about 0.6 s.
   r.diveK = want > (r.diveK ?? 0) ? want : (r.diveK ?? 0) + Math.max(-TUNE.boostFade, want - (r.diveK ?? 0));
   const dive = r.diveK;
@@ -770,6 +773,7 @@ function glide(world, r, steer, fwd, g = 0) {
       nx = ax * uu - az * l2; nz = az * uu + ax * l2;
     }
   }
+  const moved = Math.hypot(nx - r.x, nz - r.z);
   r.x = nx; r.z = nz;
   // Height is for the clouds: dive or float between a floor (just over the
   // ground) and a ceiling that closes in, so the drop meets the ground right at the line.
@@ -781,7 +785,28 @@ function glide(world, r, steer, fwd, g = 0) {
   for (const ahead of [0, 0.5, 1, 1.5]) gnd = Math.max(gnd, surfaceAt(world, r.x + r.dx * v * ahead, r.z + r.dz * v * ahead, r.idx));
   gnd -= skyBase(world);
   const floor = gnd + Math.max(TUNE.dropClear, TUNE.floorGap * near), ceil = Math.max(floor, d * TUNE.ceilSlope + under * (1 - near)); // the ceiling meets the ground under the drop at the line (not the look-ahead: a hill leaving it dropped the ceiling 52 m in a tick)
-  const rate = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * (1 + TUNE.diveRate * dive) * heavy;
+  // A glide, not a clock (owner, 2026-11-18: drops hit the ground before the line, clipping): the drop comes down
+  // in step with the ground it covers, aimed at dropClear over the line, so however fast or slow it flies it meets
+  // the line there. A dive goes below that glide, spending the meter, but never below the steepest rise ahead:
+  // from where it pulls out, the glide still clears every hill to the line.
+  const run = Math.max(1, (line.t - slopeT(world, r.x, r.z)) * 2 * t.long * (t.worldSize / 2)), h = r.alt - TUNE.dropClear;
+  const progress = Math.max(0, (r.runPrev ?? run) - run); // flying across the slope brings it no nearer the line: no height for that
+  r.runPrev = run;
+  // The shallowest glide from here that clears the ground all the way to the line, as height per metre: the ground
+  // under it, then points a set distance short of the line (the slope above the line is the steep part), along the
+  // slope and along its heading.
+  const ax = t.axis.x, az = t.axis.y, cosA = Math.max(0.3, r.dx * ax + r.dz * az), base = skyBase(world);
+  let rise = Math.max(0, surfaceAt(world, r.x, r.z, r.idx) - base) / run;
+  for (const k of [6000, 4000, 3000, 2000, 1400, 1000, 700, 450, 250]) {
+    if (k >= run) continue;
+    const sa = run - k, sh = sa / cosA;
+    const gy = Math.max(surfaceAt(world, r.x + ax * sa, r.z + az * sa, r.idx), surfaceAt(world, r.x + r.dx * sh, r.z + r.dz * sh, r.idx)) - base;
+    rise = Math.max(rise, gy / k);
+  }
+  const glideStep = Math.max(0, Math.min((h * progress) / (run + progress), h - rise * run)); // never glides under that line
+  const diveRoom = Math.max(0, h - glideStep - rise * run);
+  const diveStep = Math.min(diveRoom, r.diveLeft ?? TUNE.diveMeter, (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * TUNE.diveRate * dive * heavy);
+  const rate = glideStep + diveStep;
   // Below the floor, climb to it with a climb speed that builds and fades by 0.6 m a tick, never in one jump.
   const fallTo = r.alt - rate, need = floor - fallTo;
   r.climb = need > 0 ? Math.min(need, (r.climb ?? 0) + 0.6, 14) : Math.max(0, (r.climb ?? 0) - 0.6);
@@ -791,7 +816,8 @@ function glide(world, r, steer, fwd, g = 0) {
   r.onFloor = r.alt <= floor + 1;
   // The dive's speed: height dropped beyond the steady fall becomes speed; out of the dive (or on the floor, where
   // the dive pulls out by itself) it bleeds off, part of it coming back as height.
-  const steady = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * heavy, extra = Math.max(0, alt0 - r.alt - steady);
+  const extra = Math.max(0, alt0 - r.alt - glideStep);
+  r.diveLeft = Math.max(0, (r.diveLeft ?? TUNE.diveMeter) - extra);
   if (want > 0 && !r.onFloor) r.diveV = Math.min(TUNE.diveMax, (r.diveV ?? 0) + extra * TUNE.diveGain * dive); // only while held: the ease-out after letting go is the pull-out
   else if (r.diveV > 0) {
     const lost = r.diveV * TUNE.diveBleed;
