@@ -170,7 +170,11 @@ export const TUNE = {
   // A bird's dive (owner, 2026-11-18; bs flood-155: height and speed are one store of energy): every metre a dive
   // drops beyond the steady fall adds diveGain m/s across the ground, up to diveMax; let go and the extra speed bleeds
   // off by diveBleed a tick, a share diveLift of it coming back as height (the pull-out), under the ceiling.
-  diveGain: 1, diveMax: 100, diveBleed: 0.04, diveLift: 0.5,
+  diveGain: 1, diveMax: 100, diveBleed: 0.025, diveLift: 0.6,
+  // A swoop (owner, 2026-11-18: the dive didn't swoop): the dive steepens as it is held (diveSteep of the base dive at
+  // once, the rest over diveSteepTicks), and pulling out levels the drop while the dive's speed lasts (full at
+  // pullFull m/s), so the path curves down and back up instead of kinking. Height won back is under what was dived.
+  diveSteep: 0.6, diveSteepTicks: 30, pullFull: 40,
   // The dive is a meter, not a skill (owner, 2026-11-18): every drop gets diveMeter metres of dive below its glide,
   // fixed, never recharged, so diving for a low cloud, for speed or out of a ram's way spends one store. Half the drop.
   diveMeter: 3000,
@@ -803,9 +807,15 @@ function glide(world, r, steer, fwd, g = 0) {
     const gy = Math.max(surfaceAt(world, r.x + ax * sa, r.z + az * sa, r.idx), surfaceAt(world, r.x + r.dx * sh, r.z + r.dz * sh, r.idx)) - base;
     rise = Math.max(rise, gy / k);
   }
-  const glideStep = Math.max(0, Math.min((h * progress) / (run + progress), h - rise * run)); // never glides under that line
+  // Pulling out of a dive levels it off while the dive's speed lasts, eased in over about 0.6 s (no snap from down to up).
+  const pullWant = fwd > 0 ? 0 : Math.min(1, (r.diveV ?? 0) / TUNE.pullFull);
+  r.pullK = pullWant > (r.pullK ?? 0) ? Math.min(pullWant, (r.pullK ?? 0) + 0.08) : pullWant;
+  const pull = r.pullK;
+  r.diveHeld = fwd > 0 ? (r.diveHeld ?? 0) + 1 : 0;
+  const glideNom = Math.max(0, Math.min((h * progress) / (run + progress), h - rise * run)); // never glides under that line
+  const glideStep = glideNom * (1 - pull);
   const diveRoom = Math.max(0, h - glideStep - rise * run);
-  const diveStep = Math.min(diveRoom, r.diveLeft ?? TUNE.diveMeter, (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * TUNE.diveRate * dive * heavy);
+  const diveStep = Math.min(diveRoom, r.diveLeft ?? TUNE.diveMeter, (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * TUNE.diveRate * dive * heavy * (TUNE.diveSteep + (1 - TUNE.diveSteep) * 2 * Math.min(1, r.diveHeld / TUNE.diveSteepTicks)));
   const rate = glideStep + diveStep;
   // Below the floor, climb to it with a climb speed that builds and fades by 0.6 m a tick, never in one jump.
   const fallTo = r.alt - rate, need = floor - fallTo;
@@ -822,8 +832,9 @@ function glide(world, r, steer, fwd, g = 0) {
   else if (r.diveV > 0) {
     const lost = r.diveV * TUNE.diveBleed;
     r.diveV -= lost;
-    if (d > 1500) r.alt = Math.min(ceil, r.alt + lost * TUNE.diveLift);
+    if (d > 1500) r.alt = Math.min(ceil, r.alt + lost * TUNE.diveLift * pull);
   }
+  r.swoop = (r.alt - alt0 + glideNom) * TICK_HZ; // m/s up (+) or down (-) against a plain glide: the camera and the tail follow it
   const straight = Math.max(0, (line.t - slopeT(world, r.x, r.z)) * 2 * t.long * (t.worldSize / 2)); // flight distance to the line
   r.dropping = Math.max(1, Math.ceil(straight / (TUNE.glideSpeed * DT))); // ticks to the line at the base glide (the HUD's countdown)
   // Inside a drop cloud: it drains into every river inside, equally (see dropClouds).

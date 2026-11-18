@@ -2213,7 +2213,7 @@ renderer.setAnimationLoop(() => {
     if (r.dropping) {
       // The tail points back along the fall: up, and against the glide.
       // (Your own tail is short and trails back along the flight: seen from behind, a long one stood up as a pillar.)
-      tailDir.set(-r.dx * (r.glideV ?? TUNE.glideSpeed), TUNE.dropAlt / (TUNE.dropTicks / TICK_HZ), -r.dz * (r.glideV ?? TUNE.glideSpeed)).normalize();
+      tailDir.set(-r.dx * (r.glideV ?? TUNE.glideSpeed), Math.max(-120, Math.min(260, 60 - (r.swoop ?? 0))), -r.dz * (r.glideV ?? TUNE.glideSpeed)).normalize(); // along the real flight: steep in a dive, flat in the pull-out
       e.streak.quaternion.setFromUnitVectors(UP, tailDir);
       e.streak.position.set(hx, hy, hz);
       const mine = r === river && !intro0, wide = intro0 ? 110 : mine ? 22 : 26;
@@ -2352,7 +2352,7 @@ renderer.setAnimationLoop(() => {
     // Descending tilts the view down at the ground (owner, 2026-11-13), on every device: it follows the
     // sim's own dive, so keys, sticks and the phone's DIVE button all do it. The left stick's up / down
     // tilts it by hand on a pad, over that. Let go and it eases back.
-    const stickTilt = input.tilt(), tiltIn = cut ? 0 : stickTilt || -0.85 * Math.min(1, focus.diveK ?? 0);
+    const stickTilt = input.tilt(), tiltIn = cut ? 0 : stickTilt || Math.max(-0.85, Math.min(0.35, (focus.swoop ?? 0) / 140)); // nose down into the dive, up through the pull-out
     camTilt += (tiltIn - camTilt) * (1 - Math.exp(-frameDt * (tiltIn ? 4 : 2.5)));
     camera.position.lerp(new THREE.Vector3(fx - ax * back, fy + up, fz - az * back), k);
     camTarget.lerp(new THREE.Vector3(fx + ax * 900, fy - 220 + camTilt * (camTilt > 0 ? 700 : 900), fz + az * 900), k);
