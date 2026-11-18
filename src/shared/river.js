@@ -2787,7 +2787,10 @@ export const SLIDE = {
   // rivers of 700k bring it down in about 5 s; a lone small river takes about a minute.
   // A full field now takes 8-12 s (it was 6e8, about 4.5 s: owner 2026-11-16, the slide triggered too quickly
   // to get clear of it; a hazard is fair when its warning gives time to see it and act).
-  hillLoad: 1.6e9,
+  hillLoad: 2.4e9, // at the standard field of 20 (scaled by fieldShare): about 10-12 s of warning at any field size
+  field: 20, // the standard field the slide's numbers are set for
+  maxCap: 12e6, // litres: the most (a 24M hollow doubled for 40 rivers took 21 s to fill)
+  minCap: 6e6, // litres: the least a basin holds at the standard field (a 1M hollow burst in a second)
   faceReach: 6000, // metres out either side of the valley searched for the face the rock breaks from
   slopeLong: 2500, // metres along the valley the cracked slope runs (it marks itself across the whole stretch)
   // The slide itself: blocks break off the scar and fall, bounce and roll down the real ground (bs flood-116),
@@ -3111,7 +3114,7 @@ function slideStep(world) {
     let up = 0;
     for (const r of world.rivers) if (isRacing(r) && !r.dropping && world.toBeach[cellIndex(t, r.x, r.z)] > s.reach) up += r.volume;
     s.load = (s.load ?? 0) + up;
-    s.give = Math.min(1, s.load / SLIDE.hillLoad);
+    s.give = Math.min(1, s.load / (SLIDE.hillLoad * fieldShare(world)));
     if (s.give >= 1 || !up) { releaseBlocks(world, s); set('falling'); }
     return;
   }
@@ -3202,6 +3205,9 @@ function ridePond(world, s) {
     if (world.toBeach[cellIndex(world.terrain, r.x, r.z)] >= s.reach - 300) ride(world, s, r, inBasin(world, s, r.x, r.z) ? SLIDE.rideFromPond : 1);
   }
 }
+// The field against the standard 20 (owner, 2026-11-18: 20 rivers is the base to test on; 12 is easy mode): what the
+// whole field pours into the slide's hill and basin grows with the rivers in it, so its timing is scaled by this.
+const fieldShare = (world) => Math.max(0.3, world.rivers.length / SLIDE.field);
 export const inBasin = (world, s, x, z) => !!s?.pond?.[cellIndex(world.terrain, x, z)];
 
 // The basin behind the dam: every cell connected to the floor just upstream that lies below the dam's low point, and
@@ -3229,7 +3235,9 @@ function makeBasin(world, s) {
     }
   }
   for (let k = 0; k < n * n; k++) if (world.rock[k] >= SLIDE.cutRock && Math.abs(proj(k)) < 700) cut[k] = 1;
-  s.pond = pond; s.cut = cut; s.cap = cap;
+  // Bigger fields pour in more: the basin's hold scales with the field (and never falls under minCap of it), so it
+  // fills in about the same time with 12 rivers or 40 (owner, 2026-11-18: throttle by river count).
+  s.pond = pond; s.cut = cut; s.cap = Math.min(Math.max(cap, SLIDE.minCap), SLIDE.maxCap) * fieldShare(world);
 }
 
 // The lakes below the dam, nearest first, with how far each lies along the route.

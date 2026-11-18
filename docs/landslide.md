@@ -167,3 +167,10 @@ The 2026-11-17 change that moved it to wherever the leader was heading was wrong
    in stages on the slope; ringed lakes no longer a trigger; no clock.
 2. Measure the fork on several seeds, lakes-takers against runners, and tune the hold, the ride, the cut and the
    lake top-ups until both stay viable.
+
+## Built: throttled by the field (2026-11-18, owner: 20 rivers is the standard base, 12 the easy choice)
+The whole field pours into the slide's hill and basin, so with more rivers it cracked and burst sooner: the warning
+fell from about 12 s at 12 rivers to 7 s at 20 and 4 s at 40. The hill's load and the basin's hold now scale with
+the field against the standard 20 (`SLIDE.field`, `fieldShare`), and a basin holds between `minCap` and `maxCap` of
+it (a 1M hollow burst in a second; a 24M one doubled for 40 rivers took 21 s). Measured on five seeds: warnings
+9.3-12.4 s and fills 3.8-10.8 s at 12, 20 and 40 rivers alike. The game now starts at 20 rivers; 12 is labelled easy.

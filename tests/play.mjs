@@ -166,7 +166,7 @@ await check('race: rank shows, and a drained player spectates the winner', async
   await page.goto(base);
   await until(page, (s) => s.ready, 'ready');
   const rank = await page.evaluate(() => document.getElementById('rank').textContent);
-  if (!/^#\d+\/12\d+ flowing$/.test(rank)) throw new Error(`rank text: ${rank}`);
+  if (!/^#\d+\/20\d+ flowing$/.test(rank)) throw new Error(`rank text: ${rank}`);
   const s0 = await state(page);
   await until(page, (s) => s.tick > s0.tick + 110, 'past spawn grace');
   // Shrink the player and drop a bot on its head: next tick it must be absorbed.

@@ -1,6 +1,6 @@
 // Landslide timing in bot races: when the slope cracks, when it falls, when the dam closes, how long it takes
 // to fill and burst, and how long rivers sit trapped behind it. To judge whether the set piece is fair.
-// Usage: node tools/slide-times.mjs [--rivers 12] [--training] <seed>...
+// Usage: node tools/slide-times.mjs [--rivers 20] [--training] <seed>...
 //   --training: the Training map (course 'slide', start on the line); otherwise a solo ski race with the slide.
 import { rollIsland, addRiver, step, isRacing, TICK_HZ, inBasin } from '../src/shared/river.js';
 import { createBot, botSteer } from '../src/shared/bot.js';
@@ -8,7 +8,7 @@ import { createBot, botSteer } from '../src/shared/bot.js';
 const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf(`--${name}`); return i < 0 ? def : args.splice(i, 2)[1]; };
 const flag = (name) => { const i = args.indexOf(`--${name}`); return i >= 0 && !!args.splice(i, 1); };
-const count = Number(opt('rivers', 12)), training = flag('training');
+const count = Number(opt('rivers', 20)), training = flag('training');
 const LIMIT = 400 * TICK_HZ;
 
 export function slideRace(seed) {

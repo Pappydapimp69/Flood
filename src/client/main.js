@@ -293,9 +293,10 @@ let gougeShakeAt = 0; // ms: when your own gouge landed (the camera jolts)
 
 // Rivers per race (owner, 2026-11-14): chosen on the start screen, from the ski map's 12 up to 80; ?bots overrides.
 const RIVER_STEPS = [12, 20, 30, 40, 60, 80];
-let riversWanted = 12;
-try { riversWanted = Number(localStorage.getItem('flood.rivers')) || 12; } catch { /* no storage */ }
-if (!RIVER_STEPS.includes(riversWanted)) riversWanted = 12;
+// 20 is the standard field (owner, 2026-11-18); 12 stays as the easy choice.
+let riversWanted = 20;
+try { riversWanted = Number(localStorage.getItem('flood.rivers')) || 20; } catch { /* no storage */ }
+if (!RIVER_STEPS.includes(riversWanted)) riversWanted = 20;
 // The course (owner, 2026-11-14): the ski slope, or Summit Rush (docs/summit-rush.md); ?course=summit overrides.
 const COURSES = [['ski', 'Ski slope'], ['summit', 'Summit Rush']];
 let courseWanted = 'ski';
@@ -2561,7 +2562,7 @@ addEventListener('keydown', (e) => {
 });
 const fresh = () => performance.now() - splashLeftAt < 500; // the press that left the splash
 const riversBtn = document.getElementById('rivers');
-const showRivers = () => { riversBtn.textContent = `Rivers: ${riversWanted}`; };
+const showRivers = () => { riversBtn.textContent = `Rivers: ${riversWanted}${riversWanted === 12 ? ' · easy' : ''}`; };
 showRivers();
 riversBtn.onclick = () => {
   riversWanted = RIVER_STEPS[(RIVER_STEPS.indexOf(riversWanted) + 1) % RIVER_STEPS.length];

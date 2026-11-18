@@ -9,7 +9,7 @@ import { createBot, botSteer } from '../src/shared/bot.js';
 const args = process.argv.slice(2);
 const opt = (name, def) => { const i = args.indexOf(`--${name}`); return i < 0 ? def : args.splice(i, 2)[1]; };
 const flag = (name) => { const i = args.indexOf(`--${name}`); return i >= 0 && !!args.splice(i, 1); };
-const course = opt('course', undefined), count = Number(opt('rivers', 12)), drop = flag('drop'), json = flag('json');
+const course = opt('course', undefined), count = Number(opt('rivers', 20)), drop = flag('drop'), json = flag('json');
 const LIMIT = 600 * TICK_HZ, AFTER = 60 * TICK_HZ; // the race ends a minute after the first finisher
 
 export function race(seed) {
