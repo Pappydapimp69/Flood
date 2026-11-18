@@ -303,7 +303,7 @@ let courseWanted = 'ski';
 try { courseWanted = localStorage.getItem('flood.course') || 'ski'; } catch { /* no storage */ }
 if (params.has('course')) courseWanted = params.get('course');
 // Training's test maps (owner, 2026-11-14): not in the Course list, started from the menu's Training entries.
-// The Landslide: a small map where a slope comes down ahead of the leader, dams the valley and bursts.
+// The Landslide: a small map where a slope comes down ahead of the player, dams the valley and bursts.
 const TRAINING = { slide: { seed: 11 } }; // 11 on the full-size map: most finishers and fewest knockouts of 12 seeds with six ringed lakes (bot races, 2026-11-16), and its dam fills in about 8 s
 let trainingCourse = TRAINING[params.get('course')] ? params.get('course') : null;
 if (!COURSES.some(([k]) => k === courseWanted)) courseWanted = 'ski';
@@ -582,6 +582,7 @@ function beginRace(seed, raceIds, me, rolled) {
   world = rolled?.terrain === terrain ? rolled : createWorld(terrain);
   for (const id of raceIds) addRiver(world, id, undefined, { drop: !params.has('nodrop') && !trainingCourse }); // Training maps start on the line (owner) // sorted ids: reproducible spawns
   river = world.rivers.find((r) => r.id === me) ?? null;
+  if (world.slide && river) world.slideFocus = river.id; // the Landslide comes down ahead of the player (solo races)
   focus = river ?? world.rivers[0];
   entries = world.rivers.map(makeEntry);
   acc = 0;
@@ -1401,7 +1402,7 @@ function makeSlideFx() {
   slumpDust.frustumCulled = false;
   const slumpRocks = Array.from({ length: SN }, () => ({ along: (r() - 0.5) * 700, up: 0.85 + r() * 0.15, delay: r() * 0.5, speed: 0.55 + r() * 0.5, size: 30 + r() * 50, drift: (r() - 0.5) * 120 }));
   scene.add(split, slabs, trickle, fresh, slump, slumpDust);
-  if (s.basins.length && !s.placed) feed(`Ringed lakes: the river that reaches the ${['', 'first', 'second', 'third', 'fourth'][Math.min(SLIDE.need, Math.ceil(s.basins.length * 2 / 3))] ?? 'last'} brings a landslide down ahead of the leader, and rides its flood`);
+  if (s.basins.length && !s.placed) feed(`Ringed lakes: the river that reaches the ${['', 'first', 'second', 'third', 'fourth'][Math.min(SLIDE.need, Math.ceil(s.basins.length * 2 / 3))] ?? 'last'} brings a landslide down ahead of you, and rides its flood`);
   const rocks = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 0), new THREE.MeshLambertMaterial({ color: '#5e554c', flatShading: true }), SLIDE.blocks);
   rocks.frustumCulled = false; rocks.count = 0;
   const D = SLIDE.blocks * 3, dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(new Float32Array(D * 3), 3)),

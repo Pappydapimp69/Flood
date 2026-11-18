@@ -174,3 +174,14 @@ fell from about 12 s at 12 rivers to 7 s at 20 and 4 s at 40. The hill's load an
 the field against the standard 20 (`SLIDE.field`, `fieldShare`), and a basin holds between `minCap` and `maxCap` of
 it (a 1M hollow burst in a second; a 24M one doubled for 40 rivers took 21 s). Measured on five seeds: warnings
 9.3-12.4 s and fills 3.8-10.8 s at 12, 20 and 40 rivers alike. The game now starts at 20 rivers; 12 is labelled easy.
+
+## Built: it comes down ahead of the player (2026-11-18, owner: "it triggered when I was in like 9th place, I never saw the rocks")
+At 20 rivers the whole slide, crack to burst, took about 30 s, 7 km ahead of the leader, while 9th was 7-13 km
+further back (seeds 4, 11, 43, 99, 126): it was over before the player arrived. Fog allows 30 km, so the cause was
+where it stood, not what could be seen. The slope now comes down 7 km ahead of `world.slideFocus` (the player in a
+solo race; the leader in bot races and tools), and its hill load scales with the rivers above it (`s.hold`), since
+with one or two rivers behind a back-marker it took 40-157 s to fall. Measured with the focus on bots ranked 1st to
+19th on seven seeds: warnings 9-18 s, the focused river 0-4 km from the rocks as they fall in most races (6-7 km
+where its bot sat in a lake), and held and carried by the burst in most. The trigger (four ringed lakes reached by
+anyone) is still the field's, so when it falls is decided by play; only where is the player's. Multiplayer, which
+has no slide yet, should focus on the field's middle river.

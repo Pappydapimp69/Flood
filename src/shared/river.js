@@ -2787,7 +2787,7 @@ export function riverFingerprint(world) {
 // it as they wear any rise, and the client draws it like cooled lava.
 export const SLIDE = {
   at: 0.55, // where the rings' lakes are measured from (share of the course); the slope itself is placed ahead of the leader
-  ahead: 7000, // metres of course ahead of the leader where the slope comes down: the warning and the fall land in front of it
+  ahead: 7000, // metres of course ahead of the leader (or world.slideFocus) where the slope comes down: the warning and the fall land in front of it
   // The trigger (owner, 2026-11-16): dry basins spread over the course above the dam. Rivers fill them as they fill
   // any lake, the water seeps into the hill, and once the basins together hold enough the slope gives way (water in
   // a slope is a main driver of landslides, bs flood-113). Several rivers, several spots; no timer.
@@ -3112,14 +3112,25 @@ function slideStep(world) {
       // just something that happens): on the first steep face from SLIDE.ahead metres down the course from the
       // leading river, so the warning and the fall land in front of it. Whoever reached the last lake rides the burst
       // (a leader-targeting catch-up item should pay the one who used it, bs flood-141).
+      // Ahead of the river the race is watched from when there is one (world.slideFocus: the player in a solo race;
+      // owner, 2026-11-18: in 9th place they never saw the rocks, as the whole slide, crack to burst, took about 30 s
+      // 7 km ahead of the leader while 9th was 7-13 km further back). The leader otherwise (bot races, tools).
       const t = world.terrain, len = t.long * t.worldSize;
       let lead = null;
-      for (const o of world.rivers) if (isRacing(o) && !o.dropping && (!lead || world.toBeach[cellIndex(t, o.x, o.z)] < world.toBeach[cellIndex(t, lead.x, lead.z)])) lead = o;
+      const focus = world.rivers.find((o) => o.id === world.slideFocus && isRacing(o) && !o.dropping);
+      if (focus) lead = focus;
+      else for (const o of world.rivers) if (isRacing(o) && !o.dropping && (!lead || world.toBeach[cellIndex(t, o.x, o.z)] < world.toBeach[cellIndex(t, lead.x, lead.z)])) lead = o;
       if (lead) {
         const a0 = t.along[cellIndex(t, lead.x, lead.z)], want = world.toBeach[cellIndex(t, lead.x, lead.z)] - SLIDE.ahead;
         if (placeSlide(world, s, a0, a0, a0 + 0.35, want) || placeSlide(world, s, a0, a0, 0.97)) s.target = lead.idx;
       }
       s.placed = world.tick + 1;
+      // The load it takes to give way scales with the rivers above it, as fieldShare scales it with the field: placed
+      // ahead of a river near the back, one or two rivers above it took 40-157 s to bring it down and the river it
+      // was placed for had passed it (seeds 126 and 4, 2026-11-18).
+      let above = 0;
+      for (const o of world.rivers) if (isRacing(o) && !o.dropping && world.toBeach[cellIndex(t, o.x, o.z)] > s.reach) above++;
+      s.hold = Math.min(fieldShare(world), Math.max(1, above) / SLIDE.field);
       set('cracking');
     }
     return;
@@ -3129,7 +3140,7 @@ function slideStep(world) {
     let up = 0;
     for (const r of world.rivers) if (isRacing(r) && !r.dropping && world.toBeach[cellIndex(t, r.x, r.z)] > s.reach) up += r.volume;
     s.load = (s.load ?? 0) + up;
-    s.give = Math.min(1, s.load / (SLIDE.hillLoad * fieldShare(world)));
+    s.give = Math.min(1, s.load / (SLIDE.hillLoad * (s.hold ?? fieldShare(world))));
     if (s.give >= 1 || !up) { releaseBlocks(world, s); set('falling'); }
     return;
   }
