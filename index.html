@@ -15,6 +15,9 @@
       font: 800 15px/1.15 system-ui, -apple-system, 'Segoe UI', sans-serif; color: #fff; pointer-events: none; text-align: right;
       text-shadow: 0 2px 4px #000a, 0 0 14px #0006; max-width: 60vw;
     }
+    /* Hidden means hidden for every element: a display rule on an id outranks the browser's own [hidden] rule, which left
+       the dive meter on every screen (owner, 2026-11-18) and has needed a per-element rule ten times before. */
+    [hidden] { display: none !important; }
     #hud[hidden] { display: none; }
     #hud h1 { display: none; }
     #stats { display: grid; gap: 2px; justify-items: end; }
@@ -241,6 +244,7 @@
       display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 10px; background: #0b2a36cc; box-shadow: 0 4px 14px #0005;
       color: #e8f6ff; font: 700 13px/1 system-ui, sans-serif; letter-spacing: .06em; pointer-events: none; z-index: 5; }
     #divemeter i { flex: 1; height: 8px; border-radius: 4px; background: linear-gradient(90deg, #9fe6ff calc(var(--left, 1) * 100%), #ffffff22 0); }
+    body:has(#menu:not([hidden])) #divemeter, body:has(#status:not([hidden])) #divemeter, body:has(#hud[hidden]) #divemeter { display: none; } /* only in a race, never over a menu */
     #divemeter.empty span::after { content: ' EMPTY'; color: #ffb38a; }
     #divemeter.on i { box-shadow: 0 0 8px #9fe6ff; }
     #padfly div[data-state=cool]::after { content: ''; position: absolute; left: 0; bottom: 0; height: 4px; width: calc(var(--cool, 0) * 100%); background: #9fe6ff; }
