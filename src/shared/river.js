@@ -167,10 +167,15 @@ export const TUNE = {
   dropCloudShareOld: 0.104, // (0.156 x 16/24 clouds) descent clouds hold this share of cloudWater (they gave far too much; 0.25 x 10/16 clouds)
   cloudSpread: 4500, // metres either side of the comet path the first clouds sit; they close in toward the start line
   diveRate: 1.6,
+  // A bird's dive (owner, 2026-11-18; bs flood-155: height and speed are one store of energy): every metre a dive
+  // drops beyond the steady fall adds diveGain m/s across the ground, up to diveMax; let go and the extra speed bleeds
+  // off by diveBleed a tick, a share diveLift of it coming back as height (the pull-out), under the ceiling.
+  diveGain: 1, diveMax: 100, diveBleed: 0.04, diveLift: 0.5,
+  dropClear: 70, // metres a drop always keeps over the ground (and its trees) until the line: it is drawn 40 m+ across
   diveSpeed: 0, floatSpeed: 0.3, // diving only loses height, no ground speed (was 0.5: bots dived half the descent and outran players, owner 2026-11-09); // diving glides this much faster, floating this much slower // ...diving falls up to this much faster (about 12 s)...
   floatRate: 0.35, // (float is gone, owner 2026-11-12: down is Dash now; kept for old tuning notes)
   // Dash (owner, 2026-11-12, in place of float): down gives a burst across the ground, then recharges.
-  dashBoost: 1, dashTicks: 20, dashCool: 100, // twice the glide for 1 s; ready again 5 s after it fired
+  dashBoost: 1, dashTicks: 40, dashCool: 120, // twice the glide for 2 s; ready again 4 s after it ends (owner, 2026-11-18; was 1 s and 5 s)
   // Rain clouds hang in the sky over the summits: fall through one and its
   // water is yours, a bigger start; each can only be taken once.
   skyClouds: 16, // (24 until 2026-11-17: fewer, bigger clouds, each a goal worth a detour; 12 left 35 s quiet stretches) // rain clouds along the comet path in (16 until the descent grew from 80 s to 120 s: as many per second, same total water) (was 10:
@@ -720,7 +725,7 @@ function glide(world, r, steer, fwd, g = 0) {
   }
   const dash = r.dashT > 0 ? 1 + TUNE.dashBoost : 1;
   if (r.dashT > 0) r.dashT--;
-  const v = TUNE.glideSpeed * Math.min(2.2, (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g) * (1 + TUNE.diveSpeed * dive)) * dash;
+  const v = (TUNE.glideSpeed * Math.min(2.2, (g > 0 ? 1 + 0.8 * g : 1 + 0.6 * g) * (1 + TUNE.diveSpeed * dive)) + (r.diveV ?? 0)) * dash;
   // After a bump: the drop that was hit darts away for a moment, the one that hit is checked.
   const kick = (r.burstT > 0 ? 1 + TUNE.bumpBurst : 1) * (r.recoilT > 0 ? TUNE.bumpRecoil : 1);
   if (r.burstT > 0) r.burstT--;
@@ -775,14 +780,24 @@ function glide(world, r, steer, fwd, g = 0) {
   let gnd = -Infinity;
   for (const ahead of [0, 0.5, 1, 1.5]) gnd = Math.max(gnd, surfaceAt(world, r.x + r.dx * v * ahead, r.z + r.dz * v * ahead, r.idx));
   gnd -= skyBase(world);
-  const floor = gnd + TUNE.floorGap * near, ceil = Math.max(floor, d * TUNE.ceilSlope + under * (1 - near)); // the ceiling meets the ground under the drop at the line (not the look-ahead: a hill leaving it dropped the ceiling 52 m in a tick)
+  const floor = gnd + Math.max(TUNE.dropClear, TUNE.floorGap * near), ceil = Math.max(floor, d * TUNE.ceilSlope + under * (1 - near)); // the ceiling meets the ground under the drop at the line (not the look-ahead: a hill leaving it dropped the ceiling 52 m in a tick)
   const rate = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * (1 + TUNE.diveRate * dive) * heavy;
   // Below the floor, climb to it with a climb speed that builds and fades by 0.6 m a tick, never in one jump.
   const fallTo = r.alt - rate, need = floor - fallTo;
   r.climb = need > 0 ? Math.min(need, (r.climb ?? 0) + 0.6, 14) : Math.max(0, (r.climb ?? 0) - 0.6);
   // The ceiling pulls down at most 6 m a tick faster than the fall (no snaps), except in the last 30 m to the line.
+  const alt0 = r.alt;
   r.alt = Math.max(Math.min(ceil, fallTo + r.climb), d > 30 ? fallTo - 6 : -Infinity);
   r.onFloor = r.alt <= floor + 1;
+  // The dive's speed: height dropped beyond the steady fall becomes speed; out of the dive (or on the floor, where
+  // the dive pulls out by itself) it bleeds off, part of it coming back as height.
+  const steady = (TUNE.dropAlt / (TUNE.dropTicks * (world.dropScale ?? 1))) * heavy, extra = Math.max(0, alt0 - r.alt - steady);
+  if (want > 0 && !r.onFloor) r.diveV = Math.min(TUNE.diveMax, (r.diveV ?? 0) + extra * TUNE.diveGain * dive); // only while held: the ease-out after letting go is the pull-out
+  else if (r.diveV > 0) {
+    const lost = r.diveV * TUNE.diveBleed;
+    r.diveV -= lost;
+    if (d > 1500) r.alt = Math.min(ceil, r.alt + lost * TUNE.diveLift);
+  }
   const straight = Math.max(0, (line.t - slopeT(world, r.x, r.z)) * 2 * t.long * (t.worldSize / 2)); // flight distance to the line
   r.dropping = Math.max(1, Math.ceil(straight / (TUNE.glideSpeed * DT))); // ticks to the line at the base glide (the HUD's countdown)
   // Inside a drop cloud: it drains into every river inside, equally (see dropClouds).

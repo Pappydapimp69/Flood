@@ -1921,7 +1921,7 @@ const TUTORIAL = [
   // a step nobody completes must not hide the ones after it for the whole fall.
   { drop: true, text: () => key('<b>Right stick ↑</b> dives: you fall faster, to reach low clouds', 'Hold <b>↑</b> (or W) to dive: you fall faster, to reach low clouds', 'Tap <b>▼ DIVE</b> to fall faster and reach low clouds · tap it again to stop'),
     pass: (c) => (river.diveK ?? 0) > 0.5 || c.secs > 20 },
-  { drop: true, text: () => `${key('<b>RB</b> dashes', 'Press <b>↓</b> (or S) to dash', 'Tap <b>▲ DASH</b>')}: a burst ahead, then a ${Math.round(TUNE.dashCool / TICK_HZ)} s recharge`,
+  { drop: true, text: () => `${key('<b>RB</b> dashes', 'Press <b>↓</b> (or S) to dash', 'Tap <b>▲ DASH</b>')}: a ${Math.round(TUNE.dashTicks / TICK_HZ)} s burst ahead, then a ${Math.round((TUNE.dashCool - TUNE.dashTicks) / TICK_HZ)} s recharge`,
     pass: (c) => (river.dashAt ?? 0) - TUNE.dashCool >= c.since || c.secs > 25 },
   { drop: true, text: () => 'Fly into a <b>white cloud</b> for free water', pass: (c) => c.clouded },
   { text: () => `Steer with <b>${key('the left stick', '← →', 'the ◀ ▶ buttons')}</b>: follow the <b>gold beacon</b>`, pass: (c) => c.steered > 8 || c.stage >= 1 },
@@ -2476,7 +2476,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive to low clouds · ▲ dash' : padSeen ? 'left stick steers and tilts the view · right stick ↑ descends · RB dash' : '← → steer · ↑ dive to low clouds · ↓ dash') + (me.dashT > 0 ? ' · DASHING' : world.tick >= (me.dashAt ?? 0) ? ' · dash ready' : ` · dash in ${Math.ceil((me.dashAt - world.tick) / TICK_HZ)} s`)
+  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive for speed · ▲ dash' : padSeen ? 'left stick steers and tilts the view · right stick ↑ descends · RB dash' : '← → steer · ↑ dive for speed · ↓ dash') + (me.dashT > 0 ? ' · DASHING' : world.tick >= (me.dashAt ?? 0) ? ' · dash ready' : ` · dash in ${Math.ceil((me.dashAt - world.tick) / TICK_HZ)} s`)
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`

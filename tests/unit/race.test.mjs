@@ -230,6 +230,19 @@ test('drop: a ram (a dash into another drop) goes to whoever hits with more mome
   assert.ok(Math.hypot(b.kx, b.kz) > 0, 'not knocked');
 });
 
+test('drop: a dive trades height for speed, and letting go bleeds the speed back into some height (a bird\'s dive)', () => {
+  const make = () => { const w = rollIsland(5, 2).world; const r = addRiver(w, 'a', undefined, { drop: true }); r.fallT = TUNE.dropCalm; return { w, r }; };
+  const a = make(), b = make();
+  for (let k = 0; k < 40; k++) { step(a.w, new Map([['a', { s: 0, f: 1, g: 1 }]])); step(b.w, new Map([['a', { s: 0, f: 0, g: 1 }]])); }
+  assert.ok(a.r.diveV > 20, `diving should add speed: ${a.r.diveV}`);
+  assert.ok(a.r.glideV > b.r.glideV * 1.15, `diver ${a.r.glideV.toFixed(0)} m/s vs glider ${b.r.glideV.toFixed(0)} m/s`);
+  assert.ok(a.r.alt < b.r.alt, 'the diver should be lower');
+  const v0 = a.r.diveV, alt0 = a.r.alt, steady = TUNE.dropAlt / TUNE.dropTicks;
+  for (let k = 0; k < 20; k++) step(a.w, new Map([['a', { s: 0, f: 0, g: 1 }]]));
+  assert.ok(a.r.diveV < v0 * 0.6, 'the dive speed should bleed off once released');
+  assert.ok(a.r.alt > alt0 - 20 * steady, 'the pull-out should give some height back');
+});
+
 test('drop: a drop flying close behind another at its height glides faster (slipstream), one beside it does not', () => {
   const lane0 = TUNE.laneEntry; TUNE.laneEntry = 1.25; // a wide lane: this tests the slipstream, not the cone's walls
   const w = rollIsland(5, 2).world;
