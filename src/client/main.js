@@ -257,7 +257,7 @@ const input = createInput(renderer.domElement);
 // Once a controller shows up, say how to use it.
 input.onPad = () => {
   padSeen = true;
-  document.getElementById('help').textContent = 'Controller: left stick steers (and the D-pad); falling, its up / down tilts the view · right stick: falling, up descends faster; once landed it looks around, up for a raised view · RB: dash while falling · A: gouge (select / race again in menus) · RB: surge · X: sound';
+  document.getElementById('help').textContent = 'Controller: left stick steers (and the D-pad); falling, its up / down tilts the view · right stick: falling, up dives (speed, then lift when you let go); once landed it looks around, up for a raised view · RB: dash while falling · A: gouge (select / race again in menus) · RB: surge · X: sound';
 };
 const audio = createAudio();
 const muteBtn = document.getElementById('mute');
@@ -2476,7 +2476,7 @@ renderer.setAnimationLoop(() => {
   for (const j of world.junctions.values()) if (j.to === me) tribs++;
   const fedBy = [feeds && `${feeds} lake${feeds === 1 ? '' : 's'}`, tribs && `${tribs} river${tribs === 1 ? '' : 's'}`].filter(Boolean).join(' + ');
   const basin = me.inLake;
-  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive for speed · ▲ dash' : padSeen ? 'left stick steers and tilts the view · right stick ↑ descends · RB dash' : '← → steer · ↑ dive for speed · ↓ dash') + (me.dashT > 0 ? ' · DASHING' : world.tick >= (me.dashAt ?? 0) ? ' · dash ready' : ` · dash in ${Math.ceil((me.dashAt - world.tick) / TICK_HZ)} s`)
+  hud.depth.textContent = me.dropping ? (lowPower ? '◀ ▶ turn · ▼ dive for speed · ▲ dash' : padSeen ? 'left stick steers and tilts the view · right stick ↑ dives for speed · RB dash' : '← → steer · ↑ dive for speed · ↓ dash') + (me.dashT > 0 ? ' · DASHING' : world.tick >= (me.dashAt ?? 0) ? ' · dash ready' : ` · dash in ${Math.ceil((me.dashAt - world.tick) / TICK_HZ)} s`)
     : basin >= 0
     ? `pouring into the lake · ${Math.floor(100 * world.lakeVol[basin] / world.lakeCap[basin])}% full` + (world.lakeVol[basin] > world.lakeCap[basin] ? ' · overflowing' : '')
     : finishLeft() !== null && isRacing(me) ? `${nameOf(world.rivers.find((r) => r.finished && r.finishTick === firstFinish()))} reached the sea · ${finishLeft()} s left to get there`
