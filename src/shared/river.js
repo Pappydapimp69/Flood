@@ -2083,7 +2083,20 @@ function pulses(world) {
     if (world.tick >= r.pulseAt) {
       const every = pulseEvery(r);
       r.pulseAt = world.tick + every;
-      r.pulses.push({ s: 0, i: 0, amount: r.feeds.get(0) ?? 0, flow: dischargeOf(r) * every, every, erode: true, lakes: [] });
+      r.pulses.push({ s: 0, i: 0, amount: r.feeds.get(0) ?? 0, flow: dischargeOf(r) * every, every, erode: true, lakes: [], t: world.tick });
+      // After the landslide's dam bursts, pulses come from the dam (owner, 2026-11-18), not from the source: each
+      // carries back the water one of this river's pulses lost into the basin, until the source's own pulses
+      // launched since the burst reach the crossing (or the stored water runs out).
+      const df = r.damFeed;
+      if (df) {
+        const caught = r.pulses.some((q) => q.t >= df.from && q.i >= df.at);
+        if (caught || df.left <= 0 || df.at >= r.path.length) r.damFeed = null;
+        else {
+          const amount = Math.min(df.left, df.per);
+          df.left -= amount;
+          r.pulses.push({ s: r.path[df.at].s, i: df.at, amount, flow: 0, every, erode: true, lakes: [], t: df.from - 1 });
+        }
+      }
       for (const [at, litres] of [...r.feeds].sort((a, b) => a[0] - b[0])) {
         if (at === 0) continue;
         const p = r.path[Math.min(at, r.path.length - 1)];
@@ -2112,7 +2125,11 @@ function pulses(world) {
           break;
         }
         // A channel the landslide's debris cut: the pulse goes no further, its water into the basin behind the dam.
-        if (sl?.cut?.[c]) { sl.pondVol += p.flow + p.amount; p.flow = 0; p.amount = 0; p.dead = true; break; }
+        if (sl?.cut?.[c]) {
+          // Remembered per river (where, how much, how many): once the dam bursts its pulses start again from here.
+          const e = ((sl.cutLog ??= {})[r.idx] ??= { at: p.i - 1, lost: 0, n: 0 }); e.at = p.i - 1; e.lost += p.flow + p.amount; e.n++;
+          sl.pondVol += p.flow + p.amount; p.flow = 0; p.amount = 0; p.dead = true; break;
+        }
         // (The head itself doesn't erode: a head that stops can't dig itself a pit.)
         if (p.erode && p.i <= r.path.length - TUNE.headSpared) erodeAt(world, r, c, flow, p.every);
         const lake = world.lakeOf[c];
@@ -3166,6 +3183,12 @@ function slideStep(world) {
     if (!s.cap || s.pondVol >= s.cap) {
       s.breach = s.saddle ? { x: s.saddle.x, z: s.saddle.z } : { x: s.x, z: s.z };
       s.cut = null; s.wave = s.pondVol; // the channels open again; the wave is the basin's water
+      for (const idx of Object.keys(s.cutLog ?? {}).map(Number).sort((a, b) => a - b)) {
+        const r = world.rivers[idx], e = s.cutLog[idx], left = Math.min(e.lost, s.wave);
+        if (!r || !isRacing(r) || left <= 0) continue;
+        s.wave -= left; r.damFeed = { at: e.at, per: e.lost / e.n, left, from: world.tick };
+        r.pulseAt = Math.min(r.pulseAt, world.tick + 1); // the first one leaves the dam now
+      }
       set('burst'); s.front = s.reach; ridePond(world, s);
       const by = world.rivers[s.by]; // whoever set it off rides it, wherever it is
       if (by && isRacing(by) && !by.dropping && !s.rode.has(by.idx)) ride(world, s, by, SLIDE.rideFromPond);
